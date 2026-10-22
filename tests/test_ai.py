@@ -101,7 +101,7 @@ async def test_truncated_response_not_sent():
             "Persona",
             client=client,
         )
-        with pytest.raises(AIError, match="hết token"):
+        with pytest.raises(AIError, match="không phải thông báo hết quota"):
             await ai.generate([], lambda: True)
 
 

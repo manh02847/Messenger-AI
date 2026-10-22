@@ -60,6 +60,23 @@ Cookie có quyền truy cập tài khoản. Không đưa `secrets.json`, thư m�
 
 Lệnh này gọi Groq với một câu chào mẫu. Không mở kết nối hoặc gửi tin lên Messenger. API key sai/hết quota sẽ có thông báo, không in key ra màn hình.
 
+Để thử hội thoại nhiều lượt với đúng model và persona đang cấu hình:
+
+```bash
+.venv/bin/python -m messenger_ai chat-ai
+```
+
+Gõ các câu viết tắt/sai chính tả trực tiếp trên terminal. `/context` xem số tin và ký tự trong ngữ cảnh, `/reset` bắt đầu cuộc trò chuyện thử mới, `/quit` thoát. Cả câu hỏi và câu trả lời thử được gửi sang Groq, nhưng không kết nối Messenger và không đọc lịch sử Messenger. Ngữ cảnh thử chỉ giữ trong RAM đến lúc thoát; số lượt gọi vẫn tính quota và dùng chung bộ đếm cục bộ của `check-ai`.
+
+Nếu đang dùng bản cũ với giới hạn 768 token, dừng bot rồi cập nhật cấu hình:
+
+```bash
+git pull --ff-only
+.venv/bin/python -m messenger_ai tune-chat
+```
+
+Lệnh này bỏ tiền tố icon và nâng `max_completion_tokens` lên ít nhất 2048, giữ các cấu hình khác. Giới hạn này áp dụng cho **mỗi lần tạo câu trả lời**, gồm cả suy luận; không phải quota còn lại của tài khoản. Thông báo chạm giới hạn này không đồng nghĩa hết quota API. Giới hạn cao hơn cho phép model dùng nhiều token hơn; không đảm bảo mọi câu trả lời đều hoàn thành hoặc chất lượng tốt hơn. Quota thật vẫn có thể bị chạm riêng và thường báo HTTP 429. Khởi động lại bot sau khi chỉnh.
+
 ### 4. Chọn đúng người được tự rep
 
 ```bash
@@ -124,12 +141,12 @@ Các tùy chọn chính trong `config.json`:
 | `dry_run` | `true` | Chỉ in bản nháp khi chưa dùng `--live` |
 | `debounce_seconds` | `2.5` | Chờ để gom tin liên tiếp |
 | `reply_cooldown_seconds` | `8` | Khoảng cách tối thiểu giữa hai lượt gửi cùng cuộc trò chuyện |
-| `manual_pause_seconds` | `300` | Nhường sau khi bạn tự nhắn hoặc khi cần bạn quyết định |
+| `manual_pause_seconds` | `300` | Nhường sau khi bạn tự nhắn, yêu cầu dừng rõ ràng hoặc gửi chưa rõ kết quả |
 | `history_messages` | `12` | Tối đa số tin trong ngữ cảnh cục bộ |
 | `history_char_limit` | `3500` | Tổng ký tự lịch sử gửi sang AI mỗi lượt |
 | `input_char_limit` | `1200` | Tối đa ký tự của mỗi tin đưa vào ngữ cảnh |
 | `output_char_limit` | `500` | Tối đa ký tự trả lời, chưa tính tiền tố |
-| `max_completion_tokens` | `768` | Giới hạn token phản hồi, gồm token suy luận của model |
+| `max_completion_tokens` | `2048` | Giới hạn token mỗi phản hồi, gồm token suy luận của model |
 | `max_ai_calls_per_day` | `150` | Số lần gọi AI cục bộ/ngày, tính cả thử lại |
 | `max_replies_per_thread_per_day` | `60` | Số lượt gửi/cố gửi trên mỗi cuộc trò chuyện/ngày |
 | `max_message_age_seconds` | `120` | Bỏ tin quá cũ, không soạn trả lời hàng loạt lịch sử |
@@ -137,7 +154,7 @@ Các tùy chọn chính trong `config.json`:
 
 Mốc ngày của bộ giới hạn cục bộ tính theo **giờ Việt Nam**. Quota của nhà cung cấp vẫn áp dụng riêng; bot có thể chạm giới hạn token của Groq trước khi đạt số lượt ở bảng này. Mỗi lần thử lại API cũng tính một lần gọi. Xem trước và gửi thật dùng hai kho ngữ cảnh/bộ đếm cục bộ riêng; bản nháp chưa gửi không được ghi giả thành tin đã gửi.
 
-Khi cần bạn quyết định, prompt hướng dẫn AI trả về `[[HANDOFF]]`; bot không gửi chuỗi này mà tạm nhường. Đây là hướng dẫn cho model, không phải bảo đảm AI luôn nhận diện đúng mọi tình huống.
+AI không còn tự tạm dừng cuộc trò chuyện bằng `[[HANDOFF]]`. Nếu model vẫn trả mã này, bot đổi thành câu hỏi làm rõ và tiếp tục nhận tin mới. Chỉ một số mẫu yêu cầu rõ ràng được ứng dụng nhận diện để nhường, ví dụ `Cho mình gặp Mạnh nhé`, `Mạnh tự rep đi`, `Đừng trả lời nữa` (có thể không dấu). Đây là bộ mẫu giới hạn, không nhận diện mọi cách diễn đạt. Khi bạn tự nhắn, cơ chế nhường 5 phút vẫn hoạt động. Câu hỏi cần quyết định riêng thì AI được hướng dẫn giải thích rằng không quyết định thay được.
 
 Đổi cấu hình hoặc persona thì khởi động lại bot. Nếu đổi sang model khác, kiểm tra bằng `check-ai` trước; tên model và hỗ trợ API có thể thay đổi.
 
@@ -209,7 +226,7 @@ Nếu phiên Facebook không hợp lệ, bot cần bạn cập nhật cookie. M�
 | Không thấy bot gửi | Kiểm tra chế độ xem trước, tin nhắn mới, danh sách, thời gian nhường và quota |
 | `Groq từ chối API key` | Tạo/kiểm tra key trên Groq rồi configure lại |
 | `HTTP 429` | Chạm quota. Giảm ngữ cảnh/tần suất và chờ quota phục hồi |
-| `Model hết token` | Tăng `max_completion_tokens`, hoặc giảm độ dài yêu cầu; có thể tiêu tốn quota nhanh hơn |
+| `Câu trả lời chạm max_completion_tokens` | Chạy `tune-chat` nếu đang dùng mức 768 cũ; không phải thông báo hết quota API. Mức cao hơn có thể tiêu tốn quota nhanh hơn |
 | Facebook/checkpoint | Đăng nhập trên trình duyệt bình thường, xử lý yêu cầu của Facebook và cập nhật cookie |
 | Bridge checksum sai | Không dùng file đó. Xóa đúng tệp trong `bin` rồi chạy setup_bot.py để tải lại bản ghim |
 | Đổi máy và mất phiên E2EE | Dừng các phiên cũ; cấu hình lại trên máy mới. Không chạy hai máy dùng chung bản sao thiết bị |

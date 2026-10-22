@@ -11,7 +11,7 @@
   "history_char_limit": 3500,
   "input_char_limit": 1200,
   "output_char_limit": 500,
-  "max_completion_tokens": 768,
+  "max_completion_tokens": 2048,
   "max_ai_calls_per_day": 150,
   "max_replies_per_thread_per_day": 60,
   "minimum_ai_interval_seconds": 6,

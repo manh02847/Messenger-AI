@@ -116,7 +116,20 @@ def doctor() -> None:
     print("Kiểm tra này không đăng nhập, không gọi AI và không gửi tin nhắn.")
 
 
-async def check_ai() -> None:
+def tune_chat() -> None:
+    path = ROOT / "config.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    Settings.from_dict(raw)
+    raw["max_completion_tokens"] = max(raw.get("max_completion_tokens", 768), 2048)
+    raw["reply_prefix"] = ""
+    Settings.from_dict(raw)
+    private_json(path, raw)
+    print(
+        "Đã bỏ tiền tố và đặt giới hạn mỗi câu trả lời ít nhất 2048 token. Khởi động lại bot để áp dụng."
+    )
+
+
+async def check_ai(*, interactive: bool = False) -> None:
     from .ai import GroqAI
     from .state import State
     from .core import VIETNAM
@@ -125,8 +138,23 @@ async def check_ai() -> None:
     settings = Settings.load()
     secrets = load_secrets()
     state = State(ROOT / "data" / "ai-check.sqlite3")
-    ai = GroqAI(secrets["groq_api_key"], settings, "Trả lời ngắn bằng tiếng Việt.")
+    persona = (ROOT / "persona.txt").read_text(encoding="utf-8").strip()
+    if not persona:
+        state.close()
+        raise ValueError("persona.txt đang rỗng.")
+    ai = GroqAI(secrets["groq_api_key"], settings, persona)
     try:
+
+        def reserve():
+            return state.reserve_ai(
+                datetime.now(VIETNAM).date().isoformat(), settings.max_ai_calls_per_day
+            )
+
+        if interactive:
+            from .preview import chat_loop
+
+            await chat_loop(ai, settings, reserve)
+            return
         text = await ai.generate(
             [
                 {
@@ -134,9 +162,7 @@ async def check_ai() -> None:
                     "content": "Chào bạn, hãy xác nhận kết nối bằng một câu ngắn.",
                 }
             ],
-            lambda: state.reserve_ai(
-                datetime.now(VIETNAM).date().isoformat(), settings.max_ai_calls_per_day
-            ),
+            reserve,
         )
         print("Groq đã trả lời:", text[: settings.output_char_limit])
         print("Chưa kết nối hay gửi gì lên Messenger.")
@@ -236,6 +262,8 @@ def main() -> None:
         ("configure", "Nhập API key và cookie tại máy bạn."),
         ("doctor", "Kiểm tra offline thư viện và bridge."),
         ("check-ai", "Gọi thử Groq; không gửi Messenger."),
+        ("chat-ai", "Chat thử với AI và ngữ cảnh, không kết nối Messenger."),
+        ("tune-chat", "Bỏ icon và nâng giới hạn token mỗi câu trả lời."),
         ("discover", "Lấy mã cuộc trò chuyện; không tự rep."),
     ):
         sub.add_parser(name, help=help_text)
@@ -268,8 +296,10 @@ def main() -> None:
             print(
                 "Đã thêm cuộc trò chuyện. Bot đang chạy cần khởi động lại để nhận cấu hình mới."
             )
-        elif args.command == "check-ai":
-            asyncio.run(check_ai())
+        elif args.command == "tune-chat":
+            tune_chat()
+        elif args.command in ("check-ai", "chat-ai"):
+            asyncio.run(check_ai(interactive=args.command == "chat-ai"))
         else:
             asyncio.run(
                 run(

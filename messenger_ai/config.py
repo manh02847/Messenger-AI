@@ -41,7 +41,7 @@ class Settings:
     history_char_limit: int = 3500
     input_char_limit: int = 1200
     output_char_limit: int = 500
-    max_completion_tokens: int = 768
+    max_completion_tokens: int = 2048
     max_ai_calls_per_day: int = 150
     max_replies_per_thread_per_day: int = 60
     minimum_ai_interval_seconds: float = 6

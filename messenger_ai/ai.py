@@ -127,7 +127,9 @@ class GroqAI:
                     choice = data["choices"][0]
                     if choice.get("finish_reason") == "length":
                         raise AIError(
-                            "Model hết token trước khi hoàn thành; tăng max_completion_tokens."
+                            "Câu trả lời chạm max_completion_tokens (gồm suy luận); "
+                            "đây không phải thông báo hết quota API. "
+                            "Chạy tune-chat nếu đang dùng mức 768 cũ."
                         )
                     return final_text(choice["message"]["content"])
                 except (ValueError, KeyError, IndexError, TypeError):

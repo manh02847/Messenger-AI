@@ -285,9 +285,36 @@ async def test_preview_sends_nothing_and_does_not_invent_history(tmp_path):
 @pytest.mark.asyncio
 async def test_handoff_pauses_without_sending(tmp_path):
     bot, state, _, sender, _ = make_bot(tmp_path, ai=FakeAI("[[HANDOFF]]"))
-    bot.receive(message())
+    bot.receive(message(text="Cho mình nói chuyện với Mạnh nhé"))
     await drain(bot)
     assert not sender.calls and state.paused(THREAD, NOW)
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_model_cannot_pause_for_confusion_and_next_turn_runs(tmp_path):
+    bot, state, ai, sender, _ = make_bot(tmp_path, ai=FakeAI("[[HANDOFF]]"))
+    bot.receive(message(text="đang lag gì thế"))
+    await drain(bot)
+    assert not state.paused(THREAD, NOW)
+    assert len(sender.calls) == 1
+    assert "[[HANDOFF]]" not in sender.calls[0][1]
+    ai.answer = "Nãy mình hiểu nhầm ý bạn."
+    bot.receive(message(mid="next", text="ý là rep sai đấy"))
+    await drain(bot)
+    assert len(sender.calls) == 2 and len(ai.calls) == 2
+    assert ai.calls[1][-2]["role"] == "assistant"
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_explicit_stop_cancels_pending_draft_without_ai(tmp_path):
+    bot, state, ai, sender, _ = make_bot(tmp_path)
+    bot.receive(message())
+    bot.receive(message(mid="stop", text="Đừng trả lời nữa"))
+    await drain(bot)
+    assert not sender.calls and not ai.calls
+    assert state.paused(THREAD, NOW)
     state.close()
 
 

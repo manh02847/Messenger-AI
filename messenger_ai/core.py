@@ -9,6 +9,7 @@ from typing import Any, Callable, Protocol
 
 from .ai import AIError
 from .config import Settings
+from .handoff import reply_text, requests_human
 from .state import State
 
 VIETNAM = timezone(timedelta(hours=7))
@@ -154,6 +155,12 @@ class ReplyBot:
             now,
             self.settings.history_messages,
         )
+        if requests_human(message.text):
+            self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
+            self.pending.discard(message.thread)
+            self.state.pause(message.thread, now + self.settings.manual_pause_seconds)
+            self.log("Người nhắn yêu cầu dừng hoặc gặp Mạnh: tạm nhường trả lời.")
+            return
         if self.state.paused(message.thread, now):
             return
         self.latest[message.thread] = message
@@ -217,12 +224,7 @@ class ReplyBot:
                     break
                 if revision != self.revisions[thread]:
                     continue
-                if text.strip() == "[[HANDOFF]]":
-                    self.log("AI chuyển cuộc trò chuyện để bạn tự trả lời.")
-                    self.state.pause(
-                        thread, self.clock() + self.settings.manual_pause_seconds
-                    )
-                    break
+                text = reply_text(text)
                 message = self.latest[thread]
                 text = (
                     self.settings.reply_prefix
