@@ -1,0 +1,12 @@
+{
+  "version": "2.3.4",
+  "base_url": "https://github.com/m008v/fbchat-v2/releases/download/v2.3.4/",
+  "sha256": {
+    "fbchat_v2-2.3.4-py3-none-any.whl": "9237b68fc99483100f543da6c6327581b7432630124f95e2fd0b85a73cc21536",
+    "fbchat-bridge-e2ee-linux-amd64": "6de0ce8db4986da2fd471385d63b61a5334084edb78bc6de2f53ecea6500189d",
+    "fbchat-bridge-e2ee-linux-arm64": "4d61087632c2c157294502265cb1e8807c0c5ac9c3d8addca2c109dd1eec1544",
+    "fbchat-bridge-e2ee-darwin-amd64": "f0d7a95eddf21cf0fc96bed33275d8f25e430626f0caba736eed40ff34b98f3b",
+    "fbchat-bridge-e2ee-darwin-arm64": "8eec475a33cbe3b836717e793a5d09827dd331e9b08c14b56c500ca7a4a31d10",
+    "fbchat-bridge-e2ee-windows-amd64.exe": "dd304ef952eccfabae8c7c1f6dce71decc1ed0bf275f5aec59e155460fe235e3"
+  }
+}

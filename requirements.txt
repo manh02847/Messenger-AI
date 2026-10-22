@@ -1,0 +1,5 @@
+./vendor/fbchat_v2-2.3.4-py3-none-any.whl
+httpx==0.28.1
+requests==2.32.5
+paho-mqtt==2.1.0
+pyotp==2.9.0

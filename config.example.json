@@ -1,0 +1,19 @@
+{
+  "allowed_threads": [],
+  "model": "openai/gpt-oss-120b",
+  "dry_run": true,
+  "reply_prefix": "🤖 ",
+  "debounce_seconds": 2.5,
+  "reply_cooldown_seconds": 8,
+  "manual_pause_seconds": 300,
+  "max_message_age_seconds": 120,
+  "history_messages": 12,
+  "history_char_limit": 3500,
+  "input_char_limit": 1200,
+  "output_char_limit": 500,
+  "max_completion_tokens": 768,
+  "max_ai_calls_per_day": 150,
+  "max_replies_per_thread_per_day": 60,
+  "minimum_ai_interval_seconds": 6,
+  "retention_days": 7
+}
