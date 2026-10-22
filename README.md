@@ -77,7 +77,26 @@ git pull --ff-only
 
 Lệnh này bỏ tiền tố icon và nâng `max_completion_tokens` lên ít nhất 2048, giữ các cấu hình khác. Giới hạn này áp dụng cho **mỗi lần tạo câu trả lời**, gồm cả suy luận; không phải quota còn lại của tài khoản. Thông báo chạm giới hạn này không đồng nghĩa hết quota API. Giới hạn cao hơn cho phép model dùng nhiều token hơn; không đảm bảo mọi câu trả lời đều hoàn thành hoặc chất lượng tốt hơn. Quota thật vẫn có thể bị chạm riêng và thường báo HTTP 429. Khởi động lại bot sau khi chỉnh.
 
-### 4. Chọn đúng người được tự rep
+### 4. Chọn phạm vi tự rep
+
+Để tự rep **tất cả chat riêng, bỏ qua group**, không cần lấy từng ID:
+
+```bash
+.venv/bin/python -m messenger_ai scope all_private
+```
+
+Khởi động lại bot sau khi đổi phạm vi. Chế độ này xử lý tin văn bản mới ở các chat riêng mà kết nối Messenger nhận được, kể cả người chưa nằm trong `allowed_threads`. Nhóm, kênh và loại chat chưa xác định bị bỏ qua trước khi lưu nội dung hoặc gọi AI. Không tự nhắn trước, không rep lại lịch sử cũ. Ngữ cảnh vẫn tách riêng cho từng cuộc trò chuyện; bạn tự nhắn thì bot vẫn nhường 5 phút.
+
+Nhận diện E2EE dựa trên JID chat riêng `@msgr`; `@g.us` là nhóm. Với tin thường, bot kiểm tra `threadType` do bridge cung cấp. Nếu bridge thiếu thông tin loại chat, bot bỏ qua tin đó. Một chat riêng có thể dùng ID người kia trong JID, nhưng mã `/e2ee/t/...` trên website không được mặc định coi là cùng ID; không dùng việc ID chat trùng ID người gửi để phân biệt nhóm.
+
+Để quay lại chỉ rep danh sách đã chọn:
+
+```bash
+.venv/bin/python -m messenger_ai scope allowlist
+```
+
+Cấu hình cũ giữ chế độ `allowlist` cho đến khi chạy lệnh đổi phạm vi. Với chế độ này, lấy mã người được rep bằng:
+
 
 ```bash
 .venv/bin/python -m messenger_ai discover
@@ -95,7 +114,7 @@ Mã cuộc trò chuyện: e2ee:123456789@msgr | người gửi: 123456789
 .venv/bin/python -m messenger_ai allow "e2ee:123456789@msgr"
 ```
 
-Đây là số minh họa, phải thay bằng kết quả thật. Tin chưa mã hóa có thể dùng mã `thread:...`. Nếu cùng một cuộc trò chuyện đổi kiểu mã hóa, dùng `discover` để xác minh mã mới. Bot không tự thêm bạn bè, không tự chọn theo tên và không trả lời người ngoài danh sách. Không chạy đồng thời hai phiên bot/discover dùng chung thư mục.
+Đây là số minh họa, phải thay bằng kết quả thật. Tin chưa mã hóa có thể dùng mã `thread:...`. Nếu cùng một cuộc trò chuyện đổi kiểu mã hóa, dùng `discover` để xác minh mã mới. Trong chế độ `allowlist`, bot không trả lời ngoài danh sách. Bot không tự thêm bạn bè hoặc tự chọn theo tên. Không chạy đồng thời hai phiên bot/discover dùng chung thư mục.
 
 ### 5. Xem trước rồi bật trả lời
 
@@ -113,12 +132,12 @@ Khi muốn bot gửi thật, dừng bằng Ctrl+C rồi chạy:
 
 Mặc định `config.json` có `dry_run: true`. Cờ `--live` chỉ áp dụng cho lần chạy hiện tại. Bạn có thể chỉnh `dry_run` thành `false` để lệnh `run` mặc định gửi thật.
 
-Không yêu cầu người kia nhắn lệnh hoặc tag bot; khi có tin văn bản mới trong danh sách đã chọn, bot sẽ tự xử lý. Tắt bot bằng **Ctrl+C**. Khi bạn tự nhắn trong cuộc trò chuyện đó, bot tạm nhường **5 phút**; sau đó chỉ phản hồi khi có **tin mới tiếp theo**.
+Không yêu cầu người kia nhắn lệnh hoặc tag bot; khi có tin văn bản mới thuộc phạm vi đã chọn, bot sẽ tự xử lý. Tắt bot bằng **Ctrl+C**. Khi bạn tự nhắn trong cuộc trò chuyện đó, bot tạm nhường **5 phút**; sau đó chỉ phản hồi khi có **tin mới tiếp theo**.
 
 ## Những gì đã có
 
 - Gửi/nhận qua kết nối mã hóa đầu cuối E2EE và tuyến nhắn tin thường do thư viện hỗ trợ.
-- Chỉ tự rep cuộc trò chuyện đã chọn; danh sách ban đầu rỗng.
+- Hai phạm vi: tất cả chat riêng (loại nhóm) hoặc danh sách chọn trước; mặc định danh sách rỗng.
 - Gom các tin đến sát nhau trong 2,5 giây; câu trả lời dùng ngữ cảnh của riêng cuộc trò chuyện.
 - Nếu có tin mới trong lúc AI đang soạn, bỏ bản nháp cũ và soạn lại theo ngữ cảnh mới.
 - Phát hiện bạn nhắn thủ công cả khi đang chờ AI; bot không tiếp tục gửi bản nháp đó.
@@ -137,7 +156,8 @@ Các tùy chọn chính trong `config.json`:
 
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---:|---|
-| `allowed_threads` | `[]` | Mã cuộc trò chuyện đã xác minh qua discover |
+| `reply_scope` | `allowlist` | `all_private`: tất cả chat riêng, loại nhóm; `allowlist`: chỉ danh sách |
+| `allowed_threads` | `[]` | Mã xác minh qua discover; chỉ dùng khi phạm vi là `allowlist` |
 | `dry_run` | `true` | Chỉ in bản nháp khi chưa dùng `--live` |
 | `debounce_seconds` | `2.5` | Chờ để gom tin liên tiếp |
 | `reply_cooldown_seconds` | `8` | Khoảng cách tối thiểu giữa hai lượt gửi cùng cuộc trò chuyện |
@@ -222,7 +242,7 @@ Nếu phiên Facebook không hợp lệ, bot cần bạn cập nhật cookie. M�
 
 | Hiện tượng | Xử lý |
 |---|---|
-| `allowed_threads đang rỗng` | Chạy discover, xác minh đúng cuộc trò chuyện rồi chạy allow |
+| `allowed_threads đang rỗng` | Chạy discover rồi allow, hoặc `scope all_private` để rep tất cả chat riêng |
 | Không thấy bot gửi | Kiểm tra chế độ xem trước, tin nhắn mới, danh sách, thời gian nhường và quota |
 | `Groq từ chối API key` | Tạo/kiểm tra key trên Groq rồi configure lại |
 | `HTTP 429` | Chạm quota. Giảm ngữ cảnh/tần suất và chờ quota phục hồi |

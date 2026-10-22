@@ -341,3 +341,107 @@ def test_history_stays_separate_and_bounded(tmp_path):
     assert not state.reserve_ai("2026-10-22", 1)
     assert state.reserve_ai("2026-10-23", 1)
     state.close()
+
+
+def scope_event(*, jid=None, thread_type=None, sender=222, mid="scope-1", tid=999):
+    data = {
+        "id": mid,
+        "senderId": sender,
+        "timestampMs": NOW * 1000,
+        "text": "Chào bạn",
+        "threadId": tid,
+    }
+    if jid is not None:
+        data.update(chatJid=jid, senderJid=f"{sender}:1@msgr")
+    if thread_type is not None:
+        data["threadType"] = thread_type
+    return {"type": "e2eeMessage" if jid is not None else "message", "data": data}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event,private",
+    [
+        (scope_event(jid="222@msgr"), True),
+        (scope_event(jid="222:7@msgr"), True),
+        (scope_event(jid="222.1:7@msgr"), True),
+        (scope_event(jid="222@g.us"), False),
+        (scope_event(jid="222-333@g.us"), False),
+        (scope_event(jid="222@broadcast"), False),
+        (scope_event(jid="222@unknown"), False),
+        (scope_event(jid="222@msgr.evil"), False),
+        (scope_event(jid="222-333@msgr"), False),
+        *[(scope_event(thread_type=t), True) for t in (1, 7, 10, 13, 15)],
+        *[
+            (scope_event(thread_type=t), False)
+            for t in (None, 0, 2, 8, 16, 18, 201, 999, True, "1")
+        ],
+    ],
+)
+async def test_all_private_filters_before_ai_and_history(tmp_path, event, private):
+    msg = parse_event(event)
+    assert msg is not None and msg.is_private is private
+    # Even an explicitly listed group must be rejected in all_private mode.
+    bot, state, ai, sender, _ = make_bot(
+        tmp_path, reply_scope="all_private", allowed_threads=(msg.thread,)
+    )
+    bot.receive(msg)
+    await drain(bot)
+    assert bool(ai.calls) is private
+    assert bool(sender.calls) is private
+    assert bool(state.history(msg.thread, 12, 3500)) is private
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_all_private_empty_allowlist_and_separate_context(tmp_path):
+    bot, state, ai, sender, _ = make_bot(
+        tmp_path, reply_scope="all_private", allowed_threads=()
+    )
+    for jid, mid in (("222@msgr", "one"), ("333@msgr", "two")):
+        event = scope_event(jid=jid, mid=mid)
+        event["data"]["text"] = mid
+        bot.receive(parse_event(event))
+        await drain(bot)
+    assert len(sender.calls) == 2
+    assert [h[0]["content"] for h in ai.calls] == ["one", "two"]
+    assert all(len(h) == 1 for h in ai.calls)
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_all_private_manual_reply_cancels_draft(tmp_path):
+    bot, state, ai, sender, _ = make_bot(
+        tmp_path, reply_scope="all_private", allowed_threads=()
+    )
+    bot.receive(parse_event(scope_event(jid="222@msgr")))
+    bot.receive(parse_event(scope_event(jid="222@msgr", sender=111, mid="manual")))
+    await drain(bot)
+    assert not sender.calls and not ai.calls
+    assert state.paused(THREAD, NOW)
+    state.close()
+
+
+def test_reply_scope_validation_and_backwards_compatibility():
+    assert Settings.from_dict({}).reply_scope == "allowlist"
+    assert Settings.from_dict({"reply_scope": "all_private"}).allowed_threads == ()
+    for bad in ("all", "", True, None, [], {}):
+        with pytest.raises(ValueError, match="reply_scope"):
+            Settings.from_dict({"reply_scope": bad})
+
+
+def test_scope_command_preserves_config_and_secrets(tmp_path, monkeypatch):
+    import json
+    from messenger_ai import cli
+
+    raw = {"allowed_threads": [THREAD], "model": "custom", "dry_run": True}
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(raw))
+    secret = tmp_path / "secrets.json"
+    secret.write_text("untouched")
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    cli.set_reply_scope("all_private")
+    assert json.loads(path.read_text()) == {**raw, "reply_scope": "all_private"}
+    assert secret.read_text() == "untouched"
+    cli.set_reply_scope("allowlist")
+    assert json.loads(path.read_text()) == {**raw, "reply_scope": "allowlist"}

@@ -30,6 +30,7 @@ def private_json(path: Path, value: dict) -> None:
 @dataclass(frozen=True)
 class Settings:
     allowed_threads: tuple[str, ...] = ()
+    reply_scope: str = "allowlist"
     model: str = "openai/gpt-oss-120b"
     dry_run: bool = True
     reply_prefix: str = ""
@@ -67,6 +68,8 @@ class Settings:
             raise ValueError("allowed_threads có mã bị trùng.")
         value["allowed_threads"] = tuple(allowed)
         result = cls(**value)
+        if result.reply_scope not in ("allowlist", "all_private"):
+            raise ValueError("reply_scope phải là allowlist hoặc all_private.")
         if not isinstance(result.dry_run, bool):
             raise ValueError("dry_run phải là true hoặc false.")
         if not isinstance(result.model, str) or not result.model.strip():

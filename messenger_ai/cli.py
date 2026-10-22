@@ -129,6 +129,21 @@ def tune_chat() -> None:
     )
 
 
+def set_reply_scope(scope: str) -> None:
+    path = ROOT / "config.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    Settings.from_dict(raw)
+    raw["reply_scope"] = scope
+    Settings.from_dict(raw)
+    private_json(path, raw)
+    print(
+        "Đã chọn tự rep tất cả chat riêng; bỏ qua nhóm và loại chat chưa xác định."
+        if scope == "all_private"
+        else "Đã chọn chỉ rep các cuộc trò chuyện trong allowed_threads."
+    )
+    print("Khởi động lại bot để áp dụng.")
+
+
 async def check_ai(*, interactive: bool = False) -> None:
     from .ai import GroqAI
     from .state import State
@@ -183,9 +198,13 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
         settings = replace(settings, dry_run=False)
     elif preview:
         settings = replace(settings, dry_run=True)
-    if not discovery and not settings.allowed_threads:
+    if (
+        not discovery
+        and settings.reply_scope == "allowlist"
+        and not settings.allowed_threads
+    ):
         raise ValueError(
-            "Danh sách allowed_threads đang rỗng. Dùng discover rồi lệnh allow trước."
+            "Danh sách allowed_threads đang rỗng. Dùng discover rồi allow, hoặc scope all_private."
         )
     secrets = load_secrets()
     transport = FacebookTransport(
@@ -220,7 +239,12 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                 print(
                     "Chế độ: XEM TRƯỚC, chưa gửi tin."
                     if settings.dry_run
-                    else "Chế độ: GỬI THẬT cho các cuộc trò chuyện trong allowed_threads."
+                    else "Chế độ: GỬI THẬT."
+                )
+                print(
+                    "Phạm vi: TẤT CẢ CHAT RIÊNG; bỏ qua nhóm và loại chat chưa xác định."
+                    if settings.reply_scope == "all_private"
+                    else "Phạm vi: các cuộc trò chuyện trong allowed_threads."
                 )
             reported = set()
             async for event in transport.events():
@@ -235,7 +259,8 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                     ):
                         reported.add(message.thread)
                         print(
-                            f"Mã cuộc trò chuyện: {message.thread} | người gửi: {message.sender_id}",
+                            f"Mã cuộc trò chuyện: {message.thread} | người gửi: {message.sender_id}"
+                            f" | loại: {'chat riêng' if message.is_private else 'nhóm/khác/chưa xác định'}",
                             flush=True,
                         )
                 elif bot is not None:
@@ -271,6 +296,8 @@ def main() -> None:
         "allow", help="Thêm mã cuộc trò chuyện đã xác minh vào danh sách tự rep."
     )
     allow.add_argument("thread")
+    scope = sub.add_parser("scope", help="Chọn phạm vi tự rep.")
+    scope.add_argument("value", choices=("allowlist", "all_private"))
     command = sub.add_parser(
         "run", help="Chạy bot; mặc định theo dry_run trong cấu hình."
     )
@@ -298,6 +325,8 @@ def main() -> None:
             )
         elif args.command == "tune-chat":
             tune_chat()
+        elif args.command == "scope":
+            set_reply_scope(args.value)
         elif args.command in ("check-ai", "chat-ai"):
             asyncio.run(check_ai(interactive=args.command == "chat-ai"))
         else:

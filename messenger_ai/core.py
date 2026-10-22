@@ -25,6 +25,7 @@ class Message:
     chat_jid: str = ""
     sender_jid: str = ""
     thread_id: int = 0
+    is_private: bool = False
 
 
 def parse_event(event: object) -> Message | None:
@@ -67,6 +68,9 @@ def parse_event(event: object) -> Message | None:
             timestamp / 1000,
             jid,
             sender_jid if isinstance(sender_jid, str) else "",
+            is_private=bool(
+                re.fullmatch(r"[1-9][0-9]*(?:\.[0-9]+)?(?::[0-9]+)?@msgr", jid)
+            ),
         )
     tid = data.get("threadId")
     if isinstance(tid, bool) or not str(tid).isdigit() or int(tid) <= 0:
@@ -78,6 +82,10 @@ def parse_event(event: object) -> Message | None:
         text,
         timestamp / 1000,
         thread_id=int(tid),
+        # mautrix-meta ThreadType values pinned by fbchat-v2 2.3.4.
+        # Unknown, groups, channels and AI bots are deliberately excluded.
+        is_private=type(data.get("threadType")) is int
+        and data["threadType"] in (1, 7, 10, 13, 15),
     )
 
 
@@ -118,7 +126,10 @@ class ReplyBot:
 
     def receive(self, message: Message) -> None:
         now = self.clock()
-        if message.thread not in self.settings.allowed_threads:
+        if self.settings.reply_scope == "all_private":
+            if not message.is_private:
+                return
+        elif message.thread not in self.settings.allowed_threads:
             return
         if not (
             max(self.started_at - 2, now - self.settings.max_message_age_seconds)

@@ -1,5 +1,6 @@
 {
   "allowed_threads": [],
+  "reply_scope": "allowlist",
   "model": "openai/gpt-oss-120b",
   "dry_run": true,
   "reply_prefix": "",
