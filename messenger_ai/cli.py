@@ -79,7 +79,9 @@ def configure() -> None:
     )
 
 
-def configure_ai(provider: str, daily_limit: int | None = None) -> None:
+def configure_ai(
+    provider: str, daily_limit: int | None = None, fallback: bool | None = None
+) -> None:
     path = ROOT / "config.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
     Settings.from_dict(raw)
@@ -100,20 +102,24 @@ def configure_ai(provider: str, daily_limit: int | None = None) -> None:
             or secrets["groq_api_key"]
         )
         model = "openai/gpt-oss-120b"
+    if provider != raw.get("ai_provider", "groq") and "fallback_model" in raw:
+        raw["fallback_model"] = ""
     raw.update(ai_provider=provider, model=model)
+    if fallback is not None:
+        raw["ai_fallback"] = fallback
     if daily_limit is not None:
         raw["max_ai_calls_per_day"] = daily_limit
     settings = Settings.from_dict(raw)
 
-    from .ai import validate_connection
+    from .ai import provider_configs
 
-    key = "cloudflare_api_token" if provider == "cloudflare" else "groq_api_key"
-    validate_connection(secrets[key], settings, secrets["cloudflare_account_id"])
+    provider_configs(secrets, settings)
     private_json(ROOT / "secrets.json", secrets)
     private_json(path, raw)
     print(
         f"Đã chọn {provider} / {model}; giới hạn cục bộ {settings.max_ai_calls_per_day} lần gọi/ngày."
     )
+    print("Tự chuyển nguồn dự phòng:", "BẬT" if settings.ai_fallback else "TẮT")
     print("Chưa kiểm tra API thật. Chạy check-ai rồi khởi động lại bot.")
 
 
@@ -343,6 +349,12 @@ def main() -> None:
     ai_config.add_argument(
         "--daily-limit", type=int, help="Giới hạn số lần gọi AI cục bộ mỗi ngày."
     )
+    ai_config.add_argument(
+        "--fallback",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Tự chuyển giữa Cloudflare và Groq khi lỗi/quota; cần cấu hình cả hai key.",
+    )
     allow = sub.add_parser(
         "allow", help="Thêm mã cuộc trò chuyện đã xác minh vào danh sách tự rep."
     )
@@ -362,7 +374,7 @@ def main() -> None:
         if args.command == "configure":
             configure()
         elif args.command == "configure-ai":
-            configure_ai(args.provider, args.daily_limit)
+            configure_ai(args.provider, args.daily_limit, args.fallback)
         elif args.command == "doctor":
             doctor()
         elif args.command == "allow":

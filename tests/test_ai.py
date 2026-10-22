@@ -299,3 +299,198 @@ async def test_factory_uses_only_selected_provider_credentials(monkeypatch):
             assert ai.provider == provider
         finally:
             await ai.close()
+
+
+@pytest.mark.asyncio
+async def test_failover_shares_context_budget_and_respects_cooldown():
+    from messenger_ai.ai import ChatAI, FallbackAI
+
+    now, calls, budget_calls = [1000], [], []
+
+    def reserve():
+        budget_calls.append(1)
+        return True
+
+    def handler(request):
+        calls.append((request.url.host, json.loads(request.content)))
+        if request.url.host == "api.cloudflare.com":
+            return httpx.Response(429, headers={"retry-after": "3600"})
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"content": "OK"}}]},
+        )
+
+    history = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "previous"},
+        {"role": "user", "content": "next"},
+    ]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        cf = ChatAI(
+            "cf",
+            Settings(
+                ai_provider="cloudflare",
+                model="@cf/qwen/qwen3-30b-a3b-fp8",
+                minimum_ai_interval_seconds=0,
+            ),
+            "Persona",
+            account_id="a" * 32,
+            fail_fast=True,
+            client=client,
+        )
+        groq = ChatAI(
+            "groq",
+            Settings(minimum_ai_interval_seconds=0),
+            "Persona",
+            fail_fast=True,
+            client=client,
+        )
+        ai = FallbackAI(cf, groq, clock=lambda: now[0], log=lambda _: None)
+        assert await ai.generate(history, reserve) == "OK"
+        assert await ai.generate(history, reserve) == "OK"
+        assert [host for host, _ in calls] == [
+            "api.cloudflare.com",
+            "api.groq.com",
+            "api.groq.com",
+        ]
+        assert ai.blocked_until[0] == 4600
+        assert all(payload["messages"][1:] == history for _, payload in calls)
+        assert len(budget_calls) == 3
+        now[0] = 4601
+        assert await ai.generate(history, reserve) == "OK"
+        assert [host for host, _ in calls][-2:] == [
+            "api.cloudflare.com",
+            "api.groq.com",
+        ]
+        await ai.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 400])
+async def test_failover_does_not_hide_invalid_credentials_or_config(status):
+    from messenger_ai.ai import ChatAI, FallbackAI
+
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.host)
+        return httpx.Response(status, text="secret-key")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        primary = ChatAI(
+            "key",
+            Settings(minimum_ai_interval_seconds=0),
+            "Persona",
+            fail_fast=True,
+            client=client,
+        )
+        secondary = ChatAI(
+            "cf",
+            Settings(ai_provider="cloudflare", model="@cf/qwen/qwen3-30b-a3b-fp8"),
+            "Persona",
+            account_id="a" * 32,
+            fail_fast=True,
+            client=client,
+        )
+        ai = FallbackAI(primary, secondary)
+        with pytest.raises(AIError) as error:
+            await ai.generate([], lambda: True)
+        assert "secret-key" not in str(error.value)
+        assert calls == ["api.groq.com"]
+
+
+@pytest.mark.asyncio
+async def test_both_providers_down_skip_requests_until_cooldown():
+    from messenger_ai.ai import FallbackAI, ProviderUnavailable
+
+    class Down:
+        label = "down"
+
+        def __init__(self):
+            self.calls = 0
+            self.closed = False
+
+        async def generate(self, history, reserve):
+            self.calls += 1
+            raise ProviderUnavailable("down", 60)
+
+        async def close(self):
+            self.closed = True
+
+    primary, secondary = Down(), Down()
+    ai = FallbackAI(primary, secondary, clock=lambda: 100, log=lambda _: None)
+    for _ in range(2):
+        with pytest.raises(AIError, match="Cả hai"):
+            await ai.generate([], lambda: True)
+    assert primary.calls == secondary.calls == 1
+    await ai.close()
+    assert primary.closed and secondary.closed
+
+
+@pytest.mark.asyncio
+async def test_failover_cannot_bypass_local_daily_limit():
+    from messenger_ai.ai import ChatAI, FallbackAI
+
+    calls = []
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: calls.append(request))
+    ) as client:
+        one = ChatAI(
+            "key",
+            Settings(minimum_ai_interval_seconds=0),
+            "Persona",
+            fail_fast=True,
+            client=client,
+        )
+        ai = FallbackAI(one, one)
+        with pytest.raises(AIError, match="giới hạn gọi AI"):
+            await ai.generate([], lambda: False)
+    assert calls == []
+
+
+def test_fallback_requires_both_credentials_before_saving(tmp_path, monkeypatch):
+    from messenger_ai import cli
+
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    for name in ("GROQ_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    path = tmp_path / "config.json"
+    path.write_text("{}")
+    monkeypatch.setattr("builtins.input", lambda _: "a" * 32)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda _: "cf-token")
+    with pytest.raises(ValueError, match="Groq"):
+        cli.configure_ai("cloudflare", fallback=True)
+    assert path.read_text() == "{}"
+    assert not (tmp_path / "secrets.json").exists()
+    (tmp_path / "secrets.json").write_text('{"groq_api_key":"groq-token"}')
+    cli.configure_ai("cloudflare", fallback=True)
+    assert Settings.load(tmp_path).ai_fallback is True
+    cli.configure_ai("cloudflare", fallback=False)
+    assert Settings.load(tmp_path).ai_fallback is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [408, 503, "network"])
+async def test_transient_provider_errors_allow_failover(failure):
+    from messenger_ai.ai import ChatAI, ProviderUnavailable
+
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if failure == "network":
+            raise httpx.ConnectError("private response", request=request)
+        return httpx.Response(failure, text="private response")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ai = ChatAI(
+            "key",
+            Settings(minimum_ai_interval_seconds=0),
+            "Persona",
+            client=client,
+            fail_fast=True,
+        )
+        with pytest.raises(ProviderUnavailable) as error:
+            await ai.generate([], lambda: True)
+        assert "private response" not in str(error.value)
+    assert len(calls) == 1

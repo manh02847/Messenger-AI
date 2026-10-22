@@ -2,6 +2,8 @@
   "allowed_threads": [],
   "reply_scope": "allowlist",
   "ai_provider": "groq",
+  "ai_fallback": false,
+  "fallback_model": "",
   "model": "openai/gpt-oss-120b",
   "dry_run": true,
   "reply_prefix": "",

@@ -32,6 +32,8 @@ class Settings:
     allowed_threads: tuple[str, ...] = ()
     reply_scope: str = "allowlist"
     ai_provider: str = "groq"
+    ai_fallback: bool = False
+    fallback_model: str = ""
     model: str = "openai/gpt-oss-120b"
     dry_run: bool = True
     reply_prefix: str = ""
@@ -71,6 +73,10 @@ class Settings:
         result = cls(**value)
         if result.reply_scope not in ("allowlist", "all_private"):
             raise ValueError("reply_scope phải là allowlist hoặc all_private.")
+        if not isinstance(result.ai_fallback, bool):
+            raise ValueError("ai_fallback phải là true hoặc false.")
+        if not isinstance(result.fallback_model, str):
+            raise ValueError("fallback_model phải là chuỗi.")
         if not isinstance(result.dry_run, bool):
             raise ValueError("dry_run phải là true hoặc false.")
         if result.ai_provider not in ("groq", "cloudflare"):

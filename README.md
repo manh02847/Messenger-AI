@@ -101,11 +101,35 @@ Khi check-ai thành công và đã thử chất lượng, `/quit` để thoát c
 .venv/bin/python -m messenger_ai run --live
 ```
 
-Lúc khởi động, bot in rõ nhà cung cấp và tên model. Không tự chuyển ngược sang Groq khi Cloudflare lỗi. Để quay lại Groq:
+Lúc khởi động, bot in rõ nhà cung cấp và tên model. Mặc định chưa bật tự chuyển sang Groq khi Cloudflare lỗi; bật theo hướng dẫn dưới đây. Để quay lại Groq:
 
 ```bash
 .venv/bin/python -m messenger_ai configure-ai groq
 ```
+
+#### Dùng hai nhà cung cấp tự dự phòng
+
+Với key Groq đã lưu sẵn, dùng Cloudflare chính và Groq dự phòng:
+
+```bash
+.venv/bin/python -m messenger_ai configure-ai cloudflare --fallback --daily-limit 1000
+.venv/bin/python -m messenger_ai check-ai
+.venv/bin/python -m messenger_ai run --live
+```
+
+Lệnh hỏi Account ID/token Cloudflare và kiểm tra đã có key của cả hai bên trước khi lưu. Nếu chưa có key Groq, chạy `configure-ai groq --no-fallback` để nhập trước. Không dán key lên chat/GitHub.
+
+Bot ưu tiên Cloudflare Qwen3; khi lỗi mạng, HTTP 408/429/5xx thì chuyển sang Groq GPT-OSS-120B cho cùng lượt. Mỗi bên chỉ thử một lần trong lượt này. Giữ nguyên ngữ cảnh và chỉ gửi một câu trả lời thành công lên Messenger. Đổi model có thể làm giọng trả lời khác nhau; không phải hai model cùng soạn rồi ghép câu.
+
+Nguồn báo 429 nghỉ ít nhất 5 phút; lỗi dịch vụ nghỉ ít nhất 1 phút, lỗi mạng mặc định 5 phút. Nếu API yêu cầu Retry-After dài hơn, bot chờ theo mốc đó. Trong lúc nghỉ, tin mới dùng nguồn còn lại; sau thời gian nghỉ mới thử lại. Trạng thái nghỉ nằm trong bộ nhớ, khởi động lại bot sẽ thử lại từ đầu. Nếu cả hai đang lỗi, bỏ lượt, chờ tin mới; không gửi lại các tin cũ tự động. Cơ chế này sử dụng quota riêng của hai tài khoản, không tăng quota của từng bên.
+
+Sai key/quyền/model, câu trả lời bị cắt, nội dung sai định dạng hoặc chạm giới hạn gọi AI cục bộ vẫn báo lỗi, không chuyển nguồn để che lỗi. Tổng lần gọi của cả hai tính chung trong `max_ai_calls_per_day`. Để tắt dự phòng:
+
+```bash
+.venv/bin/python -m messenger_ai configure-ai cloudflare --no-fallback
+```
+
+Đổi nguồn chính sang Groq bằng `configure-ai groq --fallback`; lúc đó Cloudflare là dự phòng. `fallback_model` rỗng dùng model mặc định của nguồn dự phòng; có thể đặt tên model tương ứng trong config.json. Cần khởi động lại sau thay đổi.
 
 Có thể dùng biến môi trường `CLOUDFLARE_ACCOUNT_ID` và `CLOUDFLARE_API_TOKEN`; các biến này ưu tiên hơn giá trị lưu. Qwen3 nhận chỉ dẫn `/no_think` trong system prompt để hạn chế suy luận cho chat thường; đây là chỉ dẫn model, không bảo đảm tuyệt đối lượng token suy luận. Phần `<think>` và trường reasoning không được gửi lên Messenger.
 
@@ -192,6 +216,8 @@ Các tùy chọn chính trong `config.json`:
 
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---:|---|
+| `ai_fallback` | `false` | Tự chuyển sang nhà cung cấp còn lại khi lỗi/quota |
+| `fallback_model` | `""` | Model dự phòng; rỗng dùng mặc định của nhà cung cấp |
 | `ai_provider` | `groq` | `groq` hoặc `cloudflare`; dùng configure-ai để đổi cùng model/key |
 | `reply_scope` | `allowlist` | `all_private`: tất cả chat riêng, loại nhóm; `allowlist`: chỉ danh sách |
 | `allowed_threads` | `[]` | Mã xác minh qua discover; chỉ dùng khi phạm vi là `allowlist` |

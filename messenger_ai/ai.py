@@ -4,6 +4,7 @@ import asyncio
 import re
 import time
 from datetime import datetime, timezone
+from dataclasses import replace
 from email.utils import parsedate_to_datetime
 from typing import Callable
 
@@ -18,6 +19,12 @@ class AIError(RuntimeError):
     pass
 
 
+class ProviderUnavailable(AIError):
+    def __init__(self, message: str, cooldown: float = 300):
+        super().__init__(message)
+        self.cooldown = cooldown
+
+
 def retry_delay(value: str | None, attempt: int) -> float:
     if value:
         try:
@@ -30,7 +37,9 @@ def retry_delay(value: str | None, attempt: int) -> float:
                 delay = 2**attempt
         if 0 <= delay <= 60:
             return max(1, delay)
-        raise AIError("API yêu cầu chờ lâu hơn 60 giây. Bỏ lượt này, chờ tin nhắn mới.")
+        raise ProviderUnavailable(
+            "API yêu cầu chờ lâu hơn 60 giây.", cooldown=delay if delay > 60 else 300
+        )
     return float(2**attempt)
 
 
@@ -77,7 +86,9 @@ class ChatAI:
         *,
         client: httpx.AsyncClient | None = None,
         account_id: str = "",
+        fail_fast: bool = False,
     ):
+        self.fail_fast = fail_fast
         self.provider = settings.ai_provider
         self.label, self.api_url = validate_connection(api_key, settings, account_id)
         self.api_key = api_key
@@ -114,7 +125,8 @@ class ChatAI:
         ):
             payload.update(reasoning_effort="low", include_reasoning=False)
         async with self._lock:
-            for attempt in range(3):
+            attempts = 1 if self.fail_fast else 3
+            for attempt in range(attempts):
                 wait = self.settings.minimum_ai_interval_seconds - (
                     time.monotonic() - self._last_attempt
                 )
@@ -130,16 +142,25 @@ class ChatAI:
                         json=payload,
                     )
                 except httpx.RequestError:
-                    if attempt == 2:
-                        raise AIError(
+                    if attempt == attempts - 1:
+                        raise ProviderUnavailable(
                             f"Chưa kết nối được {self.label}; không gửi tin nhắn trả lời."
                         ) from None
                     await asyncio.sleep(2**attempt)
                     continue
-                if response.status_code == 429 or response.status_code >= 500:
-                    if attempt == 2:
-                        raise AIError(
-                            f"{self.label} đang giới hạn hoặc lỗi dịch vụ (HTTP {response.status_code})."
+                if response.status_code in (408, 429) or response.status_code >= 500:
+                    if attempt == attempts - 1:
+                        try:
+                            delay = retry_delay(
+                                response.headers.get("retry-after"), attempt + 1
+                            )
+                        except ProviderUnavailable as error:
+                            delay = error.cooldown
+                        raise ProviderUnavailable(
+                            f"{self.label} đang giới hạn hoặc lỗi dịch vụ (HTTP {response.status_code}).",
+                            cooldown=max(
+                                300 if response.status_code == 429 else 60, delay
+                            ),
                         )
                     await asyncio.sleep(
                         retry_delay(response.headers.get("retry-after"), attempt + 1)
@@ -178,15 +199,82 @@ class ChatAI:
 GroqAI = ChatAI
 
 
-def create_ai(secrets: dict[str, str], settings: Settings, persona: str) -> ChatAI:
-    key = (
-        "cloudflare_api_token"
-        if settings.ai_provider == "cloudflare"
-        else "groq_api_key"
-    )
-    return ChatAI(
-        secrets.get(key, ""),
-        settings,
-        persona,
-        account_id=secrets.get("cloudflare_account_id", ""),
-    )
+DEFAULT_MODELS = {
+    "groq": "openai/gpt-oss-120b",
+    "cloudflare": "@cf/qwen/qwen3-30b-a3b-fp8",
+}
+
+
+def provider_configs(secrets: dict[str, str], settings: Settings):
+    configs = [settings]
+    if settings.ai_fallback:
+        other = "groq" if settings.ai_provider == "cloudflare" else "cloudflare"
+        configs.append(
+            replace(
+                settings,
+                ai_provider=other,
+                model=settings.fallback_model or DEFAULT_MODELS[other],
+            )
+        )
+    result = []
+    for config in configs:
+        key = (
+            "cloudflare_api_token"
+            if config.ai_provider == "cloudflare"
+            else "groq_api_key"
+        )
+        token = secrets.get(key, "")
+        account_id = secrets.get("cloudflare_account_id", "")
+        validate_connection(token, config, account_id)
+        result.append((token, config, account_id))
+    return result
+
+
+class FallbackAI:
+    def __init__(self, primary, secondary, *, clock=time.monotonic, log=print):
+        self.clients = (primary, secondary)
+        self.label = f"{primary.label} → {secondary.label}"
+        self.clock, self.log = clock, log
+        self.blocked_until = [0.0, 0.0]
+        self._lock = asyncio.Lock()
+
+    async def generate(self, history, reserve):
+        async with self._lock:
+            for index, ai in enumerate(self.clients):
+                if self.clock() < self.blocked_until[index]:
+                    continue
+                try:
+                    answer = await ai.generate(history, reserve)
+                except ProviderUnavailable as error:
+                    self.blocked_until[index] = self.clock() + error.cooldown
+                    self.log(
+                        f"{ai.label} tạm không khả dụng; nghỉ {error.cooldown:.0f} giây."
+                    )
+                    continue
+                if index:
+                    self.log(f"Đã tạo câu trả lời bằng nguồn dự phòng: {ai.label}.")
+                return answer
+            raise AIError(
+                "Cả hai nguồn AI đang lỗi hoặc chờ phục hồi; bỏ lượt này, chờ tin mới."
+            )
+
+    async def close(self):
+        try:
+            await self.clients[0].close()
+        finally:
+            await self.clients[1].close()
+
+
+def create_ai(secrets: dict[str, str], settings: Settings, persona: str):
+    configs = provider_configs(secrets, settings)
+    clients = [
+        ChatAI(
+            token,
+            config,
+            persona,
+            account_id=account_id,
+            fail_fast=settings.ai_fallback,
+        )
+        for token, config, account_id in configs
+    ]
+    return FallbackAI(*clients) if settings.ai_fallback else clients[0]
