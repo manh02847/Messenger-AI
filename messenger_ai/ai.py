@@ -117,13 +117,23 @@ class ChatAI:
             "stream": False,
         }
         token_field = (
-            "max_tokens" if self.provider == "cloudflare" else "max_completion_tokens"
+            "max_tokens"
+            if self.provider == "cloudflare"
+            and self.settings.model != "@cf/qwen/qwen3.8-27b"
+            else "max_completion_tokens"
         )
         payload[token_field] = self.settings.max_completion_tokens
         if self.provider == "groq" and self.settings.model.startswith(
             "openai/gpt-oss-"
         ):
             payload.update(reasoning_effort="low", include_reasoning=False)
+        elif self.provider == "groq" and self.settings.model == "qwen/qwen3.8-27b":
+            payload.update(reasoning_effort="low", reasoning_format="hidden")
+        elif (
+            self.provider == "cloudflare"
+            and self.settings.model == "@cf/qwen/qwen3.8-27b"
+        ):
+            payload.update(reasoning_effort="low")
         async with self._lock:
             attempts = 1 if self.fail_fast else 3
             for attempt in range(attempts):
@@ -198,6 +208,11 @@ class ChatAI:
 # Compatibility for existing integrations importing the original class name.
 GroqAI = ChatAI
 
+
+CHAT_MODELS = {
+    "groq": "qwen/qwen3.8-27b",
+    "cloudflare": "@cf/qwen/qwen3.8-27b",
+}
 
 DEFAULT_MODELS = {
     "groq": "openai/gpt-oss-120b",

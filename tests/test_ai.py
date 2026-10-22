@@ -494,3 +494,98 @@ async def test_transient_provider_errors_allow_failover(failure):
             await ai.generate([], lambda: True)
         assert "private response" not in str(error.value)
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,model",
+    [("groq", "qwen/qwen3.8-27b"), ("cloudflare", "@cf/qwen/qwen3.8-27b")],
+)
+async def test_qwen38_request_contract(provider, model):
+    from messenger_ai.ai import ChatAI
+
+    def handler(request):
+        payload = json.loads(request.content)
+        assert payload["model"] == model
+        assert payload["reasoning_effort"] == "low"
+        assert payload["max_completion_tokens"] == 4096
+        assert "max_tokens" not in payload
+        assert "include_reasoning" not in payload
+        assert "/no_think" not in payload["messages"][0]["content"]
+        if provider == "groq":
+            assert payload["reasoning_format"] == "hidden"
+        else:
+            assert "reasoning_format" not in payload
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": "Bạn định đi đâu?",
+                            "reasoning_content": "hidden",
+                        },
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ai = ChatAI(
+            "key",
+            Settings(ai_provider=provider, model=model),
+            "Persona",
+            account_id="a" * 32,
+            client=client,
+        )
+        assert (
+            await ai.generate(
+                [{"role": "user", "content": "tí đi choei k"}], lambda: True
+            )
+            == "Bạn định đi đâu?"
+        )
+
+
+@pytest.mark.parametrize(
+    "provider,fallback,limit",
+    [("groq", False, 60), ("cloudflare", True, 60), ("groq", True, 2000)],
+)
+def test_upgrade_chat_updates_models_limits_and_preserves_other_data(
+    tmp_path, monkeypatch, provider, fallback, limit
+):
+    from messenger_ai import cli
+    from messenger_ai.ai import CHAT_MODELS
+
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    raw = {
+        "ai_provider": provider,
+        "ai_fallback": fallback,
+        "model": "old-model",
+        "fallback_model": "old-backup",
+        "reply_scope": "all_private",
+        "history_messages": 20,
+        "manual_pause_seconds": 300,
+        "max_replies_per_thread_per_day": limit,
+        "max_ai_calls_per_day": limit,
+    }
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(raw))
+    secret = tmp_path / "secrets.json"
+    secret.write_text("unchanged-secret")
+    cli.upgrade_chat()
+    updated = json.loads(path.read_text())
+    expected = {
+        **raw,
+        "model": CHAT_MODELS[provider],
+        "max_replies_per_thread_per_day": max(1000, limit),
+        "max_ai_calls_per_day": max(1000, limit),
+    }
+    if fallback:
+        expected["fallback_model"] = CHAT_MODELS[
+            "groq" if provider == "cloudflare" else "cloudflare"
+        ]
+    assert updated == expected
+    assert secret.read_text() == "unchanged-secret"
+    cli.upgrade_chat()
+    assert json.loads(path.read_text()) == expected

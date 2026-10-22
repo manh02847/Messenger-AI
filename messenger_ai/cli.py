@@ -175,6 +175,32 @@ def tune_chat() -> None:
     )
 
 
+def upgrade_chat() -> None:
+    from .ai import CHAT_MODELS
+
+    path = ROOT / "config.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    settings = Settings.from_dict(raw)
+    raw["model"] = CHAT_MODELS[settings.ai_provider]
+    if settings.ai_fallback:
+        other = "groq" if settings.ai_provider == "cloudflare" else "cloudflare"
+        raw["fallback_model"] = CHAT_MODELS[other]
+    raw["max_replies_per_thread_per_day"] = max(
+        settings.max_replies_per_thread_per_day, 1000
+    )
+    raw["max_ai_calls_per_day"] = max(settings.max_ai_calls_per_day, 1000)
+    Settings.from_dict(raw)
+    private_json(path, raw)
+    print(f"Đã chọn {raw['model']}; nhà cung cấp và trạng thái dự phòng giữ nguyên.")
+    print(
+        f"Giới hạn: {raw['max_replies_per_thread_per_day']} câu/chat/ngày; {raw['max_ai_calls_per_day']} lần gọi AI/ngày cho toàn bot."
+    )
+    print(
+        "Quota API không thay đổi. Qwen3.8 dùng nhiều Neurons hơn Qwen3 cũ trên Cloudflare."
+    )
+    print("Chạy check-ai/chat-ai để thử, rồi khởi động lại service bot để áp dụng.")
+
+
 def set_reply_scope(scope: str) -> None:
     path = ROOT / "config.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
@@ -338,6 +364,7 @@ def main() -> None:
         ("doctor", "Kiểm tra offline thư viện và bridge."),
         ("check-ai", "Gọi thử API đang chọn; không gửi Messenger."),
         ("chat-ai", "Chat thử với AI và ngữ cảnh, không kết nối Messenger."),
+        ("upgrade-chat", "Đổi sang Qwen3.8 và nâng giới hạn ít nhất 1000/ngày."),
         ("tune-chat", "Bỏ icon và nâng giới hạn token mỗi câu trả lời."),
         ("discover", "Lấy mã cuộc trò chuyện; không tự rep."),
     ):
@@ -388,6 +415,8 @@ def main() -> None:
             print(
                 "Đã thêm cuộc trò chuyện. Bot đang chạy cần khởi động lại để nhận cấu hình mới."
             )
+        elif args.command == "upgrade-chat":
+            upgrade_chat()
         elif args.command == "tune-chat":
             tune_chat()
         elif args.command == "scope":

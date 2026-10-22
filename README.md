@@ -77,6 +77,22 @@ git pull --ff-only
 
 Lệnh này bỏ tiền tố icon và nâng `max_completion_tokens` lên 4096 và `output_char_limit` lên ít nhất 4000 ký tự, giữ các cấu hình khác. Bản cũ giới hạn văn bản 500 ký tự nên có thể cắt giữa câu, ngay cả khi model đã trả lời đầy đủ. Giới hạn này áp dụng cho **mỗi lần tạo câu trả lời**, gồm cả suy luận; không phải quota còn lại của tài khoản. Thông báo chạm giới hạn này không đồng nghĩa hết quota API. Giới hạn cao hơn cho phép model dùng nhiều token hơn; không đảm bảo mọi câu trả lời đều hoàn thành hoặc chất lượng tốt hơn. Quota thật vẫn có thể bị chạm riêng và thường báo HTTP 429. Khởi động lại bot sau khi chỉnh.
 
+### Nâng giới hạn và đổi sang Qwen3.8
+
+```bash
+git pull --ff-only
+.venv/bin/python -m messenger_ai upgrade-chat
+.venv/bin/python -m messenger_ai check-ai
+```
+
+`upgrade-chat` chọn `qwen/qwen3.8-27b` cho Groq hoặc `@cf/qwen/qwen3.8-27b` cho Cloudflare, giữ nhà cung cấp chính và trạng thái dự phòng hiện tại. Nếu đã bật dự phòng, model của nguồn dự phòng cũng được đổi. Lệnh nâng giới hạn lên ít nhất **1000 câu/chat/ngày** và **1000 lần gọi AI/ngày cho toàn bot**, giữ mức cao hơn nếu bạn đã đặt. Mỗi lần thử lại hoặc chuyển nguồn vẫn tính vào số lần gọi chung; đây không phải cam kết gửi được 1000 câu cho từng người.
+
+Bot đặt mức suy luận `low` để giảm token suy luận và độ trễ. Model mới không bảo đảm hiểu tiếng Việt tốt hơn trong mọi cuộc trò chuyện; dùng `chat-ai` để thử các câu thực tế. Quota API không tăng. Theo [bảng giá Cloudflare](https://developers.cloudflare.com/workers-ai/platform/pricing/), Qwen3.8 tiêu thụ khoảng 9 lần Neurons so với Qwen3-30B cũ với cùng số token, nên quota miễn phí có thể hết nhanh hơn.
+
+Khởi động lại service đang chạy sau khi kiểm tra thành công. Lệnh giữ cookie, lịch sử, phạm vi rep và thời gian nhường khi bạn tự nhắn. `configure-ai` chọn lại model mặc định cũ; nếu dùng lệnh đó để đổi nguồn sau này, chạy lại `upgrade-chat` để chọn Qwen3.8.
+
+Tham số API đối chiếu với tài liệu [Groq Qwen3.8](https://console.groq.com/docs/model/qwen/qwen3.8-27b) và [Cloudflare Qwen3.8](https://developers.cloudflare.com/workers-ai/models/qwen3.8-27b/).
+
 ### Đổi API sang Cloudflare Workers AI
 
 Bot vẫn chạy trên VPS; chỉ thay API tạo câu trả lời. Cấu hình đang dùng Groq không tự đổi khi `git pull`.
@@ -93,7 +109,7 @@ git pull --ff-only
 .venv/bin/python -m messenger_ai chat-ai
 ```
 
-`configure-ai` hỏi Account ID và token (ẩn khi nhập), chọn `@cf/qwen/qwen3-30b-a3b-fp8`, lưu riêng với key Groq. Lệnh giữ cookie, ngữ cảnh, phạm vi rep, giới hạn ký tự/token và thời gian nhường. `--daily-limit 1000` đổi giới hạn cục bộ từ 150 lên 1000 lần gọi/ngày; không làm tăng quota Cloudflare. Bỏ cờ này để giữ giới hạn cũ. Giới hạn 60 câu trả lời/người/ngày vẫn giữ nguyên nếu chưa tùy chỉnh.
+`configure-ai` hỏi Account ID và token (ẩn khi nhập), chọn `@cf/qwen/qwen3-30b-a3b-fp8`, lưu riêng với key Groq. Lệnh giữ cookie, ngữ cảnh, phạm vi rep, giới hạn ký tự/token và thời gian nhường. `--daily-limit 1000` đổi giới hạn cục bộ từ 150 lên 1000 lần gọi/ngày; không làm tăng quota Cloudflare. Bỏ cờ này để giữ giới hạn cũ. Giới hạn trả lời/người/ngày trong cấu hình cũ vẫn giữ nguyên; dùng `upgrade-chat` để nâng mức 60 cũ lên 1000 và đổi model.
 
 Khi check-ai thành công và đã thử chất lượng, `/quit` để thoát chat-ai, rồi chạy:
 
@@ -231,7 +247,7 @@ Các tùy chọn chính trong `config.json`:
 | `output_char_limit` | `4000` | Tối đa ký tự trả lời, chưa tính tiền tố |
 | `max_completion_tokens` | `4096` | Giới hạn token mỗi phản hồi, gồm token suy luận của model |
 | `max_ai_calls_per_day` | `150` | Số lần gọi AI cục bộ/ngày, tính cả thử lại |
-| `max_replies_per_thread_per_day` | `60` | Số lượt gửi/cố gửi trên mỗi cuộc trò chuyện/ngày |
+| `max_replies_per_thread_per_day` | `1000` | Số lượt gửi/cố gửi trên mỗi cuộc trò chuyện/ngày; cấu hình cũ cần upgrade-chat |
 | `max_message_age_seconds` | `120` | Bỏ tin quá cũ, không soạn trả lời hàng loạt lịch sử |
 | `retention_days` | `7` | Dọn dữ liệu cũ khi khởi động bot |
 

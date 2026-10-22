@@ -47,7 +47,7 @@ class Settings:
     output_char_limit: int = 4000
     max_completion_tokens: int = 4096
     max_ai_calls_per_day: int = 150
-    max_replies_per_thread_per_day: int = 60
+    max_replies_per_thread_per_day: int = 1000
     minimum_ai_interval_seconds: float = 6
     retention_days: int = 7
 
