@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
-from .config import ROOT, Settings, load_secrets, private_json
+from .config import GOOGLE_MODELS, ROOT, Settings, load_secrets, private_json
 
 
 @contextmanager
@@ -121,6 +121,38 @@ def configure_ai(
     )
     print("Tự chuyển nguồn dự phòng:", "BẬT" if settings.ai_fallback else "TẮT")
     print("Chưa kiểm tra API thật. Chạy check-ai rồi khởi động lại bot.")
+
+
+def configure_google(models: list[str] | None = None, *, disable: bool = False) -> None:
+    path = ROOT / "config.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    Settings.from_dict(raw)
+    raw["google_models"] = [] if disable else list(models or GOOGLE_MODELS)
+    settings = Settings.from_dict(raw)
+    if not disable:
+        from .ai import provider_configs
+
+        secrets = load_secrets(ROOT)
+        secrets["google_api_key"] = (
+            getpass.getpass("Google AI Studio API key (Enter để giữ cũ): ").strip()
+            or secrets["google_api_key"]
+        )
+        if not secrets["google_api_key"]:
+            raise ValueError("Chưa nhập Google AI Studio API key.")
+        provider_configs(secrets, settings)
+        private_json(ROOT / "secrets.json", secrets)
+    private_json(path, raw)
+    if disable:
+        print("Đã tắt nguồn Google; giữ API key và các nguồn cũ.")
+    else:
+        print("Ưu tiên Google:", " → ".join(settings.google_models))
+        print(
+            "Khi các model Google chờ quota, dùng các nguồn Groq/Cloudflare đang cấu hình."
+        )
+        print(
+            "Giữ nguyên ngân sách gọi AI cục bộ; quota Google có thể dùng chung giữa model."
+        )
+    print("Chạy check-ai/chat-ai để thử rồi khởi động lại service bot.")
 
 
 def doctor() -> None:
@@ -252,7 +284,7 @@ async def check_ai(*, interactive: bool = False) -> None:
             reserve,
         )
         print(
-            f"{ai.label} / {settings.model} đã trả lời:",
+            f"{ai.last_used} đã trả lời:",
             text[: settings.output_char_limit],
         )
         print("Chưa kết nối hay gửi gì lên Messenger.")
@@ -311,7 +343,7 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                 )
             else:
                 bot = ReplyBot(settings, state, ai, transport, transport.own_id)
-                print(f"AI: {ai.label} | model: {settings.model}")
+                print(f"AI: {ai.description}")
                 print(
                     "Chế độ: XEM TRƯỚC, chưa gửi tin."
                     if settings.dry_run
@@ -382,6 +414,19 @@ def main() -> None:
         default=None,
         help="Tự chuyển giữa Cloudflare và Groq khi lỗi/quota; cần cấu hình cả hai key.",
     )
+    google_config = sub.add_parser(
+        "configure-google", help="Thêm Google và tự chuyển model khi lỗi/quota."
+    )
+    google_options = google_config.add_mutually_exclusive_group()
+    google_options.add_argument(
+        "--models",
+        nargs="+",
+        choices=GOOGLE_MODELS,
+        help="Model Google theo thứ tự ưu tiên.",
+    )
+    google_options.add_argument(
+        "--disable", action="store_true", help="Tắt Google, giữ các nguồn cũ."
+    )
     allow = sub.add_parser(
         "allow", help="Thêm mã cuộc trò chuyện đã xác minh vào danh sách tự rep."
     )
@@ -402,6 +447,8 @@ def main() -> None:
             configure()
         elif args.command == "configure-ai":
             configure_ai(args.provider, args.daily_limit, args.fallback)
+        elif args.command == "configure-google":
+            configure_google(args.models, disable=args.disable)
         elif args.command == "doctor":
             doctor()
         elif args.command == "allow":

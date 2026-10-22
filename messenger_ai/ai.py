@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 from email.utils import parsedate_to_datetime
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 import httpx
 
-from .config import Settings
+from .config import GOOGLE_MODELS, Settings
 
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -56,15 +57,98 @@ def final_text(value: object) -> str:
     return value
 
 
+def google_cooldown(response: httpx.Response, default: float) -> float:
+    """Honor Google's structured retry hint and daily quota reset, without logging bodies."""
+    try:
+        details = response.json().get("error", {}).get("details", [])
+        for detail in details:
+            if detail.get("@type", "").endswith("google.rpc.RetryInfo"):
+                delay = detail.get("retryDelay", "")
+                if isinstance(delay, str) and re.fullmatch(
+                    r"[0-9]+(?:\.[0-9]+)?s", delay
+                ):
+                    default = max(default, float(delay[:-1]))
+            if detail.get("@type", "").endswith("google.rpc.QuotaFailure"):
+                for violation in detail.get("violations", []):
+                    quota_id = violation.get("quotaId", "").lower()
+                    if "perday" in quota_id or "per_day" in quota_id:
+                        now = datetime.now(ZoneInfo("America/Los_Angeles"))
+                        midnight = (now + timedelta(days=1)).replace(
+                            hour=0, minute=0, second=0, microsecond=0
+                        )
+                        default = max(
+                            default, midnight.timestamp() - now.timestamp() + 5
+                        )
+    except (ValueError, AttributeError, TypeError, OverflowError):
+        pass
+    return default
+
+
+def google_payload(
+    settings: Settings, persona: str, history: list[dict[str, str]]
+) -> dict:
+    return {
+        "systemInstruction": {"parts": [{"text": persona}]},
+        "contents": [
+            {
+                "role": "model" if item["role"] == "assistant" else "user",
+                "parts": [{"text": item["content"]}],
+            }
+            for item in history
+        ],
+        "generationConfig": {
+            "temperature": 0.6,
+            "maxOutputTokens": settings.max_completion_tokens,
+            "thinkingConfig": {
+                "thinkingLevel": "minimal"
+                if settings.model.startswith("gemma-")
+                else "low",
+                "includeThoughts": False,
+            },
+        },
+    }
+
+
+def google_text(data: dict) -> str:
+    if data.get("promptFeedback", {}).get("blockReason"):
+        raise AIError("Google không tạo câu trả lời cho yêu cầu này.")
+    candidate = data["candidates"][0]
+    reason = candidate.get("finishReason")
+    if reason == "MAX_TOKENS":
+        raise AIError(
+            "Câu trả lời Google chạm max_completion_tokens; chưa gửi bản bị cắt."
+        )
+    if reason != "STOP":
+        raise AIError(
+            "Google chưa trả về câu trả lời hoàn chỉnh; không gửi nội dung này."
+        )
+    parts = candidate["content"]["parts"]
+    return final_text(
+        "".join(
+            part["text"]
+            for part in parts
+            if not part.get("thought") and isinstance(part.get("text"), str)
+        )
+    )
+
+
 def validate_connection(
     api_key: str, settings: Settings, account_id: str = ""
 ) -> tuple[str, str]:
     provider = settings.ai_provider
-    if provider not in ("groq", "cloudflare"):
+    if provider not in ("groq", "cloudflare", "google"):
         raise ValueError("Nhà cung cấp AI chưa được hỗ trợ.")
-    label = "Cloudflare" if provider == "cloudflare" else "Groq"
+    label = {"cloudflare": "Cloudflare", "groq": "Groq", "google": "Google"}[provider]
     if not api_key.strip():
-        raise ValueError(f"Thiếu API key/token {label}; chạy configure-ai.")
+        command = "configure-google" if provider == "google" else "configure-ai"
+        raise ValueError(f"Thiếu API key/token {label}; chạy {command}.")
+    if provider == "google":
+        if settings.model not in GOOGLE_MODELS:
+            raise ValueError("Model Google chưa được hỗ trợ.")
+        return (
+            label,
+            f"https://generativelanguage.googleapis.com/v1beta/models/{settings.model}:generateContent",
+        )
     if provider == "cloudflare":
         if not re.fullmatch(r"[0-9a-fA-F]{32}", account_id):
             raise ValueError("Cloudflare Account ID phải gồm 32 ký tự hex.")
@@ -93,6 +177,8 @@ class ChatAI:
         self.label, self.api_url = validate_connection(api_key, settings, account_id)
         self.api_key = api_key
         self.settings = settings
+        self.description = f"{self.label} / {settings.model}"
+        self.last_used = ""
         self.persona = persona
         self.client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(25, connect=10), follow_redirects=False
@@ -134,6 +220,10 @@ class ChatAI:
             and self.settings.model == "@cf/qwen/qwen3.8-27b"
         ):
             payload.update(reasoning_effort="low")
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        if self.provider == "google":
+            payload = google_payload(self.settings, self.persona, history)
+            headers = {"x-goog-api-key": self.api_key}
         async with self._lock:
             attempts = 1 if self.fail_fast else 3
             for attempt in range(attempts):
@@ -148,7 +238,7 @@ class ChatAI:
                 try:
                     response = await self.client.post(
                         self.api_url,
-                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        headers=headers,
                         json=payload,
                     )
                 except httpx.RequestError:
@@ -166,6 +256,8 @@ class ChatAI:
                             )
                         except ProviderUnavailable as error:
                             delay = error.cooldown
+                        if self.provider == "google" and response.status_code == 429:
+                            delay = google_cooldown(response, delay)
                         raise ProviderUnavailable(
                             f"{self.label} đang giới hạn hoặc lỗi dịch vụ (HTTP {response.status_code}).",
                             cooldown=max(
@@ -176,6 +268,11 @@ class ChatAI:
                         retry_delay(response.headers.get("retry-after"), attempt + 1)
                     )
                     continue
+                if self.provider == "google" and response.status_code == 404:
+                    raise ProviderUnavailable(
+                        "Model Google không khả dụng; kiểm tra model trong AI Studio.",
+                        cooldown=3600,
+                    )
                 if response.status_code in (401, 403):
                     raise AIError(
                         f"{self.label} từ chối API key/token, tài khoản hoặc quyền truy cập model."
@@ -186,6 +283,10 @@ class ChatAI:
                     )
                 try:
                     data = response.json()
+                    if self.provider == "google":
+                        answer = google_text(data)
+                        self.last_used = self.description
+                        return answer
                     choice = data["choices"][0]
                     if choice.get("finish_reason") == "length":
                         raise AIError(
@@ -193,8 +294,10 @@ class ChatAI:
                             "đây không phải thông báo hết quota API. "
                             "Chạy tune-chat nếu đang dùng mức 768 cũ."
                         )
-                    return final_text(choice["message"]["content"])
-                except (ValueError, KeyError, IndexError, TypeError):
+                    answer = final_text(choice["message"]["content"])
+                    self.last_used = self.description
+                    return answer
+                except (ValueError, KeyError, IndexError, TypeError, AttributeError):
                     raise AIError(
                         f"Phản hồi {self.label} không đúng định dạng mong đợi."
                     ) from None
@@ -221,7 +324,11 @@ DEFAULT_MODELS = {
 
 
 def provider_configs(secrets: dict[str, str], settings: Settings):
-    configs = [settings]
+    configs = [
+        replace(settings, ai_provider="google", model=model)
+        for model in settings.google_models
+    ]
+    configs.append(settings)
     if settings.ai_fallback:
         other = "groq" if settings.ai_provider == "cloudflare" else "cloudflare"
         configs.append(
@@ -233,11 +340,11 @@ def provider_configs(secrets: dict[str, str], settings: Settings):
         )
     result = []
     for config in configs:
-        key = (
-            "cloudflare_api_token"
-            if config.ai_provider == "cloudflare"
-            else "groq_api_key"
-        )
+        key = {
+            "cloudflare": "cloudflare_api_token",
+            "groq": "groq_api_key",
+            "google": "google_api_key",
+        }[config.ai_provider]
         token = secrets.get(key, "")
         account_id = secrets.get("cloudflare_account_id", "")
         validate_connection(token, config, account_id)
@@ -246,38 +353,53 @@ def provider_configs(secrets: dict[str, str], settings: Settings):
 
 
 class FallbackAI:
-    def __init__(self, primary, secondary, *, clock=time.monotonic, log=print):
-        self.clients = (primary, secondary)
-        self.label = f"{primary.label} → {secondary.label}"
+    def __init__(self, primary, secondary, *others, clock=time.monotonic, log=print):
+        self.clients = (primary, secondary, *others)
+        self.label = " → ".join(
+            getattr(ai, "description", ai.label) for ai in self.clients
+        )
+        self.description = self.label
+        self.last_used = ""
         self.clock, self.log = clock, log
-        self.blocked_until = [0.0, 0.0]
+        self.blocked_until = [0.0] * len(self.clients)
         self._lock = asyncio.Lock()
 
     async def generate(self, history, reserve):
         async with self._lock:
-            for index, ai in enumerate(self.clients):
-                if self.clock() < self.blocked_until[index]:
-                    continue
-                try:
-                    answer = await ai.generate(history, reserve)
-                except ProviderUnavailable as error:
-                    self.blocked_until[index] = self.clock() + error.cooldown
-                    self.log(
-                        f"{ai.label} tạm không khả dụng; nghỉ {error.cooldown:.0f} giây."
-                    )
-                    continue
-                if index:
-                    self.log(f"Đã tạo câu trả lời bằng nguồn dự phòng: {ai.label}.")
-                return answer
-            raise AIError(
-                "Cả hai nguồn AI đang lỗi hoặc chờ phục hồi; bỏ lượt này, chờ tin mới."
-            )
+            try:
+                async with asyncio.timeout(60):
+                    return await self._generate(history, reserve)
+            except TimeoutError:
+                raise AIError(
+                    "Các nguồn AI phản hồi quá chậm; bỏ lượt này, chờ tin mới."
+                ) from None
+
+    async def _generate(self, history, reserve):
+        for index, ai in enumerate(self.clients):
+            if self.clock() < self.blocked_until[index]:
+                continue
+            try:
+                answer = await ai.generate(history, reserve)
+            except ProviderUnavailable as error:
+                self.blocked_until[index] = self.clock() + error.cooldown
+                self.log(
+                    f"{getattr(ai, 'description', ai.label)}: {error} Nghỉ {error.cooldown:.0f} giây."
+                )
+                continue
+            self.last_used = getattr(ai, "description", ai.label)
+            self.log(f"Đã tạo câu trả lời bằng: {self.last_used}.")
+            return answer
+        raise AIError(
+            "Các nguồn AI đang lỗi hoặc chờ phục hồi; bỏ lượt này, chờ tin mới."
+        )
 
     async def close(self):
-        try:
-            await self.clients[0].close()
-        finally:
-            await self.clients[1].close()
+        results = await asyncio.gather(
+            *(ai.close() for ai in self.clients), return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
 
 def create_ai(secrets: dict[str, str], settings: Settings, persona: str):
@@ -288,8 +410,8 @@ def create_ai(secrets: dict[str, str], settings: Settings, persona: str):
             config,
             persona,
             account_id=account_id,
-            fail_fast=settings.ai_fallback,
+            fail_fast=len(configs) > 1,
         )
         for token, config, account_id in configs
     ]
-    return FallbackAI(*clients) if settings.ai_fallback else clients[0]
+    return FallbackAI(*clients) if len(clients) > 1 else clients[0]

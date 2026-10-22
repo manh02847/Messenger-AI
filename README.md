@@ -1,6 +1,6 @@
 # Bot AI trả lời Messenger cá nhân
 
-Bot nhận tin nhắn mới bằng tài khoản Messenger cá nhân, gửi nội dung cùng một phần ngữ cảnh sang Groq hoặc Cloudflare Workers AI và trả lời trong đúng cuộc trò chuyện được chọn.
+Bot nhận tin nhắn mới bằng tài khoản Messenger cá nhân, gửi nội dung cùng một phần ngữ cảnh sang Google AI Studio, Groq hoặc Cloudflare Workers AI và trả lời trong đúng cuộc trò chuyện được chọn.
 
 Nền kết nối: **fbchat-v2 2.3.4**. Model mặc định: **openai/gpt-oss-120b trên Groq**. Bạn có thể đổi model trong `config.json`.
 
@@ -92,6 +92,60 @@ Bot đặt mức suy luận `low` để giảm token suy luận và độ trễ.
 Khởi động lại service đang chạy sau khi kiểm tra thành công. Lệnh giữ cookie, lịch sử, phạm vi rep và thời gian nhường khi bạn tự nhắn. `configure-ai` chọn lại model mặc định cũ; nếu dùng lệnh đó để đổi nguồn sau này, chạy lại `upgrade-chat` để chọn Qwen3.8.
 
 Tham số API đối chiếu với tài liệu [Groq Qwen3.8](https://console.groq.com/docs/model/qwen/qwen3.8-27b) và [Cloudflare Qwen3.8](https://developers.cloudflare.com/workers-ai/models/qwen3.8-27b/).
+
+### Thêm Google AI Studio và tự chuyển model
+
+Tạo key tại [Google AI Studio](https://aistudio.google.com/apikey) trong đúng project có quota bạn muốn dùng. Trên VPS:
+
+```bash
+cd /root/messenger-ai-bot
+git pull --ff-only &&
+.venv/bin/python -m messenger_ai configure-google &&
+.venv/bin/python -m messenger_ai check-ai
+```
+
+Nhập key vào lời nhắc ẩn, hoặc đặt biến môi trường `GEMINI_API_KEY`. Không cần cài thêm thư viện. Lệnh chỉ thêm Google vào trước các nguồn cũ, giữ cookie, lịch sử, phạm vi rep, ngân sách gọi AI và thời gian nhường. Chế độ dự phòng Groq/Cloudflare hiện tại được giữ nguyên. Không tự bật thanh toán hoặc tăng quota API.
+
+Thứ tự mặc định:
+
+| Ưu tiên | Model |
+|---|---|
+| 1 | `gemma-4-31b-it` |
+| 2 | `gemma-4-26b-a4b-it` |
+| 3 | `gemini-3.5-flash-lite` |
+| 4 | `gemini-3.1-flash-lite` |
+| 5 | Nguồn Groq/Cloudflare chính đang chọn |
+| 6 | Nguồn Groq/Cloudflare dự phòng, nếu ai_fallback đã bật |
+
+Không thêm Gemini 3.8/3.6 vì tài khoản đang có ít lượt/ngày. Đây là thứ tự ưu tiên cấu hình, chưa phải kết quả đo chất lượng hội thoại. Dùng `chat-ai` để thử giọng trả lời. Gemma đặt thinking minimal (tắt suy luận), Gemini đặt low để hạn chế token suy luận và độ trễ.
+
+Bot dùng model ưu tiên còn khả dụng, chỉ chuyển khi lỗi mạng, HTTP 408/429/5xx hoặc model Google báo 404. Mỗi model chỉ thử một lần trong lượt; không gọi tất cả để tạo nhiều bản trả lời. Các model nhận cùng persona/lịch sử, chỉ một câu trả lời thành công được gửi. Log ghi rõ nhà cung cấp/model thực sự trả lời. Sai key/quyền hoặc HTTP 400 vẫn báo lỗi để sửa cấu hình; phản hồi bị chặn/cắt/trống không được chuyển model để tiếp tục yêu cầu đó.
+
+HTTP 429 nghỉ ít nhất 5 phút và tôn trọng Retry-After/RetryInfo dài hơn. Nếu QuotaFailure của Google xác định rõ quota theo ngày, model nghỉ đến sau 00:00 giờ Pacific; không suy đoán quota ngày chỉ từ lỗi 429. Google có thể dùng chung quota giữa model: nếu model tiếp theo cũng báo giới hạn, bot cho nó nghỉ và thử nguồn tiếp. Không cộng các hạn mức thành số lượt bảo đảm. Trạng thái nghỉ nằm trong RAM và mất khi restart; bộ đếm lượt gọi cục bộ vẫn lưu trên đĩa. Tổng thời gian thử các nguồn giới hạn 60 giây/lượt; hết thời gian hoặc tất cả nguồn đang nghỉ thì chờ tin mới.
+
+`check-ai` chỉ xác nhận nguồn đầu tiên trả lời được; xem tên model in ra để biết có phải Google hay đã chuyển sang nguồn cũ. Nó không kiểm tra toàn bộ model. Sau khi kiểm tra, khởi động lại **service đang chạy**:
+
+```bash
+if systemctl is-active --quiet messenger-ai; then
+  systemctl restart messenger-ai
+else
+  systemctl --user restart messenger-ai
+fi
+```
+
+Chọn một model Google hoặc thay thứ tự (danh sách chỉ chứa bốn model ở trên):
+
+```bash
+.venv/bin/python -m messenger_ai configure-google --models gemma-4-31b-it gemini-3.5-flash-lite
+```
+
+Tắt Google để quay lại các nguồn cũ, vẫn giữ key:
+
+```bash
+.venv/bin/python -m messenger_ai configure-google --disable
+```
+
+Khởi động lại service sau khi thay đổi. Free tier Google có thể dùng nội dung để cải thiện sản phẩm theo [bảng giá/chính sách](https://ai.google.dev/gemini-api/docs/pricing). Bot gửi phần lịch sử cần thiết tới model đang được thử. Tài liệu giao thức: [Gemma trên Gemini API](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api), [generateContent](https://ai.google.dev/api/generate-content), [quota](https://ai.google.dev/gemini-api/docs/rate-limits).
 
 ### Đổi API sang Cloudflare Workers AI
 
@@ -233,6 +287,7 @@ Các tùy chọn chính trong `config.json`:
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---:|---|
 | `ai_fallback` | `false` | Tự chuyển sang nhà cung cấp còn lại khi lỗi/quota |
+| `google_models` | `[]` | Danh sách Google thử trước Groq/Cloudflare; cấu hình bằng configure-google |
 | `fallback_model` | `""` | Model dự phòng; rỗng dùng mặc định của nhà cung cấp |
 | `ai_provider` | `groq` | `groq` hoặc `cloudflare`; dùng configure-ai để đổi cùng model/key |
 | `reply_scope` | `allowlist` | `all_private`: tất cả chat riêng, loại nhóm; `allowlist`: chỉ danh sách |

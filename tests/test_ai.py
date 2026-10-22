@@ -243,6 +243,7 @@ def test_configure_cloudflare_preserves_facebook_scope_and_history(
     saved = load_secrets(tmp_path)
     assert saved == {
         **secrets,
+        "google_api_key": "",
         "cloudflare_account_id": "a" * 32,
         "cloudflare_api_token": "cf-private",
     }
@@ -420,7 +421,7 @@ async def test_both_providers_down_skip_requests_until_cooldown():
     primary, secondary = Down(), Down()
     ai = FallbackAI(primary, secondary, clock=lambda: 100, log=lambda _: None)
     for _ in range(2):
-        with pytest.raises(AIError, match="Cả hai"):
+        with pytest.raises(AIError, match="Các nguồn"):
             await ai.generate([], lambda: True)
     assert primary.calls == secondary.calls == 1
     await ai.close()

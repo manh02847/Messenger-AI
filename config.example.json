@@ -4,6 +4,7 @@
   "ai_provider": "groq",
   "ai_fallback": false,
   "fallback_model": "",
+  "google_models": [],
   "model": "openai/gpt-oss-120b",
   "dry_run": true,
   "reply_prefix": "",

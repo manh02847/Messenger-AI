@@ -9,6 +9,12 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+GOOGLE_MODELS = (
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+)
 THREAD_PATTERN = re.compile(
     r"(?:e2ee:[0-9][0-9A-Za-z:._-]*@[A-Za-z0-9._-]+|thread:[1-9][0-9]*)\Z"
 )
@@ -34,6 +40,7 @@ class Settings:
     ai_provider: str = "groq"
     ai_fallback: bool = False
     fallback_model: str = ""
+    google_models: tuple[str, ...] = ()
     model: str = "openai/gpt-oss-120b"
     dry_run: bool = True
     reply_prefix: str = ""
@@ -70,6 +77,19 @@ class Settings:
         if len(allowed) != len(set(allowed)):
             raise ValueError("allowed_threads có mã bị trùng.")
         value["allowed_threads"] = tuple(allowed)
+        google_models = value.get("google_models", [])
+        if (
+            not isinstance(google_models, list)
+            or any(
+                not isinstance(model, str) or model not in GOOGLE_MODELS
+                for model in google_models
+            )
+            or len(set(google_models)) != len(google_models)
+        ):
+            raise ValueError(
+                "google_models phải là danh sách model Google được hỗ trợ, không trùng."
+            )
+        value["google_models"] = tuple(google_models)
         result = cls(**value)
         if result.reply_scope not in ("allowlist", "all_private"):
             raise ValueError("reply_scope phải là allowlist hoặc all_private.")
@@ -135,6 +155,8 @@ def load_secrets(root: Path = ROOT) -> dict[str, str]:
     if not isinstance(raw, dict):
         raise ValueError("secrets.json phải là một đối tượng JSON.")
     secrets = {
+        "google_api_key": os.environ.get("GEMINI_API_KEY")
+        or raw.get("google_api_key", ""),
         "cloudflare_api_token": os.environ.get("CLOUDFLARE_API_TOKEN")
         or raw.get("cloudflare_api_token", ""),
         "cloudflare_account_id": os.environ.get("CLOUDFLARE_ACCOUNT_ID")
