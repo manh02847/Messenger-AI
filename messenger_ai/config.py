@@ -31,6 +31,7 @@ def private_json(path: Path, value: dict) -> None:
 class Settings:
     allowed_threads: tuple[str, ...] = ()
     reply_scope: str = "allowlist"
+    ai_provider: str = "groq"
     model: str = "openai/gpt-oss-120b"
     dry_run: bool = True
     reply_prefix: str = ""
@@ -72,6 +73,8 @@ class Settings:
             raise ValueError("reply_scope phải là allowlist hoặc all_private.")
         if not isinstance(result.dry_run, bool):
             raise ValueError("dry_run phải là true hoặc false.")
+        if result.ai_provider not in ("groq", "cloudflare"):
+            raise ValueError("ai_provider phải là groq hoặc cloudflare.")
         if not isinstance(result.model, str) or not result.model.strip():
             raise ValueError("model phải là chuỗi không rỗng.")
         if not isinstance(result.reply_prefix, str) or len(result.reply_prefix) > 40:
@@ -126,6 +129,10 @@ def load_secrets(root: Path = ROOT) -> dict[str, str]:
     if not isinstance(raw, dict):
         raise ValueError("secrets.json phải là một đối tượng JSON.")
     secrets = {
+        "cloudflare_api_token": os.environ.get("CLOUDFLARE_API_TOKEN")
+        or raw.get("cloudflare_api_token", ""),
+        "cloudflare_account_id": os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+        or raw.get("cloudflare_account_id", ""),
         "groq_api_key": os.environ.get("GROQ_API_KEY") or raw.get("groq_api_key", ""),
         "facebook_cookie": os.environ.get("FACEBOOK_COOKIE")
         or raw.get("facebook_cookie", ""),

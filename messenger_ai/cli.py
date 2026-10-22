@@ -68,7 +68,8 @@ def configure() -> None:
     if "c_user=" not in cookie or "xs=" not in cookie:
         raise ValueError("Cookie cần có ít nhất c_user và xs.")
     private_json(
-        ROOT / "secrets.json", {"groq_api_key": api_key, "facebook_cookie": cookie}
+        ROOT / "secrets.json",
+        {**old, "groq_api_key": api_key, "facebook_cookie": cookie},
     )
     if not (ROOT / "config.json").exists():
         raw = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
@@ -76,6 +77,44 @@ def configure() -> None:
     print(
         "Đã lưu cấu hình. Chạy discover để lấy mã cuộc trò chuyện; chưa bật gửi tự động."
     )
+
+
+def configure_ai(provider: str, daily_limit: int | None = None) -> None:
+    path = ROOT / "config.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    Settings.from_dict(raw)
+    secrets = load_secrets(ROOT)
+    if provider == "cloudflare":
+        secrets["cloudflare_account_id"] = (
+            input("Cloudflare Account ID (Enter để giữ cũ): ").strip()
+            or secrets["cloudflare_account_id"]
+        )
+        secrets["cloudflare_api_token"] = (
+            getpass.getpass("Workers AI API token (Enter để giữ cũ): ").strip()
+            or secrets["cloudflare_api_token"]
+        )
+        model = "@cf/qwen/qwen3-30b-a3b-fp8"
+    else:
+        secrets["groq_api_key"] = (
+            getpass.getpass("Groq API key (Enter để giữ cũ): ").strip()
+            or secrets["groq_api_key"]
+        )
+        model = "openai/gpt-oss-120b"
+    raw.update(ai_provider=provider, model=model)
+    if daily_limit is not None:
+        raw["max_ai_calls_per_day"] = daily_limit
+    settings = Settings.from_dict(raw)
+
+    from .ai import validate_connection
+
+    key = "cloudflare_api_token" if provider == "cloudflare" else "groq_api_key"
+    validate_connection(secrets[key], settings, secrets["cloudflare_account_id"])
+    private_json(ROOT / "secrets.json", secrets)
+    private_json(path, raw)
+    print(
+        f"Đã chọn {provider} / {model}; giới hạn cục bộ {settings.max_ai_calls_per_day} lần gọi/ngày."
+    )
+    print("Chưa kiểm tra API thật. Chạy check-ai rồi khởi động lại bot.")
 
 
 def doctor() -> None:
@@ -146,7 +185,7 @@ def set_reply_scope(scope: str) -> None:
 
 
 async def check_ai(*, interactive: bool = False) -> None:
-    from .ai import GroqAI
+    from .ai import create_ai
     from .state import State
     from .core import VIETNAM
     from datetime import datetime
@@ -158,7 +197,7 @@ async def check_ai(*, interactive: bool = False) -> None:
     if not persona:
         state.close()
         raise ValueError("persona.txt đang rỗng.")
-    ai = GroqAI(secrets["groq_api_key"], settings, persona)
+    ai = create_ai(secrets, settings, persona)
     try:
 
         def reserve():
@@ -180,7 +219,10 @@ async def check_ai(*, interactive: bool = False) -> None:
             ],
             reserve,
         )
-        print("Groq đã trả lời:", text[: settings.output_char_limit])
+        print(
+            f"{ai.label} / {settings.model} đã trả lời:",
+            text[: settings.output_char_limit],
+        )
         print("Chưa kết nối hay gửi gì lên Messenger.")
     finally:
         await ai.close()
@@ -189,7 +231,7 @@ async def check_ai(*, interactive: bool = False) -> None:
 
 async def run(*, discovery: bool, live: bool, preview: bool) -> None:
     from scripts.fetch_assets import ensure_bridge
-    from .ai import GroqAI
+    from .ai import create_ai
     from .core import ReplyBot, parse_event
     from .facebook import FacebookTransport
     from .state import State
@@ -229,7 +271,7 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                 persona = (ROOT / "persona.txt").read_text(encoding="utf-8").strip()
                 if not persona:
                     raise ValueError("persona.txt đang rỗng.")
-                ai = GroqAI(secrets["groq_api_key"], settings, persona)
+                ai = create_ai(secrets, settings, persona)
             await transport.connect()
             if discovery:
                 print(
@@ -237,6 +279,7 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                 )
             else:
                 bot = ReplyBot(settings, state, ai, transport, transport.own_id)
+                print(f"AI: {ai.label} | model: {settings.model}")
                 print(
                     "Chế độ: XEM TRƯỚC, chưa gửi tin."
                     if settings.dry_run
@@ -281,18 +324,25 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
-        description="Bot AI trả lời Messenger cá nhân, dùng Groq."
+        description="Bot AI trả lời Messenger cá nhân, dùng Groq hoặc Cloudflare."
     )
     sub = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
         ("configure", "Nhập API key và cookie tại máy bạn."),
         ("doctor", "Kiểm tra offline thư viện và bridge."),
-        ("check-ai", "Gọi thử Groq; không gửi Messenger."),
+        ("check-ai", "Gọi thử API đang chọn; không gửi Messenger."),
         ("chat-ai", "Chat thử với AI và ngữ cảnh, không kết nối Messenger."),
         ("tune-chat", "Bỏ icon và nâng giới hạn token mỗi câu trả lời."),
         ("discover", "Lấy mã cuộc trò chuyện; không tự rep."),
     ):
         sub.add_parser(name, help=help_text)
+    ai_config = sub.add_parser(
+        "configure-ai", help="Đổi nguồn AI, giữ cookie và ngữ cảnh."
+    )
+    ai_config.add_argument("provider", choices=("groq", "cloudflare"))
+    ai_config.add_argument(
+        "--daily-limit", type=int, help="Giới hạn số lần gọi AI cục bộ mỗi ngày."
+    )
     allow = sub.add_parser(
         "allow", help="Thêm mã cuộc trò chuyện đã xác minh vào danh sách tự rep."
     )
@@ -311,6 +361,8 @@ def main() -> None:
     try:
         if args.command == "configure":
             configure()
+        elif args.command == "configure-ai":
+            configure_ai(args.provider, args.daily_limit)
         elif args.command == "doctor":
             doctor()
         elif args.command == "allow":

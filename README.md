@@ -1,6 +1,6 @@
 # Bot AI trả lời Messenger cá nhân
 
-Bot nhận tin nhắn mới bằng tài khoản Messenger cá nhân, gửi nội dung cùng một phần ngữ cảnh sang Groq và trả lời trong đúng cuộc trò chuyện được chọn.
+Bot nhận tin nhắn mới bằng tài khoản Messenger cá nhân, gửi nội dung cùng một phần ngữ cảnh sang Groq hoặc Cloudflare Workers AI và trả lời trong đúng cuộc trò chuyện được chọn.
 
 Nền kết nối: **fbchat-v2 2.3.4**. Model mặc định: **openai/gpt-oss-120b trên Groq**. Bạn có thể đổi model trong `config.json`.
 
@@ -76,6 +76,42 @@ git pull --ff-only
 ```
 
 Lệnh này bỏ tiền tố icon và nâng `max_completion_tokens` lên 4096 và `output_char_limit` lên ít nhất 4000 ký tự, giữ các cấu hình khác. Bản cũ giới hạn văn bản 500 ký tự nên có thể cắt giữa câu, ngay cả khi model đã trả lời đầy đủ. Giới hạn này áp dụng cho **mỗi lần tạo câu trả lời**, gồm cả suy luận; không phải quota còn lại của tài khoản. Thông báo chạm giới hạn này không đồng nghĩa hết quota API. Giới hạn cao hơn cho phép model dùng nhiều token hơn; không đảm bảo mọi câu trả lời đều hoàn thành hoặc chất lượng tốt hơn. Quota thật vẫn có thể bị chạm riêng và thường báo HTTP 429. Khởi động lại bot sau khi chỉnh.
+
+### Đổi API sang Cloudflare Workers AI
+
+Bot vẫn chạy trên VPS; chỉ thay API tạo câu trả lời. Cấu hình đang dùng Groq không tự đổi khi `git pull`.
+
+1. Vào [Cloudflare Dashboard](https://dash.cloudflare.com/) → Workers AI → Use REST API.
+2. Chọn **Create a Workers AI API Token**, giữ quyền của mẫu rồi tạo token. Nếu tạo tùy chỉnh, cần Workers AI Read và Edit trên đúng tài khoản.
+3. Sao chép **Account ID** và token; nhập trực tiếp trên VPS, không đưa vào GitHub hay chat.
+4. Dừng bot bằng Ctrl+C, rồi chạy:
+
+```bash
+git pull --ff-only
+.venv/bin/python -m messenger_ai configure-ai cloudflare --daily-limit 1000
+.venv/bin/python -m messenger_ai check-ai
+.venv/bin/python -m messenger_ai chat-ai
+```
+
+`configure-ai` hỏi Account ID và token (ẩn khi nhập), chọn `@cf/qwen/qwen3-30b-a3b-fp8`, lưu riêng với key Groq. Lệnh giữ cookie, ngữ cảnh, phạm vi rep, giới hạn ký tự/token và thời gian nhường. `--daily-limit 1000` đổi giới hạn cục bộ từ 150 lên 1000 lần gọi/ngày; không làm tăng quota Cloudflare. Bỏ cờ này để giữ giới hạn cũ. Giới hạn 60 câu trả lời/người/ngày vẫn giữ nguyên nếu chưa tùy chỉnh.
+
+Khi check-ai thành công và đã thử chất lượng, `/quit` để thoát chat-ai, rồi chạy:
+
+```bash
+.venv/bin/python -m messenger_ai run --live
+```
+
+Lúc khởi động, bot in rõ nhà cung cấp và tên model. Không tự chuyển ngược sang Groq khi Cloudflare lỗi. Để quay lại Groq:
+
+```bash
+.venv/bin/python -m messenger_ai configure-ai groq
+```
+
+Có thể dùng biến môi trường `CLOUDFLARE_ACCOUNT_ID` và `CLOUDFLARE_API_TOKEN`; các biến này ưu tiên hơn giá trị lưu. Qwen3 nhận chỉ dẫn `/no_think` trong system prompt để hạn chế suy luận cho chat thường; đây là chỉ dẫn model, không bảo đảm tuyệt đối lượng token suy luận. Phần `<think>` và trường reasoning không được gửi lên Messenger.
+
+Cloudflare free hiện cấp 10.000 Neurons/ngày, reset 07:00 giờ Việt Nam; không phải 10.000 token. Khối lượng thực tế tùy model, ngữ cảnh và đầu ra, không cam kết số lượt cố định. Bot không bật gói trả phí; nếu tài khoản Cloudflare đã có billing thì phí theo thiết lập tài khoản đó.
+
+Nguồn: [REST setup](https://developers.cloudflare.com/workers-ai/get-started/rest-api/), [API tương thích OpenAI](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/), [Qwen3](https://developers.cloudflare.com/workers-ai/models/qwen3-30b-a3b-fp8/), [giá/quota](https://developers.cloudflare.com/workers-ai/platform/pricing/).
 
 ### 4. Chọn phạm vi tự rep
 
@@ -156,6 +192,7 @@ Các tùy chọn chính trong `config.json`:
 
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---:|---|
+| `ai_provider` | `groq` | `groq` hoặc `cloudflare`; dùng configure-ai để đổi cùng model/key |
 | `reply_scope` | `allowlist` | `all_private`: tất cả chat riêng, loại nhóm; `allowlist`: chỉ danh sách |
 | `allowed_threads` | `[]` | Mã xác minh qua discover; chỉ dùng khi phạm vi là `allowlist` |
 | `dry_run` | `true` | Chỉ in bản nháp khi chưa dùng `--live` |
@@ -227,7 +264,7 @@ Nếu phiên Facebook không hợp lệ, bot cần bạn cập nhật cookie. M�
 - Bản đầu xử lý **văn bản**. Tin chỉ có ảnh, sticker, file hoặc ghi âm không được gửi vào AI để đoán nội dung.
 - Chỉ xử lý tin mới khi bot chạy. Không tự trả lời bù tin cũ sau lúc offline, và không cam kết nhận đủ tin trong lúc mất mạng.
 - Tin thủ công đến trước khi bắt đầu gửi có thể ngăn bản nháp. Nếu một yêu cầu gửi đã được truyền ra mạng thì không thể bảo đảm thu hồi kịp.
-- Nội dung và một phần lịch sử của người được chọn được gửi tới Groq. Cookie và API key trong cấu hình không được chèn vào prompt của model. Cân nhắc quyền riêng tư của nội dung chat và người tham gia trước khi dùng dịch vụ AI bên ngoài.
+- Nội dung và một phần lịch sử của người được chọn được gửi tới nhà cung cấp AI đang chọn. Cookie và API key trong cấu hình không được chèn vào prompt của model. Cân nhắc quyền riêng tư của nội dung chat và người tham gia trước khi dùng dịch vụ AI bên ngoài.
 - `data` chứa lịch sử chat giới hạn và khóa/phiên thiết bị E2EE, lưu cục bộ chưa mã hóa ở tầng ứng dụng. Trên Linux, thư mục được giới hạn quyền; vẫn cần bảo vệ tài khoản máy chạy. Không chia sẻ `data` khi gửi log nhờ hỗ trợ.
 
 ## Kiểm tra và khắc phục

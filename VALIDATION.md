@@ -2,7 +2,7 @@
 
 Đã kiểm tra trên Linux x86-64, Python 3.12:
 
-- 76 bài test offline: đạt (gồm chế độ rep tất cả chat riêng).
+- 81 bài test offline: đạt (gồm chế độ rep tất cả chat riêng và đổi API Cloudflare).
 - Kiểm tra cú pháp và lint: đạt.
 - Wheel Messenger 2.3.4: kiểm đúng SHA-256 của bản phát hành.
 - Binary E2EE Linux x86-64 thật: kiểm đúng SHA-256, chạy được và trả hợp lệ cho RPC `hello`.
@@ -38,3 +38,9 @@ Chưa thử chế độ all_private với tài khoản thật. Việc nhận tin
 ## Nâng độ dài câu trả lời
 
 Nâng mặc định lên 4096 token tạo câu trả lời (gồm suy luận) và 4000 ký tự văn bản thay cho 500. Lệnh tune-chat cập nhật cấu hình cũ, giữ mức ký tự cao hơn nếu đã đặt. Kiểm tra hồi quy 76 test offline đạt; chưa đo token thực tế hay gọi API thật. Đầu vào giữ nguyên giới hạn lịch sử để không tăng tiêu hao ngoài yêu cầu.
+
+## Cloudflare Workers AI
+
+81 test offline đạt. Kiểm tra endpoint/account, token dùng đúng nhà cung cấp, max_tokens cho Cloudflare, không gửi tham số riêng của Groq, lọc suy luận, lỗi 403 không lộ token và không tự fallback. Lệnh configure-ai giữ cookie, scope và các giới hạn khác; nhập Account ID sai không ghi đè cấu hình. Kiểm tra đổi lại Groq và giữ key Cloudflare. Lệnh cấu hình chỉ xác minh định dạng, không gọi API hay Messenger.
+
+Chưa có Account ID/API token Cloudflare nên chưa thử endpoint thật hoặc chất lượng tiếng Việt. Người dùng chạy check-ai/chat-ai tại VPS để xác nhận trước khi chạy bot. Không coi test mô phỏng là xác nhận quota hay số lượt/ngày thực tế.
