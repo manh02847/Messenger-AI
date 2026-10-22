@@ -247,3 +247,100 @@ async def test_manual_cancellation_is_not_converted_to_retry(monkeypatch):
         with pytest.raises(asyncio.CancelledError):
             await ai.generate([], lambda: True)
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_times_out", [False, True])
+async def test_gemma_cannot_consume_flash_time_budget(monkeypatch, first_times_out):
+    monkeypatch.setattr(module, "GOOGLE_GEMMA_TIMEOUT", 0.03)
+    monkeypatch.setattr(module, "GOOGLE_POOL_TIMEOUT", 1)
+    calls, cancelled, budget = [], [], []
+
+    async def handler(request):
+        model = request.url.path.rsplit("/", 1)[-1].split(":")[0]
+        calls.append(model)
+        if model.startswith("gemma-"):
+            if first_times_out and model == GOOGLE_MODELS[0]:
+                raise httpx.ReadTimeout("private", request=request)
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append(model)
+        return google_reply()
+
+    def reserve():
+        budget.append(1)
+        return True
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        clients = [
+            ChatAI(
+                "google",
+                Settings(
+                    ai_provider="google", model=model, minimum_ai_interval_seconds=0
+                ),
+                "Persona",
+                client=client,
+                fail_fast=True,
+            )
+            for model in GOOGLE_MODELS
+        ]
+        ai = FallbackAI(*clients, log=lambda _: None)
+        assert await ai.generate([{"role": "user", "content": "Hi"}], reserve) == "OK"
+        assert ai.last_used == "Google / gemini-3.5-flash-lite"
+    expected = [GOOGLE_MODELS[0]]
+    if first_times_out:
+        expected.append(GOOGLE_MODELS[1])
+    assert calls == [*expected, GOOGLE_MODELS[2]]
+    assert len(budget) == len(calls)
+    assert cancelled == [expected[-1]]
+
+
+@pytest.mark.asyncio
+async def test_flash_timeout_still_preserves_total_google_budget(monkeypatch):
+    monkeypatch.setattr(module, "GOOGLE_GEMMA_TIMEOUT", 0.02)
+    monkeypatch.setattr(module, "GOOGLE_POOL_TIMEOUT", 0.06)
+    calls, cancelled = [], []
+
+    async def handler(request):
+        if request.url.host == "generativelanguage.googleapis.com":
+            model = request.url.path.rsplit("/", 1)[-1].split(":")[0]
+            calls.append(model)
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append(model)
+        calls.append("groq")
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "backup"}, "finish_reason": "stop"}]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        clients = [
+            ChatAI(
+                "google",
+                Settings(
+                    ai_provider="google", model=model, minimum_ai_interval_seconds=0
+                ),
+                "Persona",
+                client=client,
+                fail_fast=True,
+            )
+            for model in GOOGLE_MODELS
+        ]
+        clients.append(
+            ChatAI(
+                "groq",
+                Settings(minimum_ai_interval_seconds=0),
+                "Persona",
+                client=client,
+                fail_fast=True,
+            )
+        )
+        ai = FallbackAI(*clients, log=lambda _: None)
+        assert await ai.generate([], lambda: True) == "backup"
+    assert calls == [GOOGLE_MODELS[0], GOOGLE_MODELS[2], "groq"]
+    assert cancelled == [GOOGLE_MODELS[0], GOOGLE_MODELS[2]]

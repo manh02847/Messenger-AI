@@ -18,6 +18,7 @@ API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GOOGLE_REQUEST_TIMEOUT = 8
 GOOGLE_MODEL_TIMEOUT = 12
 GOOGLE_POOL_TIMEOUT = 20
+GOOGLE_GEMMA_TIMEOUT = 10
 
 
 class AIError(RuntimeError):
@@ -418,6 +419,14 @@ class FallbackAI:
 
     async def _generate(self, history, reserve):
         google_started = None
+        gemma_remaining = GOOGLE_GEMMA_TIMEOUT
+        has_flash = any(
+            getattr(ai, "provider", None) == "google"
+            and getattr(getattr(ai, "settings", None), "model", "").startswith(
+                "gemini-"
+            )
+            for ai in self.clients
+        )
         for index, ai in enumerate(self.clients):
             if self.clock() < self.blocked_until[index]:
                 continue
@@ -428,17 +437,33 @@ class FallbackAI:
                     remaining = GOOGLE_POOL_TIMEOUT - (self.clock() - google_started)
                     if remaining <= 0:
                         continue
+                    gemma = has_flash and ai.settings.model.startswith("gemma-")
+                    if gemma and gemma_remaining <= 0:
+                        continue
+                    gemma_deadline = gemma and gemma_remaining < remaining
+                    if gemma:
+                        remaining = min(remaining, gemma_remaining)
+                    attempt_started = self.clock()
                     try:
                         async with asyncio.timeout(remaining):
                             answer = await ai.generate(history, reserve)
                     except TimeoutError:
                         self.blocked_until[index] = self.clock() + 30
-                        self.log(
-                            "Google đã hết thời gian chờ của lượt này; chuyển sang nguồn khác."
-                        )
-                        # Skip remaining Google models for this turn.
-                        google_started = self.clock() - GOOGLE_POOL_TIMEOUT
+                        if gemma_deadline:
+                            gemma_remaining = 0
+                            self.log(
+                                "Gemma đã hết 10 giây chờ của lượt này; thử Flash tiếp theo."
+                            )
+                        else:
+                            self.log(
+                                "Google đã hết thời gian chờ của lượt này; chuyển sang nguồn khác."
+                            )
+                            # Skip remaining Google models for this turn.
+                            google_started = self.clock() - GOOGLE_POOL_TIMEOUT
                         continue
+                    finally:
+                        if gemma:
+                            gemma_remaining -= max(0, self.clock() - attempt_started)
                 else:
                     answer = await ai.generate(history, reserve)
             except ProviderUnavailable as error:
