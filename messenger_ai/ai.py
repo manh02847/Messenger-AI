@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,9 @@ import httpx
 from .config import GOOGLE_MODELS, Settings
 
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GOOGLE_REQUEST_TIMEOUT = 8
+GOOGLE_MODEL_TIMEOUT = 12
+GOOGLE_POOL_TIMEOUT = 20
 
 
 class AIError(RuntimeError):
@@ -225,82 +229,120 @@ class ChatAI:
             payload = google_payload(self.settings, self.persona, history)
             headers = {"x-goog-api-key": self.api_key}
         async with self._lock:
-            attempts = 1 if self.fail_fast else 3
-            for attempt in range(attempts):
-                wait = self.settings.minimum_ai_interval_seconds - (
-                    time.monotonic() - self._last_attempt
-                )
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                if not reserve():
-                    raise AIError("Đã đạt giới hạn gọi AI trong ngày do bạn đặt.")
-                self._last_attempt = time.monotonic()
+            if self.provider == "google":
                 try:
-                    response = await self.client.post(
-                        self.api_url,
-                        headers=headers,
-                        json=payload,
-                    )
-                except httpx.RequestError:
-                    if attempt == attempts - 1:
-                        raise ProviderUnavailable(
-                            f"Chưa kết nối được {self.label}; không gửi tin nhắn trả lời."
-                        ) from None
-                    await asyncio.sleep(2**attempt)
-                    continue
-                if response.status_code in (408, 429) or response.status_code >= 500:
-                    if attempt == attempts - 1:
-                        try:
-                            delay = retry_delay(
-                                response.headers.get("retry-after"), attempt + 1
-                            )
-                        except ProviderUnavailable as error:
-                            delay = error.cooldown
-                        if self.provider == "google" and response.status_code == 429:
-                            delay = google_cooldown(response, delay)
-                        raise ProviderUnavailable(
-                            f"{self.label} đang giới hạn hoặc lỗi dịch vụ (HTTP {response.status_code}).",
-                            cooldown=max(
-                                300 if response.status_code == 429 else 60, delay
-                            ),
-                        )
-                    await asyncio.sleep(
-                        retry_delay(response.headers.get("retry-after"), attempt + 1)
-                    )
-                    continue
-                if self.provider == "google" and response.status_code == 404:
+                    async with asyncio.timeout(GOOGLE_MODEL_TIMEOUT):
+                        return await self._request(payload, headers, reserve)
+                except TimeoutError:
                     raise ProviderUnavailable(
-                        "Model Google không khả dụng; kiểm tra model trong AI Studio.",
-                        cooldown=3600,
+                        "Google phản hồi quá chậm; chuyển model/nguồn tiếp theo.",
+                        cooldown=30,
+                    ) from None
+            return await self._request(payload, headers, reserve)
+
+    async def _request(self, payload, headers, reserve):
+        google = self.provider == "google"
+        attempts = 2 if google else (1 if self.fail_fast else 3)
+        for attempt in range(attempts):
+            wait = self.settings.minimum_ai_interval_seconds - (
+                time.monotonic() - self._last_attempt
+            )
+            if wait > 0:
+                await asyncio.sleep(wait)
+            if not reserve():
+                raise AIError("Đã đạt giới hạn gọi AI trong ngày do bạn đặt.")
+            self._last_attempt = time.monotonic()
+            request_options = (
+                {"timeout": httpx.Timeout(GOOGLE_REQUEST_TIMEOUT, connect=4)}
+                if google
+                else {}
+            )
+            try:
+                response = await self.client.post(
+                    self.api_url,
+                    headers=headers,
+                    json=payload,
+                    **request_options,
+                )
+            except httpx.RequestError:
+                if google or attempt == attempts - 1:
+                    raise ProviderUnavailable(
+                        f"Chưa kết nối được {self.label}; không gửi tin nhắn trả lời.",
+                        cooldown=30 if google else 300,
+                    ) from None
+                await asyncio.sleep(2**attempt)
+                continue
+            if response.status_code in (408, 429) or response.status_code >= 500:
+                if google:
+                    try:
+                        delay = retry_delay(response.headers.get("retry-after"), 0)
+                    except ProviderUnavailable as error:
+                        delay = error.cooldown
+                    delay = google_cooldown(response, delay)
+                    quick_retry = (
+                        attempt == 0
+                        and response.status_code in (500, 502, 503, 504)
+                        and time.monotonic() - self._last_attempt <= 2
+                        and delay <= 2
                     )
-                if response.status_code in (401, 403):
-                    raise AIError(
-                        f"{self.label} từ chối API key/token, tài khoản hoặc quyền truy cập model."
-                    )
-                if response.status_code >= 400:
-                    raise AIError(
-                        f"{self.label} từ chối cấu hình yêu cầu (HTTP {response.status_code}); kiểm tra tên model."
-                    )
-                try:
-                    data = response.json()
-                    if self.provider == "google":
-                        answer = google_text(data)
-                        self.last_used = self.description
-                        return answer
-                    choice = data["choices"][0]
-                    if choice.get("finish_reason") == "length":
-                        raise AIError(
-                            "Câu trả lời chạm max_completion_tokens (gồm suy luận); "
-                            "đây không phải thông báo hết quota API. "
-                            "Chạy tune-chat nếu đang dùng mức 768 cũ."
+                    if quick_retry:
+                        print(
+                            f"{self.description}: HTTP {response.status_code}, thử lại một lần trước khi chuyển nguồn."
                         )
-                    answer = final_text(choice["message"]["content"])
+                        await asyncio.sleep(delay + random.uniform(0, 0.5))
+                        continue
+                    raise ProviderUnavailable(
+                        f"Google đang giới hạn hoặc lỗi dịch vụ (HTTP {response.status_code}).",
+                        cooldown=max(300 if response.status_code == 429 else 20, delay),
+                    )
+                if attempt == attempts - 1:
+                    try:
+                        delay = retry_delay(
+                            response.headers.get("retry-after"), attempt + 1
+                        )
+                    except ProviderUnavailable as error:
+                        delay = error.cooldown
+                    raise ProviderUnavailable(
+                        f"{self.label} đang giới hạn hoặc lỗi dịch vụ (HTTP {response.status_code}).",
+                        cooldown=max(300 if response.status_code == 429 else 60, delay),
+                    )
+                await asyncio.sleep(
+                    retry_delay(response.headers.get("retry-after"), attempt + 1)
+                )
+                continue
+            if self.provider == "google" and response.status_code == 404:
+                raise ProviderUnavailable(
+                    "Model Google không khả dụng; kiểm tra model trong AI Studio.",
+                    cooldown=3600,
+                )
+            if response.status_code in (401, 403):
+                raise AIError(
+                    f"{self.label} từ chối API key/token, tài khoản hoặc quyền truy cập model."
+                )
+            if response.status_code >= 400:
+                raise AIError(
+                    f"{self.label} từ chối cấu hình yêu cầu (HTTP {response.status_code}); kiểm tra tên model."
+                )
+            try:
+                data = response.json()
+                if self.provider == "google":
+                    answer = google_text(data)
                     self.last_used = self.description
                     return answer
-                except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+                choice = data["choices"][0]
+                if choice.get("finish_reason") == "length":
                     raise AIError(
-                        f"Phản hồi {self.label} không đúng định dạng mong đợi."
-                    ) from None
+                        "Câu trả lời chạm max_completion_tokens (gồm suy luận); "
+                        "đây không phải thông báo hết quota API. "
+                        "Chạy tune-chat nếu đang dùng mức 768 cũ."
+                    )
+                answer = final_text(choice["message"]["content"])
+                self.last_used = self.description
+                return answer
+            except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+                raise AIError(
+                    f"Phản hồi {self.label} không đúng định dạng mong đợi."
+                ) from None
         raise AIError(f"Không nhận được phản hồi từ {self.label}.")
 
     async def close(self) -> None:
@@ -375,11 +417,30 @@ class FallbackAI:
                 ) from None
 
     async def _generate(self, history, reserve):
+        google_started = None
         for index, ai in enumerate(self.clients):
             if self.clock() < self.blocked_until[index]:
                 continue
             try:
-                answer = await ai.generate(history, reserve)
+                if getattr(ai, "provider", None) == "google":
+                    if google_started is None:
+                        google_started = self.clock()
+                    remaining = GOOGLE_POOL_TIMEOUT - (self.clock() - google_started)
+                    if remaining <= 0:
+                        continue
+                    try:
+                        async with asyncio.timeout(remaining):
+                            answer = await ai.generate(history, reserve)
+                    except TimeoutError:
+                        self.blocked_until[index] = self.clock() + 30
+                        self.log(
+                            "Google đã hết thời gian chờ của lượt này; chuyển sang nguồn khác."
+                        )
+                        # Skip remaining Google models for this turn.
+                        google_started = self.clock() - GOOGLE_POOL_TIMEOUT
+                        continue
+                else:
+                    answer = await ai.generate(history, reserve)
             except ProviderUnavailable as error:
                 self.blocked_until[index] = self.clock() + error.cooldown
                 self.log(
