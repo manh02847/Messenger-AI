@@ -120,12 +120,13 @@ def tune_chat() -> None:
     path = ROOT / "config.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
     Settings.from_dict(raw)
-    raw["max_completion_tokens"] = max(raw.get("max_completion_tokens", 768), 2048)
+    raw["max_completion_tokens"] = max(raw.get("max_completion_tokens", 768), 4096)
+    raw["output_char_limit"] = max(raw.get("output_char_limit", 500), 4000)
     raw["reply_prefix"] = ""
     Settings.from_dict(raw)
     private_json(path, raw)
     print(
-        "Đã bỏ tiền tố và đặt giới hạn mỗi câu trả lời ít nhất 2048 token. Khởi động lại bot để áp dụng."
+        "Đã bỏ tiền tố, nâng ngân sách tạo câu trả lời lên 4096 token và giới hạn văn bản ít nhất 4000 ký tự. Khởi động lại bot để áp dụng."
     )
 
 

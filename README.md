@@ -75,7 +75,7 @@ git pull --ff-only
 .venv/bin/python -m messenger_ai tune-chat
 ```
 
-Lệnh này bỏ tiền tố icon và nâng `max_completion_tokens` lên ít nhất 2048, giữ các cấu hình khác. Giới hạn này áp dụng cho **mỗi lần tạo câu trả lời**, gồm cả suy luận; không phải quota còn lại của tài khoản. Thông báo chạm giới hạn này không đồng nghĩa hết quota API. Giới hạn cao hơn cho phép model dùng nhiều token hơn; không đảm bảo mọi câu trả lời đều hoàn thành hoặc chất lượng tốt hơn. Quota thật vẫn có thể bị chạm riêng và thường báo HTTP 429. Khởi động lại bot sau khi chỉnh.
+Lệnh này bỏ tiền tố icon và nâng `max_completion_tokens` lên 4096 và `output_char_limit` lên ít nhất 4000 ký tự, giữ các cấu hình khác. Bản cũ giới hạn văn bản 500 ký tự nên có thể cắt giữa câu, ngay cả khi model đã trả lời đầy đủ. Giới hạn này áp dụng cho **mỗi lần tạo câu trả lời**, gồm cả suy luận; không phải quota còn lại của tài khoản. Thông báo chạm giới hạn này không đồng nghĩa hết quota API. Giới hạn cao hơn cho phép model dùng nhiều token hơn; không đảm bảo mọi câu trả lời đều hoàn thành hoặc chất lượng tốt hơn. Quota thật vẫn có thể bị chạm riêng và thường báo HTTP 429. Khởi động lại bot sau khi chỉnh.
 
 ### 4. Chọn phạm vi tự rep
 
@@ -165,8 +165,8 @@ Các tùy chọn chính trong `config.json`:
 | `history_messages` | `12` | Tối đa số tin trong ngữ cảnh cục bộ |
 | `history_char_limit` | `3500` | Tổng ký tự lịch sử gửi sang AI mỗi lượt |
 | `input_char_limit` | `1200` | Tối đa ký tự của mỗi tin đưa vào ngữ cảnh |
-| `output_char_limit` | `500` | Tối đa ký tự trả lời, chưa tính tiền tố |
-| `max_completion_tokens` | `2048` | Giới hạn token mỗi phản hồi, gồm token suy luận của model |
+| `output_char_limit` | `4000` | Tối đa ký tự trả lời, chưa tính tiền tố |
+| `max_completion_tokens` | `4096` | Giới hạn token mỗi phản hồi, gồm token suy luận của model |
 | `max_ai_calls_per_day` | `150` | Số lần gọi AI cục bộ/ngày, tính cả thử lại |
 | `max_replies_per_thread_per_day` | `60` | Số lượt gửi/cố gửi trên mỗi cuộc trò chuyện/ngày |
 | `max_message_age_seconds` | `120` | Bỏ tin quá cũ, không soạn trả lời hàng loạt lịch sử |

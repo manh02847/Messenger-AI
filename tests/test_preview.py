@@ -82,6 +82,7 @@ def test_tune_preserves_secrets_recipients_and_larger_budget(tmp_path, monkeypat
     config = {
         "allowed_threads": ["e2ee:222@msgr"],
         "max_completion_tokens": 4096,
+        "output_char_limit": 6000,
         "history_messages": 20,
         "reply_prefix": "old",
     }
@@ -92,9 +93,14 @@ def test_tune_preserves_secrets_recipients_and_larger_budget(tmp_path, monkeypat
     assert updated == dict(config, reply_prefix="")
     assert (tmp_path / "secrets.json").read_text() == "private"
     config["max_completion_tokens"] = 768
+    config["output_char_limit"] = 500
     (tmp_path / "config.json").write_text(json.dumps(config))
     cli.tune_chat()
     assert (
         json.loads((tmp_path / "config.json").read_text())["max_completion_tokens"]
-        == 2048
+        == 4096
+    )
+
+    assert (
+        json.loads((tmp_path / "config.json").read_text())["output_char_limit"] == 4000
     )
