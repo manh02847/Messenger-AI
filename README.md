@@ -114,7 +114,7 @@ Không yêu cầu người kia nhắn lệnh hoặc tag bot; khi có tin văn b�
 
 ## Chỉnh giọng nói và hành vi
 
-Sửa **`persona.txt`** để thay cách xưng hô, độ dài và các thông tin bot được phép biết. Mặc định hỗ trợ Mạnh, xưng mình/bạn, trả lời ngắn. Khi người nhắn hỏi có phải bot hay không, bot được hướng dẫn nói rõ là trợ lý tự động. Câu trả lời có tiền tố `🤖 `; chỉnh `reply_prefix` nếu muốn đổi nhãn.
+Sửa **`persona.txt`** để thay cách xưng hô, độ dài và các thông tin bot được phép biết. Mặc định hỗ trợ Mạnh, xưng mình/bạn, trả lời ngắn và được hướng dẫn không thêm emoji. Khi người nhắn hỏi có phải bot hay không, bot được hướng dẫn nói rõ là trợ lý tự động. Mặc định `reply_prefix` là chuỗi rỗng. Nếu đã cài bản cũ, đổi `reply_prefix` trong `config.json` thành `""` rồi khởi động lại để bỏ icon robot; `git pull` không sửa cấu hình riêng của bạn.
 
 Các tùy chọn chính trong `config.json`:
 

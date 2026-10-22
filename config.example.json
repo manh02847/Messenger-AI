@@ -2,7 +2,7 @@
   "allowed_threads": [],
   "model": "openai/gpt-oss-120b",
   "dry_run": true,
-  "reply_prefix": "🤖 ",
+  "reply_prefix": "",
   "debounce_seconds": 2.5,
   "reply_cooldown_seconds": 8,
   "manual_pause_seconds": 300,

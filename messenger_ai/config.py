@@ -32,7 +32,7 @@ class Settings:
     allowed_threads: tuple[str, ...] = ()
     model: str = "openai/gpt-oss-120b"
     dry_run: bool = True
-    reply_prefix: str = "🤖 "
+    reply_prefix: str = ""
     debounce_seconds: float = 2.5
     reply_cooldown_seconds: float = 8
     manual_pause_seconds: float = 300
