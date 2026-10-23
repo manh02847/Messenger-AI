@@ -394,3 +394,72 @@ Nếu phiên Facebook không hợp lệ, bot cần bạn cập nhật cookie. M�
 - Groq: https://console.groq.com/docs/quickstart
 - Hạn mức Groq: https://console.groq.com/docs/rate-limits
 - Tài sản upstream được kiểm SHA-256 theo `assets.json`; phần nguồn tương ứng và giấy phép xem `THIRD_PARTY.md`.
+
+
+## ChatGPT web bằng chat tạm thời (thử nghiệm)
+
+Nguồn này thao tác trên giao diện ChatGPT thông thường bằng Chromium/Playwright,
+không dùng Sign in with ChatGPT/Codex, không gọi API nội bộ và không xuất cookie.
+Bật riêng bằng `configure-chatgpt-web`; cấu hình hiện tại không tự thay đổi sau khi pull.
+Thứ tự khi bật: **ChatGPT web → các model Google đã chọn → nguồn API chính → API dự phòng**.
+Các API vẫn cần cấu hình hợp lệ như trước.
+
+Mỗi lượt mở một tab chat tạm thời mới, xác nhận chế độ tạm thời và đăng nhập trước
+khi gửi. Bot đưa persona và ngữ cảnh riêng của cuộc trò chuyện Messenger vào một
+prompt (tối đa `history_messages` / `history_char_limit`), đợi phản hồi hoàn chỉnh,
+rồi đóng tab kể cả khi lỗi/hủy. Không ghi thêm lịch sử ChatGPT, nhưng OpenAI có thể
+giữ bản sao tối đa 30 ngày. Lịch sử Messenger trong SQLite vẫn theo cấu hình cũ.
+Không lưu prompt/phản hồi web vào log. Không thể suy ra ChatGPT không có mọi loại
+hạn mức từ việc Chat không tính vào hạn mức Work/Codex.
+
+Cài phần bổ sung trong môi trường Python của bot:
+
+```bash
+cd /root/messenger-ai-bot
+git pull --ff-only
+.venv/bin/python -m pip install -r requirements-web.txt
+.venv/bin/python -m playwright install --with-deps chromium
+```
+
+**Đăng nhập một lần trên chính máy chạy bot**, bằng một phiên desktop có thể mở
+Chromium (màn hình máy tính, SSH X11 hoặc desktop VPS được bảo vệ). Terminal SSH
+thuần không hiển thị được cửa sổ đăng nhập. Trình duyệt test của trợ lý không tự
+chuyển phiên đăng nhập sang VPS. Không gửi cookie, mật khẩu hoặc OTP vào chat/GitHub.
+Dừng service bot nếu nó đã dùng nguồn web trước khi đăng nhập/check để tránh hai
+Chromium dùng chung profile.
+
+```bash
+.venv/bin/python -m messenger_ai login-chatgpt-web
+```
+
+Tự nhập thông tin đăng nhập trong cửa sổ Chromium vừa mở, xong quay lại terminal
+nhấn Enter. Phiên trình duyệt được lưu tại `data/chatgpt-browser` (thư mục 0700,
+đã nằm trong `.gitignore`). Thư mục này chứa thông tin đăng nhập: không commit,
+chia sẻ hoặc dùng chung giữa nhiều tiến trình. Đăng nhập/check/run cần cùng user
+hệ điều hành và cùng thư mục repo. Sau đó:
+
+```bash
+.venv/bin/python -m messenger_ai check-chatgpt-web
+.venv/bin/python -m messenger_ai configure-chatgpt-web
+```
+
+`check-chatgpt-web` chỉ thử nguồn web và in nguồn thực tế; **không fallback API**,
+không gửi Messenger. Chạy thành công rồi khởi động lại service `messenger-ai`
+(system hoặc user, tùy cách đã cài). Khi chạy service, Chromium mặc định headless;
+nếu desktop VPS yêu cầu giữ chế độ có cửa sổ, đặt `CHATGPT_WEB_HEADLESS=0` cùng
+`DISPLAY` phù hợp trong môi trường service. Không công khai cổng điều khiển browser.
+
+Web thử một lần mỗi lượt, tối đa 35 giây; khi lỗi/chưa đăng nhập/giao diện đổi,
+nguồn web nghỉ 300 giây và bot dùng các API hiện có. Không tự thử lại sau khi đã
+bấm Gửi mà không chắc kết quả. Không tự giải CAPTCHA hay vượt chặn trình duyệt;
+nếu gặp, xử lý đăng nhập trên máy bạn hoặc tắt nguồn web:
+
+```bash
+.venv/bin/python -m messenger_ai configure-chatgpt-web --disable
+```
+
+Khởi động lại service để nhận cấu hình. Thời gian chờ toàn chuỗi AI vẫn tối đa
+60 giây. Model web theo lựa chọn mặc định của tài khoản/giao diện; tên model trong
+config API không đổi model ChatGPT web. Đây là adapter thử nghiệm: giao diện hoặc
+chính sách phiên có thể thay đổi. Đã thử chat tạm thời thật trên trình duyệt của
+phiên làm việc; chưa xác nhận đăng nhập/headless/nhận tin Messenger thật trên VPS.

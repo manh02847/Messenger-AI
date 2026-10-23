@@ -500,4 +500,8 @@ def create_ai(secrets: dict[str, str], settings: Settings, persona: str):
         )
         for token, config, account_id in configs
     ]
+    if settings.chatgpt_web:
+        from .chatgpt_web import ChatGPTWebAI
+
+        clients.insert(0, ChatGPTWebAI(settings, persona))
     return FallbackAI(*clients) if len(clients) > 1 else clients[0]

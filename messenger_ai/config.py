@@ -39,6 +39,7 @@ class Settings:
     reply_scope: str = "allowlist"
     ai_provider: str = "groq"
     ai_fallback: bool = False
+    chatgpt_web: bool = False
     fallback_model: str = ""
     google_models: tuple[str, ...] = ()
     model: str = "openai/gpt-oss-120b"
@@ -93,6 +94,8 @@ class Settings:
         result = cls(**value)
         if result.reply_scope not in ("allowlist", "all_private"):
             raise ValueError("reply_scope phải là allowlist hoặc all_private.")
+        if not isinstance(result.chatgpt_web, bool):
+            raise ValueError("chatgpt_web phải là true hoặc false.")
         if not isinstance(result.ai_fallback, bool):
             raise ValueError("ai_fallback phải là true hoặc false.")
         if not isinstance(result.fallback_model, str):

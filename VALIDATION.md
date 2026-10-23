@@ -72,3 +72,18 @@ Thay đổi dựa trên log người dùng có Google chờ 25 giây trước kh
 ## Dành thời gian cho Flash
 
 132 test offline và lint đạt. Sửa trường hợp hai Gemma dùng hết 20 giây Google khiến Flash bị bỏ qua: khi có Flash, hai Gemma dùng chung tối đa 10 giây; phần còn lại của 20 giây dành cho các model Google tiếp theo. Kiểm tra request Gemma treo bị hủy và Gemini 3.5 Flash Lite thực sự được gọi/trả lời; kiểm tra cả trường hợp Gemma đầu đã lỗi mạng rồi Gemma thứ hai treo. Nếu Flash cũng treo thì hạn Google vẫn có hiệu lực, hủy request và chuyển Groq. Không gọi model còn lại sau khi có câu trả lời thành công, vẫn tính ngân sách từng request. Các test timeout dùng thời gian thu nhỏ; chưa đo với API thật. Lỗi auth/cấu hình, quota và giới hạn cục bộ vẫn được giữ nguyên.
+
+
+### ChatGPT web / chat tạm thời
+
+- Toàn bộ 143 kiểm thử offline và Ruff đều đạt.
+- 11 ca bổ sung kiểm tra giới hạn/ngăn trộn ngữ cảnh, tạo tab tạm mới mỗi lượt,
+  chặn gửi khi chưa xác nhận đăng nhập/chế độ tạm, đóng tab khi hủy/lỗi,
+  không trả phản hồi đang stream hoặc gửi lại khi không chắc, ngân sách cục bộ,
+  giữ thứ tự API dự phòng, cấu hình không đụng secrets và lệnh check web không
+  fallback API. Các bài adapter dùng browser giả lập, không phải headless live.
+- Đã gửi prompt tổng hợp thật trên ChatGPT web với `temporary-chat=true`; giao
+  diện xác nhận không xuất hiện trong lịch sử. Nhận được phản hồi cho ngữ cảnh
+  “tí đi choei k” → “Bạn định đi đâu, mấy giờ?” → “ra hồ ngồi tí thôi, 8h”, không emoji.
+- Chưa test adapter Playwright với tài khoản thật, chưa test headless trên VPS,
+  chưa triển khai hay xác nhận luồng Messenger→ChatGPT→Messenger thật.

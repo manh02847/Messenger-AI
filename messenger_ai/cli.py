@@ -155,6 +155,41 @@ def configure_google(models: list[str] | None = None, *, disable: bool = False) 
     print("Chạy check-ai/chat-ai để thử rồi khởi động lại service bot.")
 
 
+def configure_chatgpt_web(*, disable: bool = False) -> None:
+    path = ROOT / "config.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    Settings.from_dict(raw)
+    raw["chatgpt_web"] = not disable
+    Settings.from_dict(raw)
+    private_json(path, raw)
+    print("ChatGPT web:", "TẮT" if disable else "ƯU TIÊN, mỗi lượt dùng chat tạm thời")
+    print("Giữ các nguồn API cũ dự phòng. Chạy check-chatgpt-web để thử riêng nguồn web.")
+
+
+async def check_chatgpt_web() -> None:
+    from .chatgpt_web import ChatGPTWebAI
+    from .state import State
+    from .core import VIETNAM
+    from datetime import datetime
+
+    settings = Settings.load()
+    ai = ChatGPTWebAI(settings, (ROOT / "persona.txt").read_text(encoding="utf-8"))
+    state = State(ROOT / "data" / "ai-check.sqlite3")
+    try:
+        answer = await ai.generate(
+            [{"role": "user", "content": "tí đi choei k"}],
+            lambda: state.reserve_ai(
+                datetime.now(VIETNAM).date().isoformat(), settings.max_ai_calls_per_day
+            ),
+        )
+        print("Nguồn thực tế:", ai.last_used)
+        print(answer)
+        print("Chỉ thử ChatGPT web; không gọi API dự phòng, không gửi Messenger.")
+    finally:
+        await ai.close()
+        state.close()
+
+
 def doctor() -> None:
     from scripts.fetch_assets import ensure_bridge
 
@@ -388,13 +423,13 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
-        description="Bot AI trả lời Messenger cá nhân, dùng Groq hoặc Cloudflare."
+        description="Bot AI trả lời Messenger cá nhân, hỗ trợ nhiều nguồn AI."
     )
     sub = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
         ("configure", "Nhập API key và cookie tại máy bạn."),
         ("doctor", "Kiểm tra offline thư viện và bridge."),
-        ("check-ai", "Gọi thử API đang chọn; không gửi Messenger."),
+        ("check-ai", "Gọi thử nguồn AI đang chọn; không gửi Messenger."),
         ("chat-ai", "Chat thử với AI và ngữ cảnh, không kết nối Messenger."),
         ("upgrade-chat", "Đổi sang Qwen3.8 và nâng giới hạn ít nhất 1000/ngày."),
         ("tune-chat", "Bỏ icon và nâng giới hạn token mỗi câu trả lời."),
@@ -427,6 +462,10 @@ def main() -> None:
     google_options.add_argument(
         "--disable", action="store_true", help="Tắt Google, giữ các nguồn cũ."
     )
+    web_config = sub.add_parser("configure-chatgpt-web", help="Ưu tiên ChatGPT web chat tạm thời.")
+    web_config.add_argument("--disable", action="store_true")
+    sub.add_parser("login-chatgpt-web", help="Đăng nhập trên trình duyệt riêng của máy chạy bot.")
+    sub.add_parser("check-chatgpt-web", help="Thử riêng ChatGPT web, không fallback API.")
     allow = sub.add_parser(
         "allow", help="Thêm mã cuộc trò chuyện đã xác minh vào danh sách tự rep."
     )
@@ -449,6 +488,14 @@ def main() -> None:
             configure_ai(args.provider, args.daily_limit, args.fallback)
         elif args.command == "configure-google":
             configure_google(args.models, disable=args.disable)
+        elif args.command == "configure-chatgpt-web":
+            configure_chatgpt_web(disable=args.disable)
+        elif args.command == "login-chatgpt-web":
+            from .chatgpt_web import login_web
+
+            asyncio.run(login_web())
+        elif args.command == "check-chatgpt-web":
+            asyncio.run(check_chatgpt_web())
         elif args.command == "doctor":
             doctor()
         elif args.command == "allow":

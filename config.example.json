@@ -2,6 +2,7 @@
   "allowed_threads": [],
   "reply_scope": "allowlist",
   "ai_provider": "groq",
+  "chatgpt_web": false,
   "ai_fallback": false,
   "fallback_model": "",
   "google_models": [],
