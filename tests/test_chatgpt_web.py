@@ -344,3 +344,32 @@ async def test_cookie_import_failed_verification_preserves_old_profile_and_clean
     assert (old / "old-profile").read_text() == "preserve"
     assert list((tmp_path / "data").glob("chatgpt-import-*")) == []
     ai.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a=1; b=2;",
+        "a=1;; b=2; ",
+        '"a=1; b=2"',
+        "'a=1; b=2'",
+        "\ufeffCookie: a=1; b=2;",
+        "Cookie\r\na=1;\r\n b=2;",
+    ],
+)
+def test_cookie_copy_formatting_is_accepted_without_modifying_values(value):
+    from messenger_ai.chatgpt_web import parse_cookie_input
+
+    assert [(c["name"], c["value"]) for c in parse_cookie_input(value)] == [
+        ("a", "1"),
+        ("b", "2"),
+    ]
+
+
+def test_cookie_with_newline_inside_token_is_rejected_without_echoing_it():
+    from messenger_ai.chatgpt_web import parse_cookie_input
+
+    with pytest.raises(ValueError) as error:
+        parse_cookie_input("token=private\nsecret")
+    assert "ngắt dòng" in str(error.value)
+    assert "private" not in str(error.value)

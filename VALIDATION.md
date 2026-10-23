@@ -109,3 +109,12 @@ Thay đổi dựa trên log người dùng có Google chờ 25 giây trước kh
 - Ghi nhận lệnh `systemctl stop` của người dùng báo system service không tồn tại;
   hướng dẫn kiểm tra user service và phiên chạy tay. Chưa truy cập VPS để xác
   định tiến trình thực tế hoặc thử cookie thật.
+
+
+### Định dạng cookie copy từ DevTools
+
+- Toàn bộ 165 kiểm thử offline và Ruff đều đạt.
+- 7 ca bổ sung kiểm tra dấu chấm phẩy thừa/cuối chuỗi, dấu nháy bao ngoài, BOM,
+  nhãn Cookie và xuống dòng giữa cặp; vẫn từ chối ngắt dòng giữa giá trị token.
+- Chỉ dùng cookie giả để kiểm thử parser. Không trích xuất hay sử dụng giá trị
+  đăng nhập trong ảnh người dùng, chưa xác định nguyên nhân chính xác trên VPS.

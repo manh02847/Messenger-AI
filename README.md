@@ -435,7 +435,12 @@ systemctl stop messenger-ai
 Tại dòng `Cookie ChatGPT`, dán chuỗi Cookie của tài khoản bạn muốn nối trên
 `chatgpt.com`, rồi Enter. Nội dung được nhập ẩn, không đưa cookie vào đối số shell
 hay shell history. Hỗ trợ `name=value; name2=value2`, có/không tiền tố `Cookie:`,
-và cookie phiên bị chia nhiều phần `.0`, `.1`. Đừng gửi cookie vào chat/GitHub.
+và cookie phiên bị chia nhiều phần `.0`, `.1`. Chấp nhận dấu `;` cuối chuỗi và
+dấu nháy bao ngoài do copy. Trong DevTools → Network → Headers → Request Headers,
+chỉ copy **giá trị bên phải Cookie**, không copy cả danh sách request headers.
+Dán nguyên chuỗi một dòng vào ô nhập ẩn của terminal, không dán thành lệnh shell.
+Cookie bị ngắt dòng giữa giá trị sẽ bị từ chối; dòng xuống trong file chỉ được
+chấp nhận giữa các cặp cookie. Đừng gửi cookie vào chat/GitHub.
 Cookie thiếu ngày hết hạn được giữ trong browser tối đa 7 ngày để còn dùng sau
 khi restart; thời hạn phiên thật phía ChatGPT vẫn quyết định còn đăng nhập hay không.
 Cookie cần lấy từ chính phiên tài khoản của bạn; không cần dùng tài khoản chính.

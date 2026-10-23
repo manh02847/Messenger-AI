@@ -201,17 +201,26 @@ def parse_cookie_input(value: str) -> list[dict]:
     """Accept a Cookie header or a cookie-export JSON; never echo input/errors."""
     if not value or len(value.encode("utf-8")) > 65536:
         raise ValueError("Cookie rỗng hoặc lớn hơn 64 KiB.")
-    value = value.strip()
+    value = value.lstrip("\ufeff").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1].strip()
+    hint = "Dùng riêng giá trị Cookie dạng name=value; name2=value2 hoặc JSON export."
     try:
         if value.startswith(("[", "{")):
             raw = json.loads(value)
             raw = raw.get("cookies") if isinstance(raw, dict) else raw
         else:
-            value = re.sub(r"^Cookie:\s*", "", value, flags=re.I)
+            value = re.sub(
+                r"^Cookie(?:\s*:\s*|[ \t]*[\r\n]+\s*)", "", value, flags=re.I
+            )
             raw = []
             for pair in value.split(";"):
-                name, separator, content = pair.strip().partition("=")
+                pair = pair.strip()
+                if not pair:
+                    continue
+                name, separator, content = pair.partition("=")
                 if not separator:
+                    hint = "Có đoạn thiếu dấu =. Chỉ copy giá trị bên phải dòng Cookie, không copy toàn bộ headers."
                     raise ValueError
                 raw.append({"name": name, "value": content, "domain": "chatgpt.com"})
         if not isinstance(raw, list) or not raw or len(raw) > 500:
@@ -228,6 +237,7 @@ def parse_cookie_input(value: str) -> list[dict]:
                 or not isinstance(content, str)
                 or any(char in content for char in "\r\n\x00")
             ):
+                hint = "Tên/giá trị cookie sai định dạng hoặc bị ngắt dòng giữa giá trị. Copy lại nguyên chuỗi Cookie."
                 raise ValueError
             cookie = {
                 "name": name,
@@ -271,9 +281,7 @@ def parse_cookie_input(value: str) -> list[dict]:
             raise ValueError
         return cookies
     except (ValueError, TypeError, KeyError, AttributeError):
-        raise ValueError(
-            "Cookie không hợp lệ. Dùng chuỗi Cookie hoặc JSON export của chatgpt.com."
-        ) from None
+        raise ValueError(f"Cookie không hợp lệ. {hint}") from None
 
 
 async def import_web_cookies(value: str) -> None:
