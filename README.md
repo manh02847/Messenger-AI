@@ -542,3 +542,28 @@ terminal có [giới hạn dòng 4096 byte tính cả xuống dòng](https://man
 Nếu vẫn sai định dạng sau cập nhật, gửi dòng lỗi và số byte được nhận, không gửi
 cookie. Có thể dùng `--file` với file lưu bằng editor/SFTP; không dán cookie vào
 lệnh shell hoặc `echo` vì có thể lưu shell history.
+
+
+### Cookie đúng định dạng nhưng chưa xác nhận đăng nhập
+
+Số byte nhận được và việc parse thành công chỉ xác nhận dữ liệu đầu vào.
+`import-chatgpt-cookie` kiểm tra trên profile tạm mới và **chỉ đổi profile chính
+khi xác nhận được đăng nhập cùng chat tạm thời**. Nếu import thất bại, lệnh
+`check-chatgpt-web` vẫn mở profile cũ; không kiểm tra lại cookie vừa nhập lỗi.
+
+Sau khi cập nhật, nhập cookie lại một lần và gửi dòng mã chẩn đoán, không gửi cookie:
+
+| Mã | Trạng thái quan sát được |
+| --- | --- |
+| `LOGIN_REQUIRED` | Chuyển sang trang đăng nhập hoặc vẫn có nút đăng nhập. |
+| `HUMAN_VERIFICATION` | Trang hiện yêu cầu xác minh trình duyệt/con người. Không tự vượt chặn. |
+| `ACCESS_BLOCKED` | Trang hiện thông báo chặn/lưu lượng bất thường. Không thử lại liên tục. |
+| `PROFILE_VISIBLE` | Thấy menu tài khoản; cần kiểm tra bộ chọn UI/chat tạm thời. |
+| `UNRECOGNIZED_UI` | Trang có nội dung, chưa nhận diện được trạng thái. |
+| `EMPTY_PAGE` / `DIAGNOSTIC_UNAVAILABLE` | Chưa đọc được trạng thái; không suy ra có chặn bot. |
+| `BROWSER_NOT_READY` | Chưa mở được trang để kiểm tra. |
+
+Chẩn đoán giới hạn thời gian và chỉ xuất các câu cố định; không in DOM, URL,
+query, tên tài khoản hoặc cookie. Nếu mã báo xác minh/chặn, dừng thử tự động;
+nguồn API hiện có vẫn dùng được. Bản sửa cũng chọn một menu tài khoản đang hiện
+để tránh lỗi bộ chọn khi giao diện responsive có nhiều bản sao cùng nhãn.

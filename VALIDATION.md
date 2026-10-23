@@ -132,3 +132,16 @@ Thay đổi dựa trên log người dùng có Google chờ 25 giây trước kh
   UTF-8 lỗi và không có terminal. Không dùng cookie tài khoản thật.
 - Đây là lỗi nhập đã tái hiện được ở local, chưa kết luận là nguyên nhân duy
   nhất của lỗi người dùng hoặc xác nhận đăng nhập trên VPS.
+
+
+### Chẩn đoán cookie chưa tạo được phiên ở VPS
+
+- Người dùng xác nhận nhận 11447 byte và parse thành công nhưng chưa xác nhận
+  đăng nhập. Chưa có trạng thái trang VPS để kết luận cookie hết hạn, cần dữ
+  liệu bổ sung, gặp chặn hay bộ chọn UI sai.
+- Toàn bộ 181 kiểm thử offline và Ruff đều đạt. 10 ca mới kiểm tra các mã trạng
+  thái trang và không lộ URL/query/DOM/dữ liệu tài khoản/lỗi thô.
+- Sửa bộ chọn profile có nhiều phần tử cùng nhãn. Thông báo import chỉ rõ bước
+  lỗi, trạng thái trang và việc check sau import thất bại vẫn dùng profile cũ.
+- Các ca này dùng page giả lập. Chưa xác nhận cookie import hoặc luồng bot thật
+  chạy thành công trên VPS người dùng.

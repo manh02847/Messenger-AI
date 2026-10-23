@@ -25,6 +25,53 @@ REPLY_SELECTOR = (
 )
 
 
+async def page_diagnostic(page) -> str:
+    """Only return fixed diagnostic codes; never log page text, URL or account data."""
+    if page is None:
+        return "BROWSER_NOT_READY: chưa mở được trang để kiểm tra."
+    try:
+        async with asyncio.timeout(3):
+            from urllib.parse import urlsplit
+
+            host = urlsplit(page.url).hostname or ""
+            title = await page.title()
+            body = await page.locator("body").inner_text(timeout=1500)
+            text = (title + "\n" + body[:60000]).lower()
+            if re.search(
+                r"verify (?:that )?you are human|checking your browser|just a moment"
+                r"|performing security verification|xác minh bạn là con người"
+                r"|kiểm tra (?:bảo mật|trình duyệt)",
+                text,
+            ):
+                return "HUMAN_VERIFICATION: trang yêu cầu xác minh trình duyệt/con người; không tự vượt chặn."
+            if re.search(
+                r"sorry, you have been blocked|unusual traffic from your computer|we(?: have|'ve) detected unusual traffic|automated (?:traffic|queries) from",
+                text,
+            ):
+                return "ACCESS_BLOCKED: trang thông báo chặn hoặc lưu lượng bất thường; không thử lại liên tục."
+            if host in ("auth.openai.com", "auth0.openai.com", "auth.chatgpt.com"):
+                return "LOGIN_REQUIRED: trang chuyển sang đăng nhập; cookie chưa tạo được phiên ở VPS."
+            login = re.compile(r"^(Log in|Sign in|Đăng nhập)$", re.I)
+            for role in ("button", "link"):
+                if (
+                    await page.get_by_role(role, name=login)
+                    .filter(visible=True)
+                    .count()
+                ):
+                    return "LOGIN_REQUIRED: trang còn nút đăng nhập; cookie chưa tạo được phiên ở VPS."
+            if (
+                await page.get_by_role("button", name=PROFILE)
+                .filter(visible=True)
+                .count()
+            ):
+                return "PROFILE_VISIBLE: đã thấy menu tài khoản; kiểm tra bộ chọn giao diện/chat tạm thời."
+            if not body.strip():
+                return "EMPTY_PAGE: trang chưa hiển thị nội dung; chưa xác định nguyên nhân mạng hoặc tải trang."
+            return "UNRECOGNIZED_UI: trang có nội dung nhưng chưa nhận diện được trạng thái đăng nhập."
+    except Exception:
+        return "DIAGNOSTIC_UNAVAILABLE: không đọc được trạng thái trang; chưa xác định nguyên nhân."
+
+
 def web_prompt(settings: Settings, persona: str, history: list[dict[str, str]]) -> str:
     # Bound again here: preview/third-party callers may not use State.history().
     remaining = settings.history_char_limit
@@ -107,7 +154,7 @@ class ChatGPTWebAI:
                     await (
                         page.get_by_role("button", name=PROFILE)
                         .filter(visible=True)
-                        .wait_for()
+                        .first.wait_for()
                     )
                     step = "xác nhận chat tạm thời"
                     # Fail closed: URL alone isn't evidence that temporary mode is on.
@@ -150,9 +197,9 @@ class ChatGPTWebAI:
             except Exception:
                 # Never leak DOM, prompt, profile/session data or exception call logs.
                 # One attempt only; no retries after an uncertain Send click.
+                diagnostic = await page_diagnostic(page)
                 raise ProviderUnavailable(
-                    f"ChatGPT web lỗi ở bước {step}; kiểm tra phiên đăng nhập/giao diện/kết nối.",
-                    300,
+                    f"ChatGPT web lỗi ở bước {step}. {diagnostic}", 300
                 ) from None
             finally:
                 if page is not None:
@@ -187,7 +234,7 @@ async def login_web() -> None:
         await (
             page.get_by_role("button", name=PROFILE)
             .filter(visible=True)
-            .wait_for(timeout=15000)
+            .first.wait_for(timeout=15000)
         )
         await page.get_by_role("button", name=TEMP_OFF).wait_for(timeout=15000)
         print(
@@ -298,24 +345,31 @@ async def import_web_cookies(value: str) -> None:
     target = data / "chatgpt-browser"
     ai = ChatGPTWebAI(Settings(), "", profile=stage)
     verified = False
+    page = None
+    step = "mở Chromium"
     try:
         async with asyncio.timeout(45):
             context = await ai._start(headless=True)
+            step = "nạp cookie vào Chromium"
             await context.add_cookies(cookies)
             page = await context.new_page()
+            step = "tải trang ChatGPT"
             await page.goto(TEMPORARY_URL, wait_until="domcontentloaded", timeout=20000)
+            step = "xác nhận đăng nhập"
             await (
                 page.get_by_role("button", name=PROFILE)
                 .filter(visible=True)
-                .wait_for(timeout=10000)
+                .first.wait_for(timeout=10000)
             )
+            step = "xác nhận chat tạm thời"
             await page.get_by_role("button", name=TEMP_OFF).wait_for(timeout=10000)
         verified = True
     except Exception:
+        diagnostic = await page_diagnostic(page)
         raise RuntimeError(
-            "Chưa xác nhận được đăng nhập bằng cookie trên VPS. Có thể cookie hết hạn, "
-            "phiên cần dữ liệu khác hoặc trang yêu cầu xác minh. Giữ nguyên profile cũ; "
-            "không gửi tin, không bật nguồn web."
+            f"Nhập cookie thất bại ở bước {step}. {diagnostic} "
+            "Giữ nguyên profile cũ; chưa gửi tin và chưa bật nguồn web. "
+            "Lệnh check-chatgpt-web sẽ đọc profile cũ, không kiểm tra lại cookie vừa nhập thất bại."
         ) from None
     finally:
         try:

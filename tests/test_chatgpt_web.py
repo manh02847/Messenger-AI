@@ -26,6 +26,7 @@ def fake_browser():
     )
     for control in (editor, send, profile, temporary, copy, stop):
         control.filter.return_value = control
+        control.first = control
     controls = {
         "Gửi": send,
         "Tắt trò chuyện": temporary,
@@ -306,6 +307,7 @@ async def test_cookie_import_headless_keeps_old_profile_until_verified(
     page = Mock(goto=AsyncMock())
     control = Mock(wait_for=AsyncMock())
     control.filter.return_value = control
+    control.first = control
     page.get_by_role.return_value = control
     context = Mock(add_cookies=AsyncMock(), new_page=AsyncMock(return_value=page))
     ai = Mock(_start=AsyncMock(return_value=context), close=AsyncMock())
