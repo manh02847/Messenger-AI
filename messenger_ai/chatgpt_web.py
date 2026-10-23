@@ -89,6 +89,7 @@ class ChatGPTWebAI:
     async def generate(self, history, reserve):
         async with self._lock:
             page = None
+            step = "mở Chromium"
             try:
                 wait = self.settings.minimum_ai_interval_seconds - (
                     time.monotonic() - self._last_attempt
@@ -102,23 +103,28 @@ class ChatGPTWebAI:
                     page = await context.new_page()
                     page.set_default_timeout(10000)
                     await page.goto(TEMPORARY_URL, wait_until="domcontentloaded")
+                    step = "xác nhận đăng nhập"
                     await (
                         page.get_by_role("button", name=PROFILE)
                         .filter(visible=True)
                         .wait_for()
                     )
+                    step = "xác nhận chat tạm thời"
                     # Fail closed: URL alone isn't evidence that temporary mode is on.
                     await page.get_by_role("button", name=TEMP_OFF).wait_for()
+                    step = "soạn prompt"
                     editor = page.get_by_role("textbox").filter(visible=True)
                     await editor.fill(web_prompt(self.settings, self.persona, history))
                     if not reserve():
                         raise AIError("Đã đạt giới hạn gọi AI trong ngày do bạn đặt.")
                     self._last_attempt = time.monotonic()
+                    step = "gửi prompt"
                     await (
                         page.get_by_role("button", name=SEND)
                         .filter(visible=True)
                         .click()
                     )
+                    step = "đợi phản hồi hoàn chỉnh"
                     # Copy is only for the response, not "Copy message" of the prompt.
                     await (
                         page.get_by_role("button", name=COPY)
@@ -145,7 +151,7 @@ class ChatGPTWebAI:
                 # Never leak DOM, prompt, profile/session data or exception call logs.
                 # One attempt only; no retries after an uncertain Send click.
                 raise ProviderUnavailable(
-                    "ChatGPT web chưa sẵn sàng: kiểm tra đăng nhập/giao diện/kết nối.",
+                    f"ChatGPT web lỗi ở bước {step}; kiểm tra phiên đăng nhập/giao diện/kết nối.",
                     300,
                 ) from None
             finally:

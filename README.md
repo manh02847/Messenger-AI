@@ -498,3 +498,29 @@ Khởi động lại service để nhận cấu hình. Thời gian chờ toàn c
 config API không đổi model ChatGPT web. Đây là adapter thử nghiệm: giao diện hoặc
 chính sách phiên có thể thay đổi. Đã thử chat tạm thời thật trên trình duyệt của
 phiên làm việc; chưa xác nhận đăng nhập/headless/nhận tin Messenger thật trên VPS.
+
+
+### Báo bot đang chạy nhưng `systemctl stop` không thấy service
+
+File `deploy/messenger-ai.service` của repo được hướng dẫn cài dạng **user service**.
+Nếu `systemctl stop messenger-ai` báo `Unit not loaded`, thử:
+
+```bash
+systemctl --user stop messenger-ai
+systemctl --user is-active messenger-ai
+```
+
+Khi service đã dừng, chạy `import-chatgpt-cookie` rồi `check-chatgpt-web`.
+Chỉ bật nguồn web khi kiểm tra thành công; sau đó `systemctl --user start messenger-ai`.
+Nếu user service cũng không tồn tại, tìm phiên chạy tay bằng:
+
+```bash
+pgrep -af 'python.*-m messenger_ai (run|discover)'
+```
+
+Dừng đúng phiên đó trong terminal/tmux đã khởi chạy rồi nhập cookie lại.
+Không xóa `data/bot.lock`: đây là khóa của tiến trình đang chạy, xóa file không
+thay thế việc dừng bot và có thể làm hai bot chạy cùng lúc. Lệnh nhập cookie và
+check web đều kiểm tra khóa trước khi chạm profile; nhập cookie báo bận trước
+khi yêu cầu dán bí mật. Lỗi `ProviderUnavailable` do ứng dụng tạo nay hiển thị
+thông báo hướng dẫn; lỗi web cũng chỉ rõ bước đang thất bại, không in cookie/DOM.

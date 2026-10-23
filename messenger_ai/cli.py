@@ -38,7 +38,9 @@ def instance_lock(data_dir: Path):
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             raise RuntimeError(
-                "Đang có một bot/discover chạy trong thư mục này. Dừng phiên đó trước."
+                "Bot/discover hoặc lệnh cấu hình web khác đang giữ khóa. "
+                "Nếu dùng service user, chạy: systemctl --user stop messenger-ai. "
+                "Nếu chạy tay, dừng phiên đó trước."
             ) from None
         try:
             yield
@@ -513,19 +515,22 @@ def main() -> None:
         elif args.command == "import-chatgpt-cookie":
             from .chatgpt_web import import_web_cookies
 
-            if args.file:
-                with args.file.open("r", encoding="utf-8") as cookie_file:
-                    value = cookie_file.read(65537)
-            else:
-                if not sys.stdin.isatty():
-                    raise ValueError("Cần terminal tương tác để nhập ẩn; hoặc dùng --file.")
-                value = getpass.getpass(
-                    "Cookie ChatGPT (nhập ẩn, không ghi shell history): "
-                )
             with instance_lock(ROOT / "data"):
+                if args.file:
+                    with args.file.open("r", encoding="utf-8") as cookie_file:
+                        value = cookie_file.read(65537)
+                else:
+                    if not sys.stdin.isatty():
+                        raise ValueError(
+                            "Cần terminal tương tác để nhập ẩn; hoặc dùng --file."
+                        )
+                    value = getpass.getpass(
+                        "Cookie ChatGPT (nhập ẩn, không ghi shell history): "
+                    )
                 asyncio.run(import_web_cookies(value))
         elif args.command == "check-chatgpt-web":
-            asyncio.run(check_chatgpt_web())
+            with instance_lock(ROOT / "data"):
+                asyncio.run(check_chatgpt_web())
         elif args.command == "doctor":
             doctor()
         elif args.command == "allow":
@@ -562,11 +567,11 @@ def main() -> None:
         raise SystemExit(2)
     except Exception as error:
         # Never print untrusted server responses, cookie data or tracebacks.
-        from .ai import AIError
+        from .ai import AIError, ProviderUnavailable
 
         detail = (
             str(error)
-            if type(error) in (RuntimeError, AIError)
+            if type(error) in (RuntimeError, AIError, ProviderUnavailable)
             else f"{type(error).__name__}; xem README.md để kiểm tra cấu hình/kết nối"
         )
         print(f"Bot đã dừng: {detail}", file=sys.stderr)

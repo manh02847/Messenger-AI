@@ -98,3 +98,14 @@ Thay đổi dựa trên log người dùng có Google chờ 25 giây trước kh
   phiên mới trước khi đổi profile, không sửa key API/phạm vi Messenger.
 - Chưa có cookie tài khoản người dùng trên VPS để kiểm tra đăng nhập thật bằng
   cookie. Các bài bổ sung dùng dữ liệu và browser giả lập.
+
+
+### Khóa tiến trình và thông báo lỗi CLI web
+
+- Toàn bộ 158 kiểm thử offline và Ruff đều đạt.
+- Nhập cookie kiểm tra khóa trước khi hỏi bí mật; check web cũng giữ khóa để tránh
+  tranh profile với bot. 4 ca bổ sung kiểm tra hai hành vi này, thông báo
+  ProviderUnavailable được hiển thị và lỗi không tin cậy vẫn không lộ dữ liệu.
+- Ghi nhận lệnh `systemctl stop` của người dùng báo system service không tồn tại;
+  hướng dẫn kiểm tra user service và phiên chạy tay. Chưa truy cập VPS để xác
+  định tiến trình thực tế hoặc thử cookie thật.
