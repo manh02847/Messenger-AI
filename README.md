@@ -421,12 +421,47 @@ git pull --ff-only
 .venv/bin/python -m playwright install --with-deps chromium
 ```
 
-**Đăng nhập một lần trên chính máy chạy bot**, bằng một phiên desktop có thể mở
-Chromium (màn hình máy tính, SSH X11 hoặc desktop VPS được bảo vệ). Terminal SSH
-thuần không hiển thị được cửa sổ đăng nhập. Trình duyệt test của trợ lý không tự
-chuyển phiên đăng nhập sang VPS. Không gửi cookie, mật khẩu hoặc OTP vào chat/GitHub.
-Dừng service bot nếu nó đã dùng nguồn web trước khi đăng nhập/check để tránh hai
-Chromium dùng chung profile.
+**VPS Ubuntu không có màn hình: nhập cookie từ terminal**, không cần desktop/X11.
+Dừng service trước để không có hai tiến trình cùng dùng profile:
+
+```bash
+# Dùng một trong hai dòng theo cách đã cài service:
+systemctl stop messenger-ai
+# systemctl --user stop messenger-ai
+
+.venv/bin/python -m messenger_ai import-chatgpt-cookie
+```
+
+Tại dòng `Cookie ChatGPT`, dán chuỗi Cookie của tài khoản bạn muốn nối trên
+`chatgpt.com`, rồi Enter. Nội dung được nhập ẩn, không đưa cookie vào đối số shell
+hay shell history. Hỗ trợ `name=value; name2=value2`, có/không tiền tố `Cookie:`,
+và cookie phiên bị chia nhiều phần `.0`, `.1`. Đừng gửi cookie vào chat/GitHub.
+Cookie thiếu ngày hết hạn được giữ trong browser tối đa 7 ngày để còn dùng sau
+khi restart; thời hạn phiên thật phía ChatGPT vẫn quyết định còn đăng nhập hay không.
+Cookie cần lấy từ chính phiên tài khoản của bạn; không cần dùng tài khoản chính.
+
+Nếu có JSON export cookie (mảng cookie hoặc `{ "cookies": [...] }`), lưu file
+riêng trong `data/`, cấp quyền 0600 rồi dùng:
+
+```bash
+chmod 600 data/chatgpt-cookies.json
+.venv/bin/python -m messenger_ai import-chatgpt-cookie --file data/chatgpt-cookies.json
+```
+
+Lệnh chỉ nạp cookie cho `chatgpt.com`/`.chatgpt.com`, mở Chromium **ẩn**, xác nhận
+đăng nhập và chat tạm thời; không gửi prompt. Cookie được nhập vào profile mới;
+chỉ thay profile đang dùng khi kiểm tra đạt. Nếu thất bại, giữ nguyên profile cũ.
+Profile cũ khi thay thành công được giữ trong `data/chatgpt-browser-backup-*`.
+Cookie có thể không đủ nếu phiên cần dữ liệu khác, hết hạn hoặc trang yêu cầu xác
+minh: khi đó lệnh báo lỗi, không tự vượt chặn hay bật nguồn web.
+
+Sau khi nhập thành công, chạy `check-chatgpt-web`, rồi `configure-chatgpt-web`
+và khởi động lại service bằng các lệnh bên dưới. Khi cookie hết hạn, nhập lại.
+Phiên và file cookie trong `data/` đều là bí mật đăng nhập; không chia sẻ/commit.
+
+**Nếu máy có desktop**, vẫn có thể dùng cách đăng nhập trong cửa sổ Chromium.
+Trình duyệt test của trợ lý không tự chuyển phiên sang VPS. Dừng bot trước khi
+đăng nhập/check để tránh hai tiến trình dùng chung profile.
 
 ```bash
 .venv/bin/python -m messenger_ai login-chatgpt-web

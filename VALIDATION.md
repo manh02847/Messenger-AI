@@ -87,3 +87,14 @@ Thay đổi dựa trên log người dùng có Google chờ 25 giây trước kh
   “tí đi choei k” → “Bạn định đi đâu, mấy giờ?” → “ra hồ ngồi tí thôi, 8h”, không emoji.
 - Chưa test adapter Playwright với tài khoản thật, chưa test headless trên VPS,
   chưa triển khai hay xác nhận luồng Messenger→ChatGPT→Messenger thật.
+
+
+### Nhập cookie trên Ubuntu không có desktop
+
+- Toàn bộ 154 kiểm thử offline và Ruff đều đạt. Thêm kiểm tra Cookie header,
+  cookie phiên chia phần, JSON export, lọc domain, lỗi không lộ bí mật, headless,
+  giữ profile cũ khi kiểm tra thất bại và backup profile khi thay thành công.
+- Lệnh `import-chatgpt-cookie` nhập ẩn qua terminal hoặc đọc `--file`; kiểm tra
+  phiên mới trước khi đổi profile, không sửa key API/phạm vi Messenger.
+- Chưa có cookie tài khoản người dùng trên VPS để kiểm tra đăng nhập thật bằng
+  cookie. Các bài bổ sung dùng dữ liệu và browser giả lập.

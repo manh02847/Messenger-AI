@@ -163,7 +163,9 @@ def configure_chatgpt_web(*, disable: bool = False) -> None:
     Settings.from_dict(raw)
     private_json(path, raw)
     print("ChatGPT web:", "TẮT" if disable else "ƯU TIÊN, mỗi lượt dùng chat tạm thời")
-    print("Giữ các nguồn API cũ dự phòng. Chạy check-chatgpt-web để thử riêng nguồn web.")
+    print(
+        "Giữ các nguồn API cũ dự phòng. Chạy check-chatgpt-web để thử riêng nguồn web."
+    )
 
 
 async def check_chatgpt_web() -> None:
@@ -462,10 +464,24 @@ def main() -> None:
     google_options.add_argument(
         "--disable", action="store_true", help="Tắt Google, giữ các nguồn cũ."
     )
-    web_config = sub.add_parser("configure-chatgpt-web", help="Ưu tiên ChatGPT web chat tạm thời.")
+    web_config = sub.add_parser(
+        "configure-chatgpt-web", help="Ưu tiên ChatGPT web chat tạm thời."
+    )
     web_config.add_argument("--disable", action="store_true")
-    sub.add_parser("login-chatgpt-web", help="Đăng nhập trên trình duyệt riêng của máy chạy bot.")
-    sub.add_parser("check-chatgpt-web", help="Thử riêng ChatGPT web, không fallback API.")
+    sub.add_parser(
+        "login-chatgpt-web", help="Đăng nhập trên trình duyệt riêng của máy chạy bot."
+    )
+    cookie_import = sub.add_parser(
+        "import-chatgpt-cookie", help="Nhập cookie ChatGPT trên VPS không có màn hình."
+    )
+    cookie_import.add_argument(
+        "--file",
+        type=Path,
+        help="File JSON export hoặc chuỗi Cookie; bỏ trống để nhập ẩn.",
+    )
+    sub.add_parser(
+        "check-chatgpt-web", help="Thử riêng ChatGPT web, không fallback API."
+    )
     allow = sub.add_parser(
         "allow", help="Thêm mã cuộc trò chuyện đã xác minh vào danh sách tự rep."
     )
@@ -494,6 +510,20 @@ def main() -> None:
             from .chatgpt_web import login_web
 
             asyncio.run(login_web())
+        elif args.command == "import-chatgpt-cookie":
+            from .chatgpt_web import import_web_cookies
+
+            if args.file:
+                with args.file.open("r", encoding="utf-8") as cookie_file:
+                    value = cookie_file.read(65537)
+            else:
+                if not sys.stdin.isatty():
+                    raise ValueError("Cần terminal tương tác để nhập ẩn; hoặc dùng --file.")
+                value = getpass.getpass(
+                    "Cookie ChatGPT (nhập ẩn, không ghi shell history): "
+                )
+            with instance_lock(ROOT / "data"):
+                asyncio.run(import_web_cookies(value))
         elif args.command == "check-chatgpt-web":
             asyncio.run(check_chatgpt_web())
         elif args.command == "doctor":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 import time
@@ -188,3 +189,140 @@ async def login_web() -> None:
         )
     finally:
         await ai.close()
+
+
+def parse_cookie_input(value: str) -> list[dict]:
+    """Accept a Cookie header or a cookie-export JSON; never echo input/errors."""
+    if not value or len(value.encode("utf-8")) > 65536:
+        raise ValueError("Cookie rỗng hoặc lớn hơn 64 KiB.")
+    value = value.strip()
+    try:
+        if value.startswith(("[", "{")):
+            raw = json.loads(value)
+            raw = raw.get("cookies") if isinstance(raw, dict) else raw
+        else:
+            value = re.sub(r"^Cookie:\s*", "", value, flags=re.I)
+            raw = []
+            for pair in value.split(";"):
+                name, separator, content = pair.strip().partition("=")
+                if not separator:
+                    raise ValueError
+                raw.append({"name": name, "value": content, "domain": "chatgpt.com"})
+        if not isinstance(raw, list) or not raw or len(raw) > 500:
+            raise ValueError
+        cookies = []
+        for item in raw:
+            domain = item.get("domain", "chatgpt.com")
+            if domain not in ("chatgpt.com", ".chatgpt.com"):
+                continue
+            name, content = item["name"], item["value"]
+            if (
+                not isinstance(name, str)
+                or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)
+                or not isinstance(content, str)
+                or any(char in content for char in "\r\n\x00")
+            ):
+                raise ValueError
+            cookie = {
+                "name": name,
+                "value": content,
+                "domain": domain,
+                "path": "/",
+                "secure": True,
+            }
+            # __Host- cookies cannot have a leading-dot domain or non-root path.
+            if name.startswith("__Host-"):
+                cookie["domain"] = "chatgpt.com"
+            if "httpOnly" in item:
+                if type(item["httpOnly"]) is not bool:
+                    raise ValueError
+                cookie["httpOnly"] = item["httpOnly"]
+            same_site = {
+                "strict": "Strict",
+                "lax": "Lax",
+                "none": "None",
+                "no_restriction": "None",
+            }.get(str(item.get("sameSite", "")).lower())
+            if same_site:
+                cookie["sameSite"] = same_site
+            # Persist across Chromium restarts. Browser retention cannot extend
+            # the server session's actual validity.
+            expires = item.get("expires", item.get("expirationDate", -1))
+            if (
+                isinstance(expires, bool)
+                or not isinstance(expires, (float, int))
+                or not math.isfinite(expires)
+            ):
+                raise ValueError
+            if expires > 0:
+                if expires <= time.time():
+                    continue
+                cookie["expires"] = expires
+            else:
+                cookie["expires"] = time.time() + 7 * 86400
+            cookies.append(cookie)
+        if not cookies:
+            raise ValueError
+        return cookies
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise ValueError(
+            "Cookie không hợp lệ. Dùng chuỗi Cookie hoặc JSON export của chatgpt.com."
+        ) from None
+
+
+async def import_web_cookies(value: str) -> None:
+    """Validate in a fresh headless profile before replacing the active one."""
+    import shutil
+    import tempfile
+    import uuid
+
+    cookies = parse_cookie_input(value)
+    data = ROOT / "data"
+    data.mkdir(parents=True, exist_ok=True, mode=0o700)
+    data.chmod(0o700)
+    stage = Path(tempfile.mkdtemp(prefix="chatgpt-import-", dir=data))
+    target = data / "chatgpt-browser"
+    ai = ChatGPTWebAI(Settings(), "", profile=stage)
+    verified = False
+    try:
+        async with asyncio.timeout(45):
+            context = await ai._start(headless=True)
+            await context.add_cookies(cookies)
+            page = await context.new_page()
+            await page.goto(TEMPORARY_URL, wait_until="domcontentloaded", timeout=20000)
+            await (
+                page.get_by_role("button", name=PROFILE)
+                .filter(visible=True)
+                .wait_for(timeout=10000)
+            )
+            await page.get_by_role("button", name=TEMP_OFF).wait_for(timeout=10000)
+        verified = True
+    except Exception:
+        raise RuntimeError(
+            "Chưa xác nhận được đăng nhập bằng cookie trên VPS. Có thể cookie hết hạn, "
+            "phiên cần dữ liệu khác hoặc trang yêu cầu xác minh. Giữ nguyên profile cũ; "
+            "không gửi tin, không bật nguồn web."
+        ) from None
+    finally:
+        try:
+            await ai.close()
+        finally:
+            if not verified:
+                shutil.rmtree(stage, ignore_errors=True)
+    backup = None
+    try:
+        if target.exists():
+            backup = data / ("chatgpt-browser-backup-" + uuid.uuid4().hex)
+            target.rename(backup)
+        stage.rename(target)
+    except OSError:
+        if backup is not None and not target.exists():
+            backup.rename(target)
+        shutil.rmtree(stage, ignore_errors=True)
+        raise RuntimeError("Không lưu được profile mới; đã giữ profile cũ.") from None
+    print(
+        "Đã xác nhận cookie đăng nhập và chat tạm thời bằng Chromium ẩn; chưa gửi tin."
+    )
+    print("Phiên lưu tại data/chatgpt-browser. Chạy check-chatgpt-web để thử trả lời.")
+    if backup is not None:
+        print("Profile trước đó được giữ trong thư mục data/chatgpt-browser-backup-*.")

@@ -223,3 +223,124 @@ async def test_cli_web_check_is_strict_and_never_uses_api_fallback(
     await cli.check_chatgpt_web()
     assert "Nguồn thực tế: ChatGPT web" in capsys.readouterr().out
     ai.close.assert_awaited_once()
+
+
+def test_cookie_header_preserves_chunked_session_and_embedded_equals():
+    from messenger_ai.chatgpt_web import parse_cookie_input
+
+    cookies = parse_cookie_input(
+        "Cookie: __Secure-next-auth.session-token.0=abc=def; __Secure-next-auth.session-token.1=ghi"
+    )
+    assert [c["value"] for c in cookies] == ["abc=def", "ghi"]
+    assert all(c["domain"] == "chatgpt.com" and c["secure"] for c in cookies)
+
+
+def test_cookie_json_filters_other_domains_and_normalizes_export():
+    from messenger_ai.chatgpt_web import parse_cookie_input
+
+    cookies = parse_cookie_input(
+        json.dumps(
+            {
+                "cookies": [
+                    {
+                        "name": "session",
+                        "value": "test",
+                        "domain": ".chatgpt.com",
+                        "sameSite": "no_restriction",
+                        "httpOnly": True,
+                        "expirationDate": 4102444800,
+                    },
+                    {
+                        "name": "unrelated",
+                        "value": "never import",
+                        "domain": ".example.com",
+                    },
+                ]
+            }
+        )
+    )
+    assert cookies == [
+        {
+            "name": "session",
+            "value": "test",
+            "domain": ".chatgpt.com",
+            "path": "/",
+            "secure": True,
+            "httpOnly": True,
+            "sameSite": "None",
+            "expires": 4102444800,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "private-secret-invalid",
+        "[]",
+        '{"cookies":null}',
+        '[{"name":"x","value":"private-secret","domain":"evil.chatgpt.com"}]',
+        '[{"name":"x","value":"private-secret\\n"}]',
+        "x=" + "a" * 65536,
+    ],
+)
+def test_bad_cookie_never_echoes_secrets(value):
+    from messenger_ai.chatgpt_web import parse_cookie_input
+
+    with pytest.raises(ValueError) as error:
+        parse_cookie_input(value)
+    assert "private-secret" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_cookie_import_headless_keeps_old_profile_until_verified(
+    tmp_path, monkeypatch
+):
+    from messenger_ai import chatgpt_web as web
+
+    monkeypatch.setattr(web, "ROOT", tmp_path)
+    old = tmp_path / "data" / "chatgpt-browser"
+    old.mkdir(parents=True)
+    (old / "old-profile").write_text("preserve")
+    page = Mock(goto=AsyncMock())
+    control = Mock(wait_for=AsyncMock())
+    control.filter.return_value = control
+    page.get_by_role.return_value = control
+    context = Mock(add_cookies=AsyncMock(), new_page=AsyncMock(return_value=page))
+    ai = Mock(_start=AsyncMock(return_value=context), close=AsyncMock())
+    monkeypatch.setattr(web, "ChatGPTWebAI", lambda *a, **kw: ai)
+    await web.import_web_cookies("session=test")
+    ai._start.assert_awaited_once_with(headless=True)
+    context.add_cookies.assert_awaited_once()
+    page.goto.assert_awaited_once_with(
+        web.TEMPORARY_URL, wait_until="domcontentloaded", timeout=20000
+    )
+    assert old.exists()
+    assert not (old / "old-profile").exists()
+    backups = list((tmp_path / "data").glob("chatgpt-browser-backup-*"))
+    assert len(backups) == 1
+    assert (backups[0] / "old-profile").read_text() == "preserve"
+    ai.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cookie_import_failed_verification_preserves_old_profile_and_cleans_stage(
+    tmp_path, monkeypatch
+):
+    from messenger_ai import chatgpt_web as web
+
+    monkeypatch.setattr(web, "ROOT", tmp_path)
+    old = tmp_path / "data" / "chatgpt-browser"
+    old.mkdir(parents=True)
+    (old / "old-profile").write_text("preserve")
+    ai = Mock(
+        _start=AsyncMock(side_effect=RuntimeError("private-secret")), close=AsyncMock()
+    )
+    monkeypatch.setattr(web, "ChatGPTWebAI", lambda *a, **kw: ai)
+    with pytest.raises(RuntimeError) as error:
+        await web.import_web_cookies("session=test")
+    assert "private-secret" not in str(error.value)
+    assert (old / "old-profile").read_text() == "preserve"
+    assert list((tmp_path / "data").glob("chatgpt-import-*")) == []
+    ai.close.assert_awaited_once()
