@@ -17,13 +17,13 @@ cd ~/messenger-ai-bot
 
 ### Cập nhật bot
 
-Nếu đang dùng service theo README này:
+Nếu cài **system service bằng root** theo mục 6:
 
 ```bash
-systemctl --user stop messenger-ai
+systemctl stop messenger-ai
 git pull --ff-only
 python3 setup_bot.py
-systemctl --user start messenger-ai
+systemctl start messenger-ai
 ```
 
 Nếu chạy trực tiếp trên terminal, nhấn **Ctrl+C** để dừng trước khi cập nhật, rồi chạy lại `run --live`. `setup_bot.py` cập nhật thư viện/bridge; thay đổi chỉ có README thì không cần chạy lại bot.
@@ -34,13 +34,13 @@ Nếu chạy trực tiếp trên terminal, nhấn **Ctrl+C** để dừng trư�
 
 | Việc cần làm | Lệnh |
 |---|---|
-| Xem trạng thái | `systemctl --user status messenger-ai` |
-| Xem log trực tiếp | `journalctl --user -u messenger-ai -f` |
-| Dừng bot | `systemctl --user stop messenger-ai` |
-| Bật bot | `systemctl --user start messenger-ai` |
-| Áp dụng cấu hình/persona mới | `systemctl --user restart messenger-ai` |
+| Xem trạng thái | `systemctl status messenger-ai` |
+| Xem log trực tiếp | `journalctl -u messenger-ai -f` |
+| Dừng bot | `systemctl stop messenger-ai` |
+| Bật bot | `systemctl start messenger-ai` |
+| Áp dụng cấu hình/persona mới | `systemctl restart messenger-ai` |
 
-README dùng **user service**, nên các lệnh có `--user`. Nếu chưa cài service, xem [chạy nền trên VPS](#6-chạy-nền-trên-vps).
+Các lệnh trên dành cho **system service**. Nếu đã cài **user service**, thêm `--user` vào `systemctl` và `journalctl`. Hai loại service được cài ở vị trí khác nhau; chọn đúng loại đã cài. Nếu chưa có service, xem [chạy nền trên VPS](#6-chạy-nền-trên-vps).
 
 ## 2. Kiểm tra AI, nguồn và model
 
@@ -304,7 +304,7 @@ Mã trên chỉ minh họa; thay bằng kết quả thật, có thể là `e2ee:
 
 ### Xem trước, sau đó gửi thật
 
-Không chạy đồng thời bot, service hoặc `discover` trong cùng thư mục. Nếu service đang chạy, dừng bằng `systemctl --user stop messenger-ai` trước khi thử:
+Không chạy đồng thời bot, service hoặc `discover` trong cùng thư mục. Nếu service đang chạy, dừng trước khi thử: `systemctl stop messenger-ai` với system service, hoặc thêm `--user` nếu đã cài user service.
 
 ```bash
 .venv/bin/python -m messenger_ai run --dry-run
@@ -320,9 +320,23 @@ Nhờ gửi **tin mới** để xem bản nháp. Chế độ này kết nối Me
 
 ## 6. Chạy nền trên VPS
 
-Mẫu service giả định repo ở **`~/messenger-ai-bot`** và VPS có `systemd --user`. Nếu dùng đường dẫn khác, sửa `WorkingDirectory` và `ExecStart` trong file service.
+### Đang dùng root trên VPS: cài system service
 
-Sau khi cấu hình và chạy thử thành công:
+Dùng mẫu **[deploy/messenger-ai-system.service](deploy/messenger-ai-system.service)** khi đăng nhập bằng root. Mẫu giả định bot ở **`/root/messenger-ai-bot`**; nếu khác đường dẫn, sửa `WorkingDirectory` và `ExecStart`. Sau khi cấu hình, chạy thử và dừng phiên terminal của bot:
+
+```bash
+cp deploy/messenger-ai-system.service /etc/systemd/system/messenger-ai.service
+systemctl daemon-reload
+systemctl enable --now messenger-ai
+journalctl -u messenger-ai -f
+```
+
+System service chạy cùng hệ thống và tiếp tục sau khi đóng SSH, không cần user bus hoặc lingering. Quản lý bằng `systemctl`/`journalctl` **không có `--user`**.
+
+<details>
+<summary>Tài khoản Linux thường: dùng user service nếu đã có user bus</summary>
+
+Mẫu **[deploy/messenger-ai.service](deploy/messenger-ai.service)** dành cho `systemd --user`, giả định repo ở `~/messenger-ai-bot`:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -333,9 +347,13 @@ systemctl --user enable --now messenger-ai
 journalctl --user -u messenger-ai -f
 ```
 
-Service này chạy **`run --live`**, tức gửi thật dù `config.json` còn `dry_run: true`. Lingering cho phép service tiếp tục chạy sau khi đóng SSH. Nhấn Ctrl+C ở màn hình xem log chỉ dừng xem log; muốn tắt bot dùng `systemctl --user stop messenger-ai`.
+Lingering cho phép user service tiếp tục chạy sau khi đóng SSH. Nếu `systemctl --user` báo `Failed to connect to bus: No medium found`, phiên hiện tại chưa truy cập được user bus. Với phiên root, dùng phần system service phía trên.
 
-Nếu bạn đã cài kiểu **system service** trước đây, quản lý bằng `systemctl` không có `--user`. Chọn đúng service đã cài, không chạy cả hai. Với aaPanel/Supervisor, đặt thư mục làm việc là thư mục repo và lệnh `.venv/bin/python -m messenger_ai run --live`; chỉ dùng một trình quản lý tiến trình.
+</details>
+
+Cả hai mẫu đều chạy **`run --live`**, tức gửi thật dù `config.json` còn `dry_run: true`. Ctrl+C trong màn hình xem log chỉ dừng xem log; tắt bot bằng `systemctl stop TEN_SERVICE` (thêm `--user` cho user service). Khi chuyển loại service, dừng và bỏ bật tự động của loại cũ trước; không chạy hai service cho cùng thư mục.
+
+Với aaPanel/Supervisor, đặt thư mục làm việc là thư mục repo và lệnh `.venv/bin/python -m messenger_ai run --live`; chỉ dùng một trình quản lý tiến trình.
 
 ### Thêm một acc Messenger trên cùng VPS
 
@@ -358,17 +376,29 @@ Không sao chép người nhận, phạm vi rep, persona, lịch sử, file khó
 .venv/bin/python -m messenger_ai run --dry-run
 ```
 
-Khi đã thử xong, Ctrl+C để dừng xem trước. Tạo service thứ hai để gửi thật:
+Khi đã thử xong, Ctrl+C để dừng xem trước. Dừng cả phiên `run --live` trên terminal nếu còn mở, để tránh trùng tiến trình.
+
+Nếu lần cài user service đầu tiên đã thất bại vì thiếu bus, dọn đúng file nháp và symlink bật tự động của acc thứ hai trước khi cài system service:
 
 ```bash
-mkdir -p ~/.config/systemd/user
-sed 's/messenger-ai-bot/messenger-ai-bot-2/g' deploy/messenger-ai.service > ~/.config/systemd/user/messenger-ai-2.service
-systemctl --user daemon-reload
-systemctl --user enable --now messenger-ai-2
-journalctl --user -u messenger-ai-2 -f
+rm -f ~/.config/systemd/user/default.target.wants/messenger-ai-2.service
+rm -f ~/.config/systemd/user/messenger-ai-2.service
 ```
 
-Quản lý acc thứ hai bằng `systemctl --user ... messenger-ai-2`. Mỗi bot có bộ đếm cục bộ riêng, nhưng nếu dùng chung API key thì vẫn dùng chung quota của nhà cung cấp. Không chép cả thư mục `data/` hoặc `secrets.json` giữa hai acc. Nếu hai bot có nhắn nhau, dùng phạm vi `allowlist` loại cuộc chat giữa hai acc để tránh tự rep qua lại.
+Nếu user service đã chạy thành công trước đó, dừng và disable bằng đúng user manager trước khi chuyển.
+
+Với **phiên root**, tạo system service thứ hai để gửi thật:
+
+```bash
+sed 's/messenger-ai-bot/messenger-ai-bot-2/g' deploy/messenger-ai-system.service > /etc/systemd/system/messenger-ai-2.service
+systemctl daemon-reload
+systemctl enable --now messenger-ai-2
+journalctl -u messenger-ai-2 -f
+```
+
+Quản lý acc thứ hai bằng `systemctl ... messenger-ai-2`. Nếu dùng tài khoản Linux thường/user service, dùng mẫu user ở trên và đổi đường dẫn sang `messenger-ai-bot-2`.
+
+Mỗi bot có bộ đếm cục bộ riêng, nhưng nếu dùng chung API key thì vẫn dùng chung quota của nhà cung cấp. Không chép cả thư mục `data/` hoặc `secrets.json` giữa hai acc. Nếu hai bot có nhắn nhau, dùng phạm vi `allowlist` loại cuộc chat giữa hai acc để tránh tự rep qua lại.
 
 ## 7. Ngữ cảnh, giọng trả lời và nhường bạn rep
 
@@ -474,7 +504,8 @@ Biến chỉ đặt trong phiên SSH chưa chắc được truyền vào systemd
 
 | Hiện tượng | Kiểm tra/cách xử lý |
 |---|---|
-| `Unit messenger-ai.service not loaded` | Nếu cài theo README, dùng `systemctl --user ...`. Nếu chưa có service, làm mục 6 |
+| `Unit messenger-ai.service not loaded` | Kiểm tra đã cài system hay user service rồi dùng đúng lệnh; system service không có `--user`. Chưa cài thì làm mục 6 |
+| `Failed to connect to bus: No medium found` | Lệnh `--user` chưa truy cập được user bus. Với root trên VPS, dùng mẫu system service ở mục 6 |
 | `Đang có một bot/discover chạy trong thư mục này` | Dừng service hoặc phiên terminal cũ rồi chạy lại. Không xóa `data/bot.lock` để ép chạy hai phiên |
 | `allowed_threads đang rỗng` | Dùng `scope all_private`, hoặc `discover` rồi `allow` mã đã xác minh |
 | Thiếu key Groq khi cài acc thứ hai | Chạy `configure --copy-ai-from ../messenger-ai-bot` để dùng lại AI, nhập cookie riêng; hoặc `configure --provider cloudflare` nếu chọn Cloudflare |
@@ -513,7 +544,7 @@ Phần thử nghiệm ChatGPT web đã được gỡ. Không cần cookie ChatGP
 - Nội dung cùng một phần lịch sử được gửi tới nhà cung cấp AI được thử. `data/` chứa lịch sử và trạng thái/khóa thiết bị E2EE, chưa mã hóa ở tầng ứng dụng; bảo vệ máy chạy và không chia sẻ thư mục này. Không chạy hai máy dùng chung bản sao thiết bị E2EE.
 - Hạn mức, model và điều kiện sử dụng phụ thuộc từng dịch vụ; xem dashboard/tài liệu hiện hành, không coi free tier là không giới hạn.
 
-Tài liệu dự án: [kết quả kiểm tra và phạm vi xác minh](VALIDATION.md), [thành phần bên thứ ba](THIRD_PARTY.md), [service mẫu](deploy/messenger-ai.service).
+Tài liệu dự án: [kết quả kiểm tra và phạm vi xác minh](VALIDATION.md), [thành phần bên thứ ba](THIRD_PARTY.md), [system service cho root](deploy/messenger-ai-system.service), [user service](deploy/messenger-ai.service).
 
 Tài liệu nhà cung cấp:
 

@@ -152,3 +152,17 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
 - Ruff với bộ quy tắc E4/E7/E9/F đạt; cú pháp shell/Python và 31 ví dụ CLI trong
   README đạt. Chưa đăng nhập hoặc gửi Messenger thật bằng acc thứ hai, chưa
   triển khai/khởi động lại tiến trình trên VPS người dùng.
+
+## System service cho phiên root trên VPS
+
+- Thêm deploy/messenger-ai-system.service với User=root, đường dẫn /root,
+  WantedBy=multi-user.target và các thiết lập dừng/khởi động lại như mẫu user.
+  README dùng đúng lệnh systemctl/journalctl cho từng loại manager, có hướng
+  dẫn riêng cho lỗi user bus và acc thứ hai.
+- Kiểm tra cả mẫu acc đầu và bản thay đường dẫn sang messenger-ai-bot-2:
+  systemd-analyze verify trên systemd 255 đạt. Khi kiểm tra, thay ExecStart và
+  WorkingDirectory bằng đường dẫn tồn tại trong môi trường kiểm tra; xác minh
+  riêng đường dẫn /root trong mẫu gốc bằng parser. Không khởi động service.
+- Các khối lệnh shell/Python, liên kết nội bộ trong README và git diff --check
+  đạt. Không sửa mã bot; không chạy lại 203 test offline của commit trước.
+  Chưa cài service hoặc kiểm tra bus trên VPS người dùng.
