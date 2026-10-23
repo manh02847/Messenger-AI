@@ -2,7 +2,7 @@
 
 Đã kiểm tra trên Linux x86-64, Python 3.12:
 
-- 186 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng, nâng giới hạn, trạng thái đang nhập và persona riêng).
+- 203 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng, nâng giới hạn, trạng thái đang nhập, persona riêng và cài thêm acc).
 - Kiểm tra cú pháp và lint: đạt.
 - Wheel Messenger 2.3.4: kiểm đúng SHA-256 của bản phát hành.
 - Binary E2EE Linux x86-64 thật: kiểm đúng SHA-256, chạy được và trả hợp lệ cho RPC `hello`.
@@ -136,3 +136,19 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
 - Kiểm tra cú pháp khối lệnh README và quy tắc Git bỏ qua persona.local.txt đạt.
   Nội dung đã commit trước đây vẫn còn trong lịch sử Git; lần cập nhật này không
   viết lại lịch sử hoặc đổi chế độ công khai của repo.
+
+## Cài nguồn chính từ đầu và dùng lại AI cho acc thứ hai
+
+- Sửa configure bắt buộc Groq: cài mới có thể chọn --provider cloudflare; khi
+  cập nhật cookie, configure giữ nguồn/model hiện tại. Không lưu file mới nếu
+  thiếu key, Account ID hoặc cookie không đúng định dạng.
+- Thêm configure --copy-ai-from THU_MUC: chỉ lấy các thiết lập AI và key đã biết,
+  bắt buộc nhập cookie riêng. Không chép danh sách/phạm vi người nhận, persona,
+  lịch sử, khóa tiến trình hay thiết bị E2EE; không ghi vào thư mục nguồn.
+- 203 kiểm thử offline đạt, gồm 17 ca mới: khởi tạo Groq/Cloudflare, tạo config
+  để dùng scope tiếp, giữ model Cloudflare khi thay cookie, cấu hình thiếu không
+  ghi file, dùng lại cả chuỗi NVIDIA/Google/Cloudflare/Groq, giữ nguyên dữ liệu
+  nguồn/đích, từ chối nguồn sai và phát hiện FACEBOOK_COOKIE ghi đè cookie mới.
+- Ruff với bộ quy tắc E4/E7/E9/F đạt; cú pháp shell/Python và 31 ví dụ CLI trong
+  README đạt. Chưa đăng nhập hoặc gửi Messenger thật bằng acc thứ hai, chưa
+  triển khai/khởi động lại tiến trình trên VPS người dùng.

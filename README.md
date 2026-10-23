@@ -128,13 +128,23 @@ Trong các lệnh tiếp theo, thay `.venv/bin/python` bằng `.venv\Scripts\pyt
 
 ### Bước 2: Nhập API key và cookie Facebook
 
-Luồng cài ban đầu dùng key [Groq](https://console.groq.com/keys). Có thể thêm các nguồn khác ở mục 4.
+Chọn nguồn chính ngay khi cài: [Groq](https://console.groq.com/keys) hoặc Cloudflare Workers AI. Các nguồn Google/NVIDIA và dự phòng có thể thêm ở mục 4.
+
+Với Groq:
 
 ```bash
 .venv/bin/python -m messenger_ai configure
 ```
 
-Lệnh hỏi **Groq API key** và **cookie Facebook**, ẩn ký tự khi nhập, lưu vào `secrets.json` và tạo `config.json` nếu chưa có. Nhấn Enter để giữ giá trị cũ khi cấu hình lại.
+Với Cloudflare, không cần key Groq:
+
+```bash
+.venv/bin/python -m messenger_ai configure --provider cloudflare
+```
+
+Lệnh hỏi thông tin AI của nguồn chính và **cookie Facebook**, ẩn key/cookie khi nhập. Sau khi kiểm tra định dạng đầy đủ, lệnh lưu `secrets.json` và `config.json`; chưa gọi API hay đăng nhập Messenger. Cấu hình lại bằng `configure` không có cờ sẽ giữ nguồn/model hiện tại, Enter để giữ thông tin cũ. `--provider` đổi sang nguồn chính được chọn nếu khác hiện tại.
+
+Nếu đã có một bản bot trên cùng VPS, có thể dùng lại riêng phần AI bằng `configure --copy-ai-from THU_MUC_BOT_CU`; xem phần thêm acc ở mục 6.
 
 Cookie cần có dạng:
 
@@ -327,6 +337,39 @@ Service này chạy **`run --live`**, tức gửi thật dù `config.json` còn 
 
 Nếu bạn đã cài kiểu **system service** trước đây, quản lý bằng `systemctl` không có `--user`. Chọn đúng service đã cài, không chạy cả hai. Với aaPanel/Supervisor, đặt thư mục làm việc là thư mục repo và lệnh `.venv/bin/python -m messenger_ai run --live`; chỉ dùng một trình quản lý tiến trình.
 
+### Thêm một acc Messenger trên cùng VPS
+
+Mỗi acc dùng một thư mục và service riêng. Ví dụ bot đầu ở `~/messenger-ai-bot`, bản thứ hai ở `~/messenger-ai-bot-2`:
+
+```bash
+git clone https://github.com/manh02847/Messenger-AI.git ~/messenger-ai-bot-2
+cd ~/messenger-ai-bot-2
+python3 setup_bot.py
+.venv/bin/python -m messenger_ai configure --copy-ai-from ../messenger-ai-bot
+```
+
+Nếu đã tạo bản thứ hai, vào thư mục đó và `git pull --ff-only`, rồi chạy lệnh cấu hình cuối. Lệnh lấy thứ tự nguồn/model, các key AI và giới hạn đầu vào/đầu ra/ngân sách gọi AI. **Chỉ hỏi cookie của acc thứ hai**, bắt buộc nhập mới; không dùng cookie của bản nguồn hoặc nhấn Enter để giữ cookie cũ.
+
+Không sao chép người nhận, phạm vi rep, persona, lịch sử, file khóa hoặc thiết bị E2EE. Bot nguồn được đọc để lấy AI, không bị chỉnh sửa/dừng. Với bản mới, chọn lại phạm vi rồi thử:
+
+```bash
+.venv/bin/python -m messenger_ai scope all_private
+.venv/bin/python -m messenger_ai check-ai
+.venv/bin/python -m messenger_ai run --dry-run
+```
+
+Khi đã thử xong, Ctrl+C để dừng xem trước. Tạo service thứ hai để gửi thật:
+
+```bash
+mkdir -p ~/.config/systemd/user
+sed 's/messenger-ai-bot/messenger-ai-bot-2/g' deploy/messenger-ai.service > ~/.config/systemd/user/messenger-ai-2.service
+systemctl --user daemon-reload
+systemctl --user enable --now messenger-ai-2
+journalctl --user -u messenger-ai-2 -f
+```
+
+Quản lý acc thứ hai bằng `systemctl --user ... messenger-ai-2`. Mỗi bot có bộ đếm cục bộ riêng, nhưng nếu dùng chung API key thì vẫn dùng chung quota của nhà cung cấp. Không chép cả thư mục `data/` hoặc `secrets.json` giữa hai acc. Nếu hai bot có nhắn nhau, dùng phạm vi `allowlist` loại cuộc chat giữa hai acc để tránh tự rep qua lại.
+
 ## 7. Ngữ cảnh, giọng trả lời và nhường bạn rep
 
 ### Trạng thái đang nhập
@@ -434,6 +477,9 @@ Biến chỉ đặt trong phiên SSH chưa chắc được truyền vào systemd
 | `Unit messenger-ai.service not loaded` | Nếu cài theo README, dùng `systemctl --user ...`. Nếu chưa có service, làm mục 6 |
 | `Đang có một bot/discover chạy trong thư mục này` | Dừng service hoặc phiên terminal cũ rồi chạy lại. Không xóa `data/bot.lock` để ép chạy hai phiên |
 | `allowed_threads đang rỗng` | Dùng `scope all_private`, hoặc `discover` rồi `allow` mã đã xác minh |
+| Thiếu key Groq khi cài acc thứ hai | Chạy `configure --copy-ai-from ../messenger-ai-bot` để dùng lại AI, nhập cookie riêng; hoặc `configure --provider cloudflare` nếu chọn Cloudflare |
+| Không có `config.json` sau khi cấu hình lỗi | Chạy `configure` thành công trước khi dùng `scope`, `check-ai` hoặc bật service |
+| `FACEBOOK_COOKIE` đang ghi đè acc mới | Gỡ cookie acc khác khỏi biến môi trường/session/service; nếu dùng shell Linux có thể `unset FACEBOOK_COOKIE` rồi cấu hình lại |
 | Có nhận tin nhưng không rep | Kiểm tra `--live`, phạm vi rep, thời gian nhường, tin có văn bản và còn quota. Bot chỉ xử lý tin mới |
 | `check-ai` thành công nhưng không phải nguồn muốn thử | Đọc nguồn/model in ra; lệnh có fallback. NVIDIA có `check-nvidia` để thử riêng |
 | NVIDIA HTTP 401/403 / `Authorization failed` | Kiểm tra key, tài khoản và quyền gọi model. Đọc được danh sách model chưa chứng minh có quyền inference |

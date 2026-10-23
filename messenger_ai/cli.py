@@ -23,6 +23,47 @@ from .config import (
     private_json,
 )
 
+AI_SETTINGS = (
+    "ai_provider",
+    "model",
+    "ai_fallback",
+    "fallback_model",
+    "google_models",
+    "nvidia_model",
+    "max_completion_tokens",
+    "max_ai_calls_per_day",
+    "minimum_ai_interval_seconds",
+    "input_char_limit",
+    "output_char_limit",
+    "history_messages",
+    "history_char_limit",
+)
+AI_SECRETS = (
+    "groq_api_key",
+    "cloudflare_account_id",
+    "cloudflare_api_token",
+    "google_api_key",
+    "nvidia_api_key",
+)
+
+
+def _cookie_account(cookie: str) -> str | None:
+    fields = {}
+    for part in cookie.split(";"):
+        name, separator, value = part.strip().partition("=")
+        if separator:
+            fields[name] = value
+    account = fields.get("c_user", "")
+    if (
+        account.isascii()
+        and account.isdigit()
+        and fields.get("xs")
+        and "\n" not in cookie
+        and "\r" not in cookie
+    ):
+        return account
+    return None
+
 
 @contextmanager
 def instance_lock(data_dir: Path):
@@ -56,34 +97,89 @@ def instance_lock(data_dir: Path):
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-def configure() -> None:
-    old = load_secrets()
+def configure(*, provider: str | None = None, copy_ai_from: Path | None = None) -> None:
+    if provider is not None and provider not in ("groq", "cloudflare"):
+        raise ValueError("Nguồn chính phải là groq hoặc cloudflare.")
+    if provider is not None and copy_ai_from is not None:
+        raise ValueError("Chỉ chọn --provider hoặc --copy-ai-from.")
+    path = ROOT / "config.json"
+    defaults = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+    raw = (
+        json.loads(path.read_text(encoding="utf-8"))
+        if path.exists()
+        else dict(defaults)
+    )
+    settings = Settings.from_dict(raw)
+    secrets = load_secrets(ROOT)
     print(
         "Nhập thông tin tại máy bạn. Không dán cookie hoặc API key vào GitHub/chat công khai."
     )
-    api_key = (
-        getpass.getpass("Groq API key (Enter để giữ giá trị cũ): ").strip()
-        or old["groq_api_key"]
-    )
-    cookie = (
-        getpass.getpass(
-            "Cookie Facebook dạng c_user=...; xs=...; (Enter để giữ cũ): "
+    if copy_ai_from is not None:
+        source = copy_ai_from.expanduser().resolve()
+        if source == ROOT.resolve():
+            raise ValueError("Thư mục nguồn phải khác thư mục bot đang cấu hình.")
+        source_path = source / "config.json"
+        if not source_path.is_file():
+            raise ValueError(
+                "Thư mục nguồn chưa có config.json; chọn bản bot đã cấu hình."
+            )
+        source_raw = json.loads(source_path.read_text(encoding="utf-8"))
+        Settings.from_dict(source_raw)
+        source_secrets = load_secrets(source)
+        raw.update({name: source_raw.get(name, defaults[name]) for name in AI_SETTINGS})
+        secrets.update({name: source_secrets[name] for name in AI_SECRETS})
+        cookie = getpass.getpass(
+            "Cookie Facebook của acc này (nhập mới, không lấy từ bot nguồn): "
         ).strip()
-        or old["facebook_cookie"]
-    )
-    if not api_key:
-        raise ValueError("Chưa nhập API key Groq.")
-    if "c_user=" not in cookie or "xs=" not in cookie:
+    else:
+        selected = provider or settings.ai_provider
+        if selected != settings.ai_provider:
+            from .ai import DEFAULT_MODELS
+
+            raw.update(
+                ai_provider=selected, model=DEFAULT_MODELS[selected], fallback_model=""
+            )
+        if selected == "cloudflare":
+            secrets["cloudflare_account_id"] = (
+                input("Cloudflare Account ID (Enter để giữ cũ): ").strip()
+                or secrets["cloudflare_account_id"]
+            )
+            secrets["cloudflare_api_token"] = (
+                getpass.getpass("Workers AI API token (Enter để giữ cũ): ").strip()
+                or secrets["cloudflare_api_token"]
+            )
+        else:
+            secrets["groq_api_key"] = (
+                getpass.getpass("Groq API key (Enter để giữ giá trị cũ): ").strip()
+                or secrets["groq_api_key"]
+            )
+        cookie = (
+            getpass.getpass(
+                "Cookie Facebook dạng c_user=...; xs=...; (Enter để giữ cũ): "
+            ).strip()
+            or secrets["facebook_cookie"]
+        )
+    if not _cookie_account(cookie):
         raise ValueError("Cookie cần có ít nhất c_user và xs.")
+    if os.environ.get("FACEBOOK_COOKIE") and os.environ["FACEBOOK_COOKIE"] != cookie:
+        raise ValueError(
+            "Biến môi trường FACEBOOK_COOKIE đang ghi đè cookie của acc này. "
+            "Gỡ biến đó khỏi môi trường rồi cấu hình lại."
+        )
+    from .ai import provider_configs
+
+    provider_configs(secrets, Settings.from_dict(raw))
     private_json(
         ROOT / "secrets.json",
-        {**old, "groq_api_key": api_key, "facebook_cookie": cookie},
+        {**secrets, "facebook_cookie": cookie},
     )
-    if not (ROOT / "config.json").exists():
-        raw = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
-        private_json(ROOT / "config.json", raw)
+    private_json(path, raw)
+    if copy_ai_from is not None:
+        print(
+            "Đã lấy cấu hình và key AI; cookie, người nhận, persona và data không được sao chép."
+        )
     print(
-        "Đã lưu cấu hình. Chạy discover để lấy mã cuộc trò chuyện; chưa bật gửi tự động."
+        "Đã lưu cấu hình. Chưa gọi API/đăng nhập Messenger. Chạy check-ai rồi chọn phạm vi rep."
     )
 
 
@@ -441,11 +537,25 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
-        description="Bot AI trả lời Messenger cá nhân, dùng Groq hoặc Cloudflare."
+        description="Bot AI trả lời Messenger cá nhân, dùng NVIDIA, Google, Groq hoặc Cloudflare."
     )
     sub = parser.add_subparsers(dest="command", required=True)
+    initial_config = sub.add_parser(
+        "configure", help="Nhập cookie và AI; có thể dùng lại AI của một bản bot khác."
+    )
+    initial_options = initial_config.add_mutually_exclusive_group()
+    initial_options.add_argument(
+        "--provider",
+        choices=("groq", "cloudflare"),
+        help="Chọn nguồn chính ngay khi cài mới.",
+    )
+    initial_options.add_argument(
+        "--copy-ai-from",
+        type=Path,
+        metavar="THU_MUC",
+        help="Lấy riêng AI/key từ bản bot khác; nhập cookie riêng.",
+    )
     for name, help_text in (
-        ("configure", "Nhập API key và cookie tại máy bạn."),
         ("doctor", "Kiểm tra offline thư viện và bridge."),
         ("check-ai", "Gọi thử API đang chọn; không gửi Messenger."),
         ("chat-ai", "Chat thử với AI và ngữ cảnh, không kết nối Messenger."),
@@ -509,7 +619,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         if args.command == "configure":
-            configure()
+            configure(provider=args.provider, copy_ai_from=args.copy_ai_from)
         elif args.command == "configure-ai":
             configure_ai(args.provider, args.daily_limit, args.fallback)
         elif args.command == "configure-google":
