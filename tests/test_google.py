@@ -285,7 +285,11 @@ def test_configure_google_preserves_other_settings_and_can_disable(
         **raw,
         "google_models": list(GOOGLE_MODELS),
     }
-    assert load_secrets(tmp_path) == {**secrets, "google_api_key": "google-key"}
+    assert load_secrets(tmp_path) == {
+        **secrets,
+        "google_api_key": "google-key",
+        "nvidia_api_key": "",
+    }
     assert secret.stat().st_mode & 0o777 == 0o600
     saved_secret = secret.read_bytes()
     cli.configure_google(disable=True)

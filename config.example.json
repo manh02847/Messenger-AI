@@ -5,6 +5,7 @@
   "ai_fallback": false,
   "fallback_model": "",
   "google_models": [],
+  "nvidia_model": "",
   "model": "openai/gpt-oss-120b",
   "dry_run": true,
   "reply_prefix": "",

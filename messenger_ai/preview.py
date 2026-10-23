@@ -17,7 +17,9 @@ def bounded_history(history, settings):
 
 async def chat_loop(ai, settings, reserve, *, read=input, write=print):
     history = []
-    write(f"Model: {settings.model}. Chỉ thử AI; không kết nối Messenger.")
+    write(
+        f"Nguồn AI: {getattr(ai, 'description', settings.model)}. Chỉ thử AI; không kết nối Messenger."
+    )
     write("/reset: ngữ cảnh mới; /context: số tin gửi cho AI; /quit: thoát.")
     while True:
         try:

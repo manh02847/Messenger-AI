@@ -15,6 +15,20 @@ GOOGLE_MODELS = (
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
 )
+NVIDIA_DEFAULT_MODEL = "google/gemma-4-31b-it"
+NVIDIA_MODEL_PATTERN = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z"
+)
+
+
+def valid_nvidia_model(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) <= 200
+        and bool(NVIDIA_MODEL_PATTERN.fullmatch(value))
+    )
+
+
 THREAD_PATTERN = re.compile(
     r"(?:e2ee:[0-9][0-9A-Za-z:._-]*@[A-Za-z0-9._-]+|thread:[1-9][0-9]*)\Z"
 )
@@ -41,6 +55,7 @@ class Settings:
     ai_fallback: bool = False
     fallback_model: str = ""
     google_models: tuple[str, ...] = ()
+    nvidia_model: str = ""
     model: str = "openai/gpt-oss-120b"
     dry_run: bool = True
     reply_prefix: str = ""
@@ -93,6 +108,10 @@ class Settings:
             )
         value["google_models"] = tuple(google_models)
         result = cls(**value)
+        if result.nvidia_model != "" and not valid_nvidia_model(result.nvidia_model):
+            raise ValueError(
+                "nvidia_model phải là mã model dạng hãng/tên-model, hoặc chuỗi rỗng để tắt."
+            )
         if result.reply_scope not in ("allowlist", "all_private"):
             raise ValueError("reply_scope phải là allowlist hoặc all_private.")
         if not isinstance(result.ai_fallback, bool):
@@ -162,6 +181,8 @@ def load_secrets(root: Path = ROOT) -> dict[str, str]:
     if not isinstance(raw, dict):
         raise ValueError("secrets.json phải là một đối tượng JSON.")
     secrets = {
+        "nvidia_api_key": os.environ.get("NVIDIA_API_KEY")
+        or raw.get("nvidia_api_key", ""),
         "google_api_key": os.environ.get("GEMINI_API_KEY")
         or raw.get("google_api_key", ""),
         "cloudflare_api_token": os.environ.get("CLOUDFLARE_API_TOKEN")

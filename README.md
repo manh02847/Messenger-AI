@@ -401,3 +401,68 @@ Nếu phiên Facebook không hợp lệ, bot cần bạn cập nhật cookie. M�
 Cloudflare theo cấu hình hiện có. Khi khởi động, bot tự bỏ tùy chọn
 `chatgpt_web` cũ khỏi `config.json`, giữ các thiết lập khác. Không cần nhập
 cookie ChatGPT hoặc sửa config thủ công.
+
+
+## Thử NVIDIA NIM, tự chọn model
+
+Bạn tự nhập mã model dạng `hãng/tên-model` lấy ở đầu trang model trên NVIDIA.
+Không khóa danh sách model và không tự xoay model NVIDIA. Nếu chưa chọn, gợi ý
+ban đầu là `google/gemma-4-31b-it` theo trang bạn thử. Adapter gọi endpoint chính thức
+`https://integrate.api.nvidia.com/v1/chat/completions`. Không cần thêm dependency,
+GPU hoặc trình duyệt trên VPS. Gói hosted miễn phí dành cho thử nghiệm/phát triển;
+xem [điều kiện NVIDIA](https://docs.api.nvidia.com/nim/docs/product) trước khi dùng
+ngoài thử nghiệm. [Tham số model](https://docs.api.nvidia.com/nim/reference/google-gemma-4-31b-it-infer).
+
+```bash
+cd /root/messenger-ai-bot
+git pull --ff-only
+.venv/bin/python -m messenger_ai configure-nvidia
+.venv/bin/python -m messenger_ai check-nvidia
+```
+
+Lệnh `configure-nvidia` hỏi mã model (Enter giữ model hiện tại), rồi API key.
+Cũng có thể chỉ định trực tiếp khi đổi model:
+
+```bash
+.venv/bin/python -m messenger_ai configure-nvidia --model google/gemma-4-31b-it
+```
+
+Thay mã trên bằng model bạn chọn; lấy ID ở đầu trang NVIDIA, không nhập cả URL.
+Model phải hỗ trợ chat completions; tên hợp lệ chưa đảm bảo endpoint có model
+hoặc tài khoản đã có quyền, nên luôn chạy `check-nvidia` để xác nhận.
+Nhập API key gốc tại terminal (ẩn ký tự); key chỉ lưu trong `secrets.json` 0600,
+không commit. Có thể dùng biến `NVIDIA_API_KEY`. Lệnh `check-nvidia` **chỉ gọi
+NVIDIA**, in nguồn thực tế và thời gian lượt thử; không fallback sang nguồn khác,
+không gửi Messenger. Nếu nhận 401/403, cần kiểm tra key/quyền truy cập tài khoản;
+đọc được catalog model chưa chứng minh key có quyền inference.
+
+Chỉ khi thử thành công, khởi động lại service bot (thường là user service):
+
+```bash
+systemctl --user restart messenger-ai
+```
+
+Khi bật, thứ tự là **NVIDIA → Google đã cấu hình → API chính → API dự phòng**.
+Giữ nguyên toàn bộ model cũ, người nhận, ngữ cảnh, pause thủ công và ngân sách.
+NVIDIA dùng `max_tokens` theo `max_completion_tokens` hiện có (mặc định 4096).
+Chỉ Gemma 4 có tùy chọn `chat_template_kwargs.enable_thinking=false` cho hội thoại
+thường. Model khác không nhận tham số riêng của Gemma; dùng mặc định của model
+và vẫn không đưa trường suy luận vào tin nhắn. Lịch sử và persona vẫn gửi đủ
+trong giới hạn cũ. Cùng model Gemma nhưng nhà cung cấp khác không đảm bảo chất
+lượng/tốc độ tốt hơn, cần so sánh bằng chat thực tế.
+
+Mỗi lượt NVIDIA thử một lần, tối đa 12 giây gồm chờ khoảng cách gọi; lỗi/quota/
+quyền truy cập/model chưa sẵn sàng chuyển sang nguồn cũ và nghỉ theo cooldown.
+Tôn trọng Retry-After; 429 nghỉ ít nhất 60 giây, 401/403 nghỉ 600 giây. Không gửi
+phản hồi bị cắt, trống hoặc chưa hoàn chỉnh. HTTP 202 đang xếp hàng được bỏ qua
+để thử nguồn khác, không polling liên tục. Giới hạn toàn chuỗi vẫn 60 giây.
+
+Tắt NVIDIA, giữ key và các API cũ:
+
+```bash
+.venv/bin/python -m messenger_ai configure-nvidia --disable
+systemctl --user restart messenger-ai
+```
+
+Chỉ pull code chưa tự bật NVIDIA: mặc định `nvidia_model` rỗng, cần chạy lệnh
+cấu hình bên trên. `chat-ai` vẫn dùng cùng chuỗi nguồn như bot để thử ngữ cảnh.

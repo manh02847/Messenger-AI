@@ -244,6 +244,7 @@ def test_configure_cloudflare_preserves_facebook_scope_and_history(
     assert saved == {
         **secrets,
         "google_api_key": "",
+        "nvidia_api_key": "",
         "cloudflare_account_id": "a" * 32,
         "cloudflare_api_token": "cf-private",
     }

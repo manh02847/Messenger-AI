@@ -12,13 +12,14 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from .config import GOOGLE_MODELS, Settings
+from .config import GOOGLE_MODELS, Settings, valid_nvidia_model
 
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GOOGLE_REQUEST_TIMEOUT = 8
 GOOGLE_MODEL_TIMEOUT = 12
 GOOGLE_POOL_TIMEOUT = 20
 GOOGLE_GEMMA_TIMEOUT = 10
+NVIDIA_MODEL_TIMEOUT = 12
 
 
 class AIError(RuntimeError):
@@ -141,12 +142,23 @@ def validate_connection(
     api_key: str, settings: Settings, account_id: str = ""
 ) -> tuple[str, str]:
     provider = settings.ai_provider
-    if provider not in ("groq", "cloudflare", "google"):
+    if provider not in ("groq", "cloudflare", "google", "nvidia"):
         raise ValueError("Nhà cung cấp AI chưa được hỗ trợ.")
-    label = {"cloudflare": "Cloudflare", "groq": "Groq", "google": "Google"}[provider]
+    label = {
+        "cloudflare": "Cloudflare",
+        "groq": "Groq",
+        "google": "Google",
+        "nvidia": "NVIDIA",
+    }[provider]
     if not api_key.strip():
-        command = "configure-google" if provider == "google" else "configure-ai"
+        command = {"google": "configure-google", "nvidia": "configure-nvidia"}.get(
+            provider, "configure-ai"
+        )
         raise ValueError(f"Thiếu API key/token {label}; chạy {command}.")
+    if provider == "nvidia":
+        if not valid_nvidia_model(settings.model):
+            raise ValueError("Mã model NVIDIA phải có dạng hãng/tên-model.")
+        return label, "https://integrate.api.nvidia.com/v1/chat/completions"
     if provider == "google":
         if settings.model not in GOOGLE_MODELS:
             raise ValueError("Model Google chưa được hỗ trợ.")
@@ -209,8 +221,11 @@ class ChatAI:
         }
         token_field = (
             "max_tokens"
-            if self.provider == "cloudflare"
-            and self.settings.model != "@cf/qwen/qwen3.8-27b"
+            if self.provider == "nvidia"
+            or (
+                self.provider == "cloudflare"
+                and self.settings.model != "@cf/qwen/qwen3.8-27b"
+            )
             else "max_completion_tokens"
         )
         payload[token_field] = self.settings.max_completion_tokens
@@ -225,11 +240,25 @@ class ChatAI:
             and self.settings.model == "@cf/qwen/qwen3.8-27b"
         ):
             payload.update(reasoning_effort="low")
+        if self.provider == "nvidia" and self.settings.model.startswith(
+            "google/gemma-4-"
+        ):
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        if self.provider == "nvidia":
+            headers["Accept"] = "application/json"
         if self.provider == "google":
             payload = google_payload(self.settings, self.persona, history)
             headers = {"x-goog-api-key": self.api_key}
         async with self._lock:
+            if self.provider == "nvidia":
+                try:
+                    async with asyncio.timeout(NVIDIA_MODEL_TIMEOUT):
+                        return await self._request(payload, headers, reserve)
+                except TimeoutError:
+                    raise ProviderUnavailable(
+                        "NVIDIA phản hồi quá chậm; chuyển nguồn tiếp theo.", 30
+                    ) from None
             if self.provider == "google":
                 try:
                     async with asyncio.timeout(GOOGLE_MODEL_TIMEOUT):
@@ -243,7 +272,8 @@ class ChatAI:
 
     async def _request(self, payload, headers, reserve):
         google = self.provider == "google"
-        attempts = 2 if google else (1 if self.fail_fast else 3)
+        nvidia = self.provider == "nvidia"
+        attempts = 1 if nvidia else (2 if google else (1 if self.fail_fast else 3))
         for attempt in range(attempts):
             wait = self.settings.minimum_ai_interval_seconds - (
                 time.monotonic() - self._last_attempt
@@ -256,6 +286,8 @@ class ChatAI:
             request_options = (
                 {"timeout": httpx.Timeout(GOOGLE_REQUEST_TIMEOUT, connect=4)}
                 if google
+                else {"timeout": httpx.Timeout(10, connect=4)}
+                if nvidia
                 else {}
             )
             try:
@@ -269,10 +301,30 @@ class ChatAI:
                 if google or attempt == attempts - 1:
                     raise ProviderUnavailable(
                         f"Chưa kết nối được {self.label}; không gửi tin nhắn trả lời.",
-                        cooldown=30 if google else 300,
+                        cooldown=30 if google or nvidia else 300,
                     ) from None
                 await asyncio.sleep(2**attempt)
                 continue
+            if nvidia:
+                if response.status_code in (202, 404, 410):
+                    raise ProviderUnavailable(
+                        f"NVIDIA chưa có câu trả lời hoặc model chưa sẵn sàng (HTTP {response.status_code}).",
+                        30 if response.status_code == 202 else 3600,
+                    )
+                if response.status_code in (401, 403):
+                    raise ProviderUnavailable(
+                        f"NVIDIA từ chối xác thực hoặc quyền truy cập (HTTP {response.status_code}); kiểm tra API key gốc trong tài khoản NVIDIA.",
+                        600,
+                    )
+                if response.status_code in (408, 429) or response.status_code >= 500:
+                    try:
+                        delay = retry_delay(response.headers.get("retry-after"), 0)
+                    except ProviderUnavailable as error:
+                        delay = error.cooldown
+                    raise ProviderUnavailable(
+                        f"NVIDIA đang giới hạn hoặc lỗi dịch vụ (HTTP {response.status_code}).",
+                        max(60 if response.status_code == 429 else 20, delay),
+                    )
             if response.status_code in (408, 429) or response.status_code >= 500:
                 if google:
                     try:
@@ -337,6 +389,10 @@ class ChatAI:
                         "đây không phải thông báo hết quota API. "
                         "Chạy tune-chat nếu đang dùng mức 768 cũ."
                     )
+                if nvidia and choice.get("finish_reason") != "stop":
+                    raise AIError(
+                        "NVIDIA chưa trả câu trả lời hoàn chỉnh; không gửi nội dung này."
+                    )
                 answer = final_text(choice["message"]["content"])
                 self.last_used = self.description
                 return answer
@@ -367,10 +423,15 @@ DEFAULT_MODELS = {
 
 
 def provider_configs(secrets: dict[str, str], settings: Settings):
-    configs = [
+    configs = []
+    if settings.nvidia_model:
+        configs.append(
+            replace(settings, ai_provider="nvidia", model=settings.nvidia_model)
+        )
+    configs.extend(
         replace(settings, ai_provider="google", model=model)
         for model in settings.google_models
-    ]
+    )
     configs.append(settings)
     if settings.ai_fallback:
         other = "groq" if settings.ai_provider == "cloudflare" else "cloudflare"
@@ -387,6 +448,7 @@ def provider_configs(secrets: dict[str, str], settings: Settings):
             "cloudflare": "cloudflare_api_token",
             "groq": "groq_api_key",
             "google": "google_api_key",
+            "nvidia": "nvidia_api_key",
         }[config.ai_provider]
         token = secrets.get(key, "")
         account_id = secrets.get("cloudflare_account_id", "")

@@ -2,7 +2,7 @@
 
 Đã kiểm tra trên Linux x86-64, Python 3.12:
 
-- 136 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng và nâng giới hạn).
+- 162 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng và nâng giới hạn).
 - Kiểm tra cú pháp và lint: đạt.
 - Wheel Messenger 2.3.4: kiểm đúng SHA-256 của bản phát hành.
 - Binary E2EE Linux x86-64 thật: kiểm đúng SHA-256, chạy được và trả hợp lệ cho RPC `hello`.
@@ -83,3 +83,20 @@ kiểm thử riêng của thử nghiệm. Chỉ thêm tương thích config cũ:
 136 kiểm thử offline và Ruff đạt. 4 ca bổ sung kiểm tra cờ cũ true/false không
 bật lại nguồn web, giữ nguyên các nguồn/cấu hình/bí mật/ngữ cảnh, và không ghi
 lại config sai. Chưa triển khai hay khởi động lại service trên VPS người dùng.
+
+
+## NVIDIA NIM thử nghiệm
+
+- Toàn bộ 162 kiểm thử offline và Ruff đạt. Thêm 26 ca kiểm tra payload/endpoint,
+  max_tokens và tắt thinking, bảo toàn ngữ cảnh, lọc suy luận/phản hồi chưa xong,
+  không retry lặp, timeout hủy request, chuyển nguồn đúng thứ tự, dùng chung
+  ngân sách, cấu hình giữ keys/scope/các nguồn cũ và check NVIDIA không fallback.
+- Model NVIDIA nhập thủ công, không whitelist danh sách hay tự đổi sang model
+  NVIDIA khác. Kiểm tra cấu hình tự chọn và không gửi tham số Gemma cho model khác.
+- Đã gọi thật endpoint NVIDIA từ môi trường này: catalog trả HTTP 200 và có model
+  `google/gemma-4-31b-it`. Gọi chat completion bằng key đọc từ ảnh nhận HTTP 403,
+  phản hồi "Authorization failed"; chưa có câu trả lời nên chưa đo chất lượng
+  hoặc tốc độ inference. Không suy ra key trong ảnh có quyền inference từ việc
+  model xuất hiện trong catalog.
+- Chưa thử thành công adapter với key nhập trực tiếp trên VPS, chưa triển khai
+  hay xác nhận Messenger→NVIDIA→Messenger thật. Không lưu key đọc từ ảnh vào repo.

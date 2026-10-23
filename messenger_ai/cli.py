@@ -13,7 +13,14 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
-from .config import GOOGLE_MODELS, ROOT, Settings, load_secrets, private_json
+from .config import (
+    GOOGLE_MODELS,
+    NVIDIA_DEFAULT_MODEL,
+    ROOT,
+    Settings,
+    load_secrets,
+    private_json,
+)
 
 
 @contextmanager
@@ -155,6 +162,39 @@ def configure_google(models: list[str] | None = None, *, disable: bool = False) 
     print("Chạy check-ai/chat-ai để thử rồi khởi động lại service bot.")
 
 
+def configure_nvidia(model: str | None = None, *, disable: bool = False) -> None:
+    path = ROOT / "config.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    Settings.from_dict(raw)
+    current = raw.get("nvidia_model") or NVIDIA_DEFAULT_MODEL
+    selected = (
+        ""
+        if disable
+        else (
+            model
+            or input(f"Mã model NVIDIA (Enter để dùng {current}): ").strip()
+            or current
+        )
+    )
+    raw["nvidia_model"] = selected
+    settings = Settings.from_dict(raw)
+    if not disable:
+        from .ai import provider_configs
+
+        secrets = load_secrets(ROOT)
+        secrets["nvidia_api_key"] = (
+            getpass.getpass("NVIDIA API key (Enter để giữ cũ): ").strip()
+            or secrets["nvidia_api_key"]
+        )
+        provider_configs(secrets, settings)
+        private_json(ROOT / "secrets.json", secrets)
+    private_json(path, raw)
+    print("NVIDIA:", "TẮT" if disable else settings.nvidia_model)
+    print(
+        "Giữ nguyên Google/Groq/Cloudflare, ngữ cảnh và các giới hạn. Chạy check-nvidia để thử riêng."
+    )
+
+
 def doctor() -> None:
     from scripts.fetch_assets import ensure_bridge
 
@@ -248,7 +288,7 @@ def set_reply_scope(scope: str) -> None:
     print("Khởi động lại bot để áp dụng.")
 
 
-async def check_ai(*, interactive: bool = False) -> None:
+async def check_ai(*, interactive: bool = False, provider: str | None = None) -> None:
     from .ai import create_ai
     from .state import State
     from .core import VIETNAM
@@ -261,7 +301,21 @@ async def check_ai(*, interactive: bool = False) -> None:
     if not persona:
         state.close()
         raise ValueError("persona.txt đang rỗng.")
-    ai = create_ai(secrets, settings, persona)
+    if provider == "nvidia":
+        from .ai import ChatAI
+
+        if not settings.nvidia_model:
+            state.close()
+            raise ValueError("Chạy configure-nvidia để chọn model và nhập key trước.")
+        ai = ChatAI(
+            secrets["nvidia_api_key"],
+            replace(settings, ai_provider="nvidia", model=settings.nvidia_model),
+            persona,
+            fail_fast=True,
+        )
+    else:
+        ai = create_ai(secrets, settings, persona)
+    started = time.monotonic()
     try:
 
         def reserve():
@@ -287,6 +341,9 @@ async def check_ai(*, interactive: bool = False) -> None:
             f"{ai.last_used} đã trả lời:",
             text[: settings.output_char_limit],
         )
+        print(f"Thời gian lượt thử: {time.monotonic() - started:.2f} giây.")
+        if provider == "nvidia":
+            print("Chỉ thử NVIDIA; không chuyển sang nguồn API khác.")
         print("Chưa kết nối hay gửi gì lên Messenger.")
     finally:
         await ai.close()
@@ -427,6 +484,18 @@ def main() -> None:
     google_options.add_argument(
         "--disable", action="store_true", help="Tắt Google, giữ các nguồn cũ."
     )
+    nvidia_config = sub.add_parser(
+        "configure-nvidia", help="Thêm NVIDIA NIM làm nguồn ưu tiên thử nghiệm."
+    )
+    nvidia_options = nvidia_config.add_mutually_exclusive_group()
+    nvidia_options.add_argument(
+        "--model", help="Mã model NVIDIA tự chọn, ví dụ google/gemma-4-31b-it."
+    )
+    nvidia_options.add_argument("--disable", action="store_true")
+    sub.add_parser(
+        "check-nvidia",
+        help="Thử riêng NVIDIA; không fallback API, không gửi Messenger.",
+    )
     allow = sub.add_parser(
         "allow", help="Thêm mã cuộc trò chuyện đã xác minh vào danh sách tự rep."
     )
@@ -449,6 +518,10 @@ def main() -> None:
             configure_ai(args.provider, args.daily_limit, args.fallback)
         elif args.command == "configure-google":
             configure_google(args.models, disable=args.disable)
+        elif args.command == "configure-nvidia":
+            configure_nvidia(args.model, disable=args.disable)
+        elif args.command == "check-nvidia":
+            asyncio.run(check_ai(provider="nvidia"))
         elif args.command == "doctor":
             doctor()
         elif args.command == "allow":
@@ -485,11 +558,11 @@ def main() -> None:
         raise SystemExit(2)
     except Exception as error:
         # Never print untrusted server responses, cookie data or tracebacks.
-        from .ai import AIError
+        from .ai import AIError, ProviderUnavailable
 
         detail = (
             str(error)
-            if type(error) in (RuntimeError, AIError)
+            if type(error) in (RuntimeError, AIError, ProviderUnavailable)
             else f"{type(error).__name__}; xem README.md để kiểm tra cấu hình/kết nối"
         )
         print(f"Bot đã dừng: {detail}", file=sys.stderr)
