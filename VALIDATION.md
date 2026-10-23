@@ -2,7 +2,7 @@
 
 Đã kiểm tra trên Linux x86-64, Python 3.12:
 
-- 162 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng và nâng giới hạn).
+- 178 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng, nâng giới hạn và trạng thái đang nhập).
 - Kiểm tra cú pháp và lint: đạt.
 - Wheel Messenger 2.3.4: kiểm đúng SHA-256 của bản phát hành.
 - Binary E2EE Linux x86-64 thật: kiểm đúng SHA-256, chạy được và trả hợp lệ cho RPC `hello`.
@@ -100,3 +100,23 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
   model xuất hiện trong catalog.
 - Chưa thử thành công adapter với key nhập trực tiếp trên VPS, chưa triển khai
   hay xác nhận Messenger→NVIDIA→Messenger thật. Không lưu key đọc từ ảnh vào repo.
+
+## Trạng thái đang nhập
+
+- 178 kiểm thử offline và Ruff đạt. Thêm 16 ca cho tín hiệu đang nhập: xuất hiện
+  trong lúc chờ AI, làm mới định kỳ không dùng thêm ngân sách AI, tắt sau khi gửi,
+  lỗi AI/gửi hoặc kết quả chưa rõ; nhường thủ công/yêu cầu dừng tắt ngay khi AI
+  còn chờ, hủy worker và đóng bot vẫn dọn trạng thái. Tin mới đến trong lúc
+  dọn trạng thái vẫn được xử lý, không cần thêm một tin khác để kích hoạt lại.
+- Xem trước không phát tín hiệu. Lỗi/timeout cập nhật trạng thái không chặn câu
+  trả lời hoặc lộ nội dung lỗi; chờ cập nhật có giới hạn. Đóng bot vẫn cho lượt
+  gửi đang chạy hoàn thành, không tự gửi lại.
+- Kiểm tra serializer BridgeActions thật của wheel 2.3.4 với bridge mô phỏng:
+  E2EE gọi sendE2EETyping, chat thường gọi sendTypingIndicator và giữ threadType
+  từ sự kiện. Dùng bridge/thiết bị E2EE đang có, không tạo phiên mới.
+- Binary Linux x86-64 đã ghim nhận diện cả hai RPC typing trong thử nghiệm không
+  tạo client: trả đúng lỗi client not initialised, không phải unknown method;
+  không đăng nhập, không tạo thiết bị hoặc kết nối Facebook.
+- Đối chiếu [mã nguồn typing của bridge 2.3.4](https://github.com/m008v/fbchat-v2/blob/aa7abd0386ef1d4cabf8ce592d0f2cf308d8f4f6/bridge-e2ee/bridge/messages.go).
+  Chưa đăng nhập Facebook hoặc xác nhận dấu đang nhập hiển thị trên Messenger
+  thật; cần cập nhật và thử tại VPS của người dùng.

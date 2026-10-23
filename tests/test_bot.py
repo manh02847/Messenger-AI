@@ -25,6 +25,7 @@ class FakeAI:
 class Sender:
     def __init__(self, result=None, error=False):
         self.calls = []
+        self.typing_calls = []
         self.result = result or {"messageId": "bot-1"}
         self.error = error
 
@@ -33,6 +34,9 @@ class Sender:
         if self.error:
             raise TimeoutError("server error with secret data")
         return self.result
+
+    async def set_typing(self, message, is_typing):
+        self.typing_calls.append((message.thread, is_typing))
 
 
 def message(mid="m1", text="Chào bạn", sender="222", thread=THREAD, timestamp=NOW):
@@ -118,6 +122,7 @@ async def test_deny_unlisted_conversation_even_with_same_sender(tmp_path):
     bot, state, ai, sender, _ = make_bot(tmp_path)
     bot.receive(message(thread="thread:999"))
     assert ai.calls == [] and sender.calls == []
+    assert sender.typing_calls == []
     assert not bot.tasks
     state.close()
 
@@ -277,6 +282,7 @@ async def test_preview_sends_nothing_and_does_not_invent_history(tmp_path):
     bot.receive(message())
     await drain(bot)
     assert len(ai.calls) == 1 and not sender.calls
+    assert sender.typing_calls == []
     assert "CHƯA GỬI" in logs[0]
     assert [x["role"] for x in state.history(THREAD, 12, 3000)] == ["user"]
     state.close()
@@ -325,6 +331,7 @@ async def test_daily_send_limit_counts_ambiguous_attempts(tmp_path):
     bot.receive(message())
     await drain(bot)
     assert not sender.calls
+    assert not sender.typing_calls
     assert "giới hạn" in logs[0]
     state.close()
 
@@ -445,3 +452,211 @@ def test_scope_command_preserves_config_and_secrets(tmp_path, monkeypatch):
     assert secret.read_text() == "untouched"
     cli.set_reply_scope("allowlist")
     assert json.loads(path.read_text()) == {**raw, "reply_scope": "allowlist"}
+
+
+class WaitingAI:
+    def __init__(self, error=False):
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.error = error
+
+    async def generate(self, history, reserve):
+        from messenger_ai.ai import AIError
+
+        assert reserve()
+        self.entered.set()
+        await self.release.wait()
+        if self.error:
+            raise AIError("Model tạm lỗi.")
+        return "Câu trả lời hoàn chỉnh."
+
+
+class TypingSender(Sender):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.started = asyncio.Event()
+        self.refreshed = asyncio.Event()
+        self.stopped = asyncio.Event()
+
+    async def set_typing(self, message, is_typing):
+        await super().set_typing(message, is_typing)
+        if is_typing:
+            if self.started.is_set():
+                self.refreshed.set()
+            self.started.set()
+        else:
+            self.stopped.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish", ["sent", "ai_error", "send_error", "unknown"])
+async def test_typing_during_ai_and_clears_on_every_result(tmp_path, finish):
+    ai = WaitingAI(error=finish == "ai_error")
+    sender = TypingSender(
+        error=finish == "send_error",
+        result={"messageId": "sent", "deliveryStatus": "unknown"}
+        if finish == "unknown"
+        else None,
+    )
+    bot, state, _, _, _ = make_bot(tmp_path, ai=ai, sender=sender)
+    bot.receive(message())
+    await asyncio.wait_for(sender.started.wait(), 1)
+    assert ai.entered.is_set() and sender.calls == []
+    assert sender.typing_calls == [(THREAD, True)]
+    ai.release.set()
+    await asyncio.wait_for(drain(bot), 1)
+    assert sender.typing_calls == [(THREAD, True), (THREAD, False)]
+    assert len(sender.calls) == (finish != "ai_error")
+    assert not bot.typing_tasks
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_typing_refreshes_while_waiting_without_extra_ai_calls(tmp_path, monkeypatch):
+    from messenger_ai import core
+
+    monkeypatch.setattr(core, "TYPING_REFRESH_SECONDS", 0.01)
+    ai, sender = WaitingAI(), TypingSender()
+    bot, state, _, _, _ = make_bot(tmp_path, ai=ai, sender=sender)
+    bot.receive(message())
+    await asyncio.wait_for(sender.refreshed.wait(), 1)
+    assert sender.calls == [] and len(sender.typing_calls) >= 2
+    ai.release.set()
+    await asyncio.wait_for(drain(bot), 1)
+    assert sender.typing_calls[-1] == (THREAD, False)
+    # Typing refreshes do not use the AI budget.
+    day = "2027-01-15"  # NOW in Vietnam.
+    assert state.reserve_ai(day, 2)
+    assert not state.reserve_ai(day, 2)
+    state.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sender_id,text", [("111", "Mình đang tự nhắn"), ("222", "Đừng trả lời nữa")]
+)
+async def test_handoff_clears_typing_before_ai_returns(tmp_path, sender_id, text):
+    ai, sender = WaitingAI(), TypingSender()
+    bot, state, _, _, _ = make_bot(tmp_path, ai=ai, sender=sender)
+    bot.receive(message())
+    await asyncio.wait_for(sender.started.wait(), 1)
+    bot.receive(message(mid="stop", sender=sender_id, text=text))
+    await asyncio.wait_for(sender.stopped.wait(), 1)
+    assert not ai.release.is_set() and sender.calls == []
+    assert state.paused(THREAD, NOW)
+    ai.release.set()
+    await asyncio.wait_for(drain(bot), 1)
+    assert sender.calls == []
+    assert sender.typing_calls == [(THREAD, True), (THREAD, False)]
+    state.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["error", "timeout"])
+async def test_typing_failure_never_blocks_reply_or_leaks_error(tmp_path, monkeypatch, failure):
+    from messenger_ai import core
+
+    monkeypatch.setattr(core, "TYPING_UPDATE_TIMEOUT", 0.01)
+
+    class BrokenTyping(TypingSender):
+        async def set_typing(self, message, is_typing):
+            await super().set_typing(message, is_typing)
+            if failure == "timeout":
+                await asyncio.Event().wait()
+            raise RuntimeError("cookie=SECRET; private content")
+
+    ai, sender = WaitingAI(), BrokenTyping()
+    bot, state, _, _, logs = make_bot(tmp_path, ai=ai, sender=sender)
+    bot.receive(message())
+    await asyncio.wait_for(sender.stopped.wait(), 1)
+    ai.release.set()
+    await asyncio.wait_for(drain(bot), 1)
+    assert len(sender.calls) == 1
+    assert "SECRET" not in " ".join(logs) and "private content" not in " ".join(logs)
+    assert not bot.typing_tasks
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_preview_never_emits_typing_even_while_ai_waits(tmp_path):
+    ai, sender = WaitingAI(), TypingSender()
+    bot, state, _, _, _ = make_bot(tmp_path, ai=ai, sender=sender, dry_run=True)
+    bot.receive(message())
+    await asyncio.wait_for(ai.entered.wait(), 1)
+    assert not bot.typing_tasks and sender.typing_calls == []
+    ai.release.set()
+    await asyncio.wait_for(drain(bot), 1)
+    assert sender.typing_calls == [] and sender.calls == []
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_cancellation_clears_typing(tmp_path):
+    ai, sender = WaitingAI(), TypingSender()
+    bot, state, _, _, _ = make_bot(tmp_path, ai=ai, sender=sender)
+    bot.receive(message())
+    await asyncio.wait_for(sender.started.wait(), 1)
+    bot.tasks[THREAD].cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await bot.tasks[THREAD]
+    assert sender.typing_calls[-1] == (THREAD, False)
+    assert sender.calls == [] and not bot.typing_tasks
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_close_clears_typing_without_cancelling_inflight_send(tmp_path):
+    sending, release_send = asyncio.Event(), asyncio.Event()
+
+    class SlowSend(TypingSender):
+        async def send(self, message, text):
+            sending.set()
+            await release_send.wait()
+            return await super().send(message, text)
+
+    ai, sender = WaitingAI(), SlowSend()
+    bot, state, _, _, _ = make_bot(tmp_path, ai=ai, sender=sender)
+    bot.receive(message())
+    await asyncio.wait_for(sender.started.wait(), 1)
+    ai.release.set()
+    await asyncio.wait_for(sending.wait(), 1)
+    closing = asyncio.create_task(bot.close())
+    await asyncio.wait_for(sender.stopped.wait(), 1)
+    assert not closing.done() and not release_send.is_set()
+    release_send.set()
+    await asyncio.wait_for(closing, 1)
+    assert len(sender.calls) == 1 and not bot.typing_tasks
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_new_message_during_typing_cleanup_still_gets_reply(tmp_path):
+    stopping, release_stop, second_sent = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    class SlowTypingStop(TypingSender):
+        async def set_typing(self, message, is_typing):
+            if not is_typing:
+                stopping.set()
+                await release_stop.wait()
+            await super().set_typing(message, is_typing)
+
+        async def send(self, message, text):
+            result = await super().send(message, text)
+            if len(self.calls) == 2:
+                second_sent.set()
+            return result
+
+    ai, sender = WaitingAI(), SlowTypingStop()
+    bot, state, _, _, _ = make_bot(tmp_path, ai=ai, sender=sender)
+    bot.receive(message())
+    await asyncio.wait_for(sender.started.wait(), 1)
+    ai.release.set()
+    await asyncio.wait_for(stopping.wait(), 1)
+    assert len(sender.calls) == 1
+    bot.receive(message(mid="second", text="Còn câu này nữa"))
+    release_stop.set()
+    await asyncio.wait_for(second_sent.wait(), 1)
+    await asyncio.wait_for(drain(bot), 1)
+    assert [original.id for original, _ in sender.calls] == ["m1", "second"]
+    assert not bot.typing_tasks
+    state.close()

@@ -329,6 +329,12 @@ Nếu bạn đã cài kiểu **system service** trước đây, quản lý bằn
 
 ## 7. Ngữ cảnh, giọng trả lời và nhường bạn rep
 
+### Trạng thái đang nhập
+
+Khi chạy gửi thật, bot báo **đang nhập** lúc AI bắt đầu soạn và làm mới khoảng **4 giây/lần** trong lúc chờ, kể cả khi chuyển nguồn AI. Bot gửi tín hiệu tắt khi gửi xong, gặp lỗi, dừng hoặc bạn tự nhắn/yêu cầu nhường. Hỗ trợ cả chat thường và E2EE qua kết nối hiện có.
+
+`run --dry-run`, `check-ai` và `chat-ai` không phát trạng thái này. Tín hiệu đang nhập không gọi thêm AI, không tốn token; nếu cập nhật trạng thái lỗi, bot vẫn tiếp tục xử lý câu trả lời. Việc nhìn thấy dấu đang nhập phụ thuộc Messenger phía người nhận.
+
 ### Bot nhớ những gì?
 
 - Mỗi cuộc trò chuyện có lịch sử riêng, gồm tin người kia và câu trả lời của bot; tin bạn tự nhắn cũng được lưu làm ngữ cảnh.

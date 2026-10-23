@@ -13,6 +13,8 @@ from .handoff import reply_text, requests_human
 from .state import State
 
 VIETNAM = timezone(timedelta(hours=7))
+TYPING_REFRESH_SECONDS = 4
+TYPING_UPDATE_TIMEOUT = 2
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,7 @@ class Message:
     sender_jid: str = ""
     thread_id: int = 0
     is_private: bool = False
+    thread_type: int = 1
 
 
 def parse_event(event: object) -> Message | None:
@@ -86,6 +89,9 @@ def parse_event(event: object) -> Message | None:
         # Unknown, groups, channels and AI bots are deliberately excluded.
         is_private=type(data.get("threadType")) is int
         and data["threadType"] in (1, 7, 10, 13, 15),
+        thread_type=data["threadType"]
+        if type(data.get("threadType")) is int and data["threadType"] > 0
+        else 1,
     )
 
 
@@ -97,6 +103,8 @@ class AI(Protocol):
 
 class Transport(Protocol):
     async def send(self, message: Message, text: str) -> dict[str, Any]: ...
+
+    async def set_typing(self, message: Message, is_typing: bool) -> None: ...
 
 
 class ReplyBot:
@@ -123,8 +131,12 @@ class ReplyBot:
         self.revisions: dict[str, int] = {}
         self.pending: set[str] = set()
         self.tasks: dict[str, asyncio.Task] = {}
+        self.typing_tasks: dict[str, asyncio.Task] = {}
+        self.closing = False
 
     def receive(self, message: Message) -> None:
+        if self.closing:
+            return
         now = self.clock()
         if self.settings.reply_scope == "all_private":
             if not message.is_private:
@@ -145,6 +157,7 @@ class ReplyBot:
             self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
             self.pending.discard(message.thread)
             self.state.pause(message.thread, now + self.settings.manual_pause_seconds)
+            self._cancel_typing(message.thread)
             if message.text.strip():
                 self.state.remember(
                     message.thread,
@@ -170,6 +183,7 @@ class ReplyBot:
             self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
             self.pending.discard(message.thread)
             self.state.pause(message.thread, now + self.settings.manual_pause_seconds)
+            self._cancel_typing(message.thread)
             self.log("Người nhắn yêu cầu dừng hoặc gặp Mạnh: tạm nhường trả lời.")
             return
         if self.state.paused(message.thread, now):
@@ -194,6 +208,40 @@ class ReplyBot:
     def _reserve_ai(self) -> bool:
         day = datetime.fromtimestamp(self.clock(), VIETNAM).date().isoformat()
         return self.state.reserve_ai(day, self.settings.max_ai_calls_per_day)
+
+    async def _typing_update(self, message: Message, is_typing: bool) -> bool:
+        try:
+            async with asyncio.timeout(TYPING_UPDATE_TIMEOUT):
+                await self.transport.set_typing(message, is_typing)
+            return True
+        except Exception:
+            self.log("Không cập nhật được trạng thái đang nhập; vẫn xử lý trả lời.")
+            return False
+
+    async def _typing_worker(self, message: Message) -> None:
+        try:
+            while self._may_send(message.thread):
+                if not await self._typing_update(message, True):
+                    break
+                await asyncio.sleep(TYPING_REFRESH_SECONDS)
+        finally:
+            cleanup = asyncio.create_task(self._typing_update(message, False))
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                await cleanup
+                raise
+
+    def _cancel_typing(self, thread: str) -> None:
+        task = self.typing_tasks.get(thread)
+        if task is not None and not task.done() and not task.cancelling():
+            task.cancel()
+
+    async def _finish_typing(self, thread: str) -> None:
+        self._cancel_typing(thread)
+        task = self.typing_tasks.pop(thread, None)
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
 
     async def _worker(self, thread: str) -> None:
         try:
@@ -230,6 +278,10 @@ class ReplyBot:
                     self.settings.history_messages,
                     self.settings.history_char_limit,
                 )
+                if not self.settings.dry_run and thread not in self.typing_tasks:
+                    self.typing_tasks[thread] = asyncio.create_task(
+                        self._typing_worker(self.latest[thread])
+                    )
                 text = await self.ai.generate(history, self._reserve_ai)
                 if not self._may_send(thread):
                     break
@@ -294,10 +346,19 @@ class ReplyBot:
             )
         finally:
             self.pending.discard(thread)
+            await self._finish_typing(thread)
+            # A new message may arrive while the typing-off RPC is finishing.
+            if thread in self.pending and not self.closing:
+                self.tasks[thread] = asyncio.create_task(self._worker(thread))
 
     async def close(self) -> None:
         # Let any in-flight send finish instead of blindly cancelling/replaying it.
+        self.closing = True
         self.pending.clear()
+        for thread in self.typing_tasks:
+            self._cancel_typing(thread)
+        if self.typing_tasks:
+            await asyncio.gather(*self.typing_tasks.values(), return_exceptions=True)
         if self.tasks:
             done, waiting = await asyncio.wait(list(self.tasks.values()), timeout=35)
             for task in waiting:

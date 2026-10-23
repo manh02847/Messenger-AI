@@ -128,6 +128,20 @@ class FacebookTransport:
             message.thread_id, text, reply_to_id=message.id
         )
 
+    async def set_typing(self, message: Message, is_typing: bool) -> None:
+        from fbchat_v2._messaging._bridge_actions import BridgeActions
+
+        if self.listener is None or self.closing or self.listener._bridge is None:
+            raise RuntimeError("Messenger chưa sẵn sàng cập nhật trạng thái.")
+        # Reuse the listener's current bridge and paired E2EE device.
+        actions = BridgeActions(self.listener._bridge)
+        if message.chat_jid:
+            await actions.send_e2ee_typing(message.chat_jid, is_typing)
+        else:
+            await actions.send_typing_indicator(
+                message.thread_id, is_typing, thread_type=message.thread_type
+            )
+
     async def close(self) -> None:
         self.closing = True
         if self.listener is not None:

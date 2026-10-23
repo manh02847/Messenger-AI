@@ -1,8 +1,9 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
-from messenger_ai.core import Message
+from messenger_ai.core import Message, parse_event
 from messenger_ai.facebook import FacebookTransport
 
 
@@ -84,3 +85,58 @@ def test_bridge_queue_overflow_stops_instead_of_dropping_owner_message(tmp_path)
         transport._enqueue({"type": "message"})
     assert transport.overflowed
     assert transport.queue.qsize() == 1000
+
+
+@pytest.mark.asyncio
+async def test_typing_uses_real_bridge_actions_and_existing_device(tmp_path):
+    calls = []
+
+    class Bridge:
+        async def call(self, method, params):
+            calls.append((method, params))
+            return {}
+
+    transport = FacebookTransport("", tmp_path / "device", tmp_path / "bridge")
+    # Exercise the actual fbchat-v2 2.3.4 action serializer, without Facebook.
+    transport.listener = SimpleNamespace(_bridge=Bridge())
+    encrypted = Message("e2ee:222@msgr", "in-1", "222", "Hi", 100, "222@msgr")
+    regular = parse_event(
+        {
+            "type": "message",
+            "data": {
+                "id": "in-2",
+                "senderId": "222",
+                "text": "Hi",
+                "timestampMs": 100000,
+                "threadId": 333,
+                "threadType": 13,
+            },
+        }
+    )
+    for message in (encrypted, regular):
+        await transport.set_typing(message, True)
+        await transport.set_typing(message, False)
+    assert calls == [
+        ("sendE2EETyping", {"chatJid": "222@msgr", "isTyping": True}),
+        ("sendE2EETyping", {"chatJid": "222@msgr", "isTyping": False}),
+        (
+            "sendTypingIndicator",
+            {"threadId": 333, "isTyping": True, "isGroup": False, "threadType": 13},
+        ),
+        (
+            "sendTypingIndicator",
+            {"threadId": 333, "isTyping": False, "isGroup": False, "threadType": 13},
+        ),
+    ]
+    assert not (tmp_path / "device").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closing", [False, True])
+async def test_typing_rejects_unready_or_closing_transport(tmp_path, closing):
+    transport = FacebookTransport("", tmp_path / "device", tmp_path / "bridge")
+    transport.closing = closing
+    if closing:
+        transport.listener = SimpleNamespace(_bridge=object())
+    with pytest.raises(RuntimeError):
+        await transport.set_typing(Message("thread:333", "in", "222", "Hi", 100), True)
