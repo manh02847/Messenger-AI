@@ -39,7 +39,6 @@ class Settings:
     reply_scope: str = "allowlist"
     ai_provider: str = "groq"
     ai_fallback: bool = False
-    chatgpt_web: bool = False
     fallback_model: str = ""
     google_models: tuple[str, ...] = ()
     model: str = "openai/gpt-oss-120b"
@@ -63,10 +62,12 @@ class Settings:
     def from_dict(cls, raw: dict) -> "Settings":
         if not isinstance(raw, dict):
             raise ValueError("config.json phải là một đối tượng JSON.")
-        names = {field.name for field in fields(cls)}
-        if set(raw) - names:
-            raise ValueError("config.json có tên tùy chọn không được hỗ trợ.")
+        # Discard the retired experiment's flag when loading an existing config.
         value = dict(raw)
+        value.pop("chatgpt_web", None)
+        names = {field.name for field in fields(cls)}
+        if set(value) - names:
+            raise ValueError("config.json có tên tùy chọn không được hỗ trợ.")
         allowed = value.get("allowed_threads", [])
         if not isinstance(allowed, list) or any(
             not isinstance(item, str) or not THREAD_PATTERN.fullmatch(item)
@@ -94,8 +95,6 @@ class Settings:
         result = cls(**value)
         if result.reply_scope not in ("allowlist", "all_private"):
             raise ValueError("reply_scope phải là allowlist hoặc all_private.")
-        if not isinstance(result.chatgpt_web, bool):
-            raise ValueError("chatgpt_web phải là true hoặc false.")
         if not isinstance(result.ai_fallback, bool):
             raise ValueError("ai_fallback phải là true hoặc false.")
         if not isinstance(result.fallback_model, str):
@@ -149,7 +148,12 @@ class Settings:
         path = root / "config.json"
         if not path.exists():
             raise ValueError("Chạy lệnh configure để tạo cấu hình trước.")
-        return cls.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        result = cls.from_dict(raw)
+        if "chatgpt_web" in raw:
+            raw.pop("chatgpt_web")
+            private_json(path, raw)
+        return result
 
 
 def load_secrets(root: Path = ROOT) -> dict[str, str]:

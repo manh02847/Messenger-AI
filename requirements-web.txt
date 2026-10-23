@@ -1,2 +1,0 @@
-# Optional: normal visible ChatGPT UI, with its own local browser profile.
-playwright>=1.61,<2

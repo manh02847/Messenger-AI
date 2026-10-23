@@ -1,8 +1,8 @@
-# Kiểm tra bản 1.0.0 — 22/10/2026
+# Kiểm tra bản 1.0.0 — 23/10/2026
 
 Đã kiểm tra trên Linux x86-64, Python 3.12:
 
-- 132 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng và nâng giới hạn).
+- 136 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng và nâng giới hạn).
 - Kiểm tra cú pháp và lint: đạt.
 - Wheel Messenger 2.3.4: kiểm đúng SHA-256 của bản phát hành.
 - Binary E2EE Linux x86-64 thật: kiểm đúng SHA-256, chạy được và trả hợp lệ cho RPC `hello`.
@@ -73,75 +73,13 @@ Thay đổi dựa trên log người dùng có Google chờ 25 giây trước kh
 
 132 test offline và lint đạt. Sửa trường hợp hai Gemma dùng hết 20 giây Google khiến Flash bị bỏ qua: khi có Flash, hai Gemma dùng chung tối đa 10 giây; phần còn lại của 20 giây dành cho các model Google tiếp theo. Kiểm tra request Gemma treo bị hủy và Gemini 3.5 Flash Lite thực sự được gọi/trả lời; kiểm tra cả trường hợp Gemma đầu đã lỗi mạng rồi Gemma thứ hai treo. Nếu Flash cũng treo thì hạn Google vẫn có hiệu lực, hủy request và chuyển Groq. Không gọi model còn lại sau khi có câu trả lời thành công, vẫn tính ngân sách từng request. Các test timeout dùng thời gian thu nhỏ; chưa đo với API thật. Lỗi auth/cấu hình, quota và giới hạn cục bộ vẫn được giữ nguyên.
 
+## Hoàn tác thử nghiệm ChatGPT web
 
-### ChatGPT web / chat tạm thời
+Dùng Git hoàn tác sáu commit thử nghiệm, khôi phục tuyến AI và CLI của bản
+`7dedcb6`. Gỡ adapter trình duyệt, nhập cookie, các lệnh web, dependency và các
+kiểm thử riêng của thử nghiệm. Chỉ thêm tương thích config cũ: bỏ cờ
+`chatgpt_web` khi đọc và xóa cờ đó khỏi file sau khi xác thực config hợp lệ.
 
-- Toàn bộ 143 kiểm thử offline và Ruff đều đạt.
-- 11 ca bổ sung kiểm tra giới hạn/ngăn trộn ngữ cảnh, tạo tab tạm mới mỗi lượt,
-  chặn gửi khi chưa xác nhận đăng nhập/chế độ tạm, đóng tab khi hủy/lỗi,
-  không trả phản hồi đang stream hoặc gửi lại khi không chắc, ngân sách cục bộ,
-  giữ thứ tự API dự phòng, cấu hình không đụng secrets và lệnh check web không
-  fallback API. Các bài adapter dùng browser giả lập, không phải headless live.
-- Đã gửi prompt tổng hợp thật trên ChatGPT web với `temporary-chat=true`; giao
-  diện xác nhận không xuất hiện trong lịch sử. Nhận được phản hồi cho ngữ cảnh
-  “tí đi choei k” → “Bạn định đi đâu, mấy giờ?” → “ra hồ ngồi tí thôi, 8h”, không emoji.
-- Chưa test adapter Playwright với tài khoản thật, chưa test headless trên VPS,
-  chưa triển khai hay xác nhận luồng Messenger→ChatGPT→Messenger thật.
-
-
-### Nhập cookie trên Ubuntu không có desktop
-
-- Toàn bộ 154 kiểm thử offline và Ruff đều đạt. Thêm kiểm tra Cookie header,
-  cookie phiên chia phần, JSON export, lọc domain, lỗi không lộ bí mật, headless,
-  giữ profile cũ khi kiểm tra thất bại và backup profile khi thay thành công.
-- Lệnh `import-chatgpt-cookie` nhập ẩn qua terminal hoặc đọc `--file`; kiểm tra
-  phiên mới trước khi đổi profile, không sửa key API/phạm vi Messenger.
-- Chưa có cookie tài khoản người dùng trên VPS để kiểm tra đăng nhập thật bằng
-  cookie. Các bài bổ sung dùng dữ liệu và browser giả lập.
-
-
-### Khóa tiến trình và thông báo lỗi CLI web
-
-- Toàn bộ 158 kiểm thử offline và Ruff đều đạt.
-- Nhập cookie kiểm tra khóa trước khi hỏi bí mật; check web cũng giữ khóa để tránh
-  tranh profile với bot. 4 ca bổ sung kiểm tra hai hành vi này, thông báo
-  ProviderUnavailable được hiển thị và lỗi không tin cậy vẫn không lộ dữ liệu.
-- Ghi nhận lệnh `systemctl stop` của người dùng báo system service không tồn tại;
-  hướng dẫn kiểm tra user service và phiên chạy tay. Chưa truy cập VPS để xác
-  định tiến trình thực tế hoặc thử cookie thật.
-
-
-### Định dạng cookie copy từ DevTools
-
-- Toàn bộ 165 kiểm thử offline và Ruff đều đạt.
-- 7 ca bổ sung kiểm tra dấu chấm phẩy thừa/cuối chuỗi, dấu nháy bao ngoài, BOM,
-  nhãn Cookie và xuống dòng giữa cặp; vẫn từ chối ngắt dòng giữa giá trị token.
-- Chỉ dùng cookie giả để kiểm thử parser. Không trích xuất hay sử dụng giá trị
-  đăng nhập trong ảnh người dùng, chưa xác định nguyên nhân chính xác trên VPS.
-
-
-### Nhận cookie dài qua terminal Linux
-
-- Tái hiện trên pseudo-terminal thật: getpass cũ nhận 4095 byte từ cookie giả
-  dài 10098 byte. Lỗi cắt dòng có thể làm mất dấu = của cookie cuối.
-- Thay ô nhập cookie bằng noncanonical hidden input, đọc theo khối tối đa 64 KiB,
-  hỗ trợ bracketed paste, khôi phục terminal khi thành công/hủy/lỗi và không
-  echo nội dung. Chỉ in độ dài byte sau khi xác nhận.
-- Toàn bộ 171 kiểm thử offline và Ruff đều đạt. 6 ca bổ sung chạy với PTY thật:
-  nhận đủ cookie dài, paste chia khối/nhiều dòng, từ chối quá 64 KiB, Ctrl+C,
-  UTF-8 lỗi và không có terminal. Không dùng cookie tài khoản thật.
-- Đây là lỗi nhập đã tái hiện được ở local, chưa kết luận là nguyên nhân duy
-  nhất của lỗi người dùng hoặc xác nhận đăng nhập trên VPS.
-
-
-### Chẩn đoán cookie chưa tạo được phiên ở VPS
-
-- Người dùng xác nhận nhận 11447 byte và parse thành công nhưng chưa xác nhận
-  đăng nhập. Chưa có trạng thái trang VPS để kết luận cookie hết hạn, cần dữ
-  liệu bổ sung, gặp chặn hay bộ chọn UI sai.
-- Toàn bộ 181 kiểm thử offline và Ruff đều đạt. 10 ca mới kiểm tra các mã trạng
-  thái trang và không lộ URL/query/DOM/dữ liệu tài khoản/lỗi thô.
-- Sửa bộ chọn profile có nhiều phần tử cùng nhãn. Thông báo import chỉ rõ bước
-  lỗi, trạng thái trang và việc check sau import thất bại vẫn dùng profile cũ.
-- Các ca này dùng page giả lập. Chưa xác nhận cookie import hoặc luồng bot thật
-  chạy thành công trên VPS người dùng.
+136 kiểm thử offline và Ruff đạt. 4 ca bổ sung kiểm tra cờ cũ true/false không
+bật lại nguồn web, giữ nguyên các nguồn/cấu hình/bí mật/ngữ cảnh, và không ghi
+lại config sai. Chưa triển khai hay khởi động lại service trên VPS người dùng.
