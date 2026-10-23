@@ -18,6 +18,7 @@ from .config import (
     NVIDIA_DEFAULT_MODEL,
     ROOT,
     Settings,
+    load_persona,
     load_secrets,
     private_json,
 )
@@ -296,11 +297,8 @@ async def check_ai(*, interactive: bool = False, provider: str | None = None) ->
 
     settings = Settings.load()
     secrets = load_secrets()
+    persona = load_persona(ROOT)
     state = State(ROOT / "data" / "ai-check.sqlite3")
-    persona = (ROOT / "persona.txt").read_text(encoding="utf-8").strip()
-    if not persona:
-        state.close()
-        raise ValueError("persona.txt đang rỗng.")
     if provider == "nvidia":
         from .ai import ChatAI
 
@@ -389,9 +387,7 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                     / ("preview.sqlite3" if settings.dry_run else "state.sqlite3")
                 )
                 state.prune(time.time(), settings.retention_days)
-                persona = (ROOT / "persona.txt").read_text(encoding="utf-8").strip()
-                if not persona:
-                    raise ValueError("persona.txt đang rỗng.")
+                persona = load_persona(ROOT)
                 ai = create_ai(secrets, settings, persona)
             await transport.connect()
             if discovery:

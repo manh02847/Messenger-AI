@@ -248,16 +248,19 @@ async def test_strict_nvidia_check_never_creates_fallback_chain(
     )
     monkeypatch.setattr(cli, "load_secrets", lambda: {"nvidia_api_key": "test-key"})
     (tmp_path / "persona.txt").write_text("Persona")
+    (tmp_path / "persona.local.txt").write_text("Private persona")
     ai = Mock(
         last_used="NVIDIA / google/gemma-4-31b-it",
         generate=AsyncMock(return_value="OK"),
         close=AsyncMock(),
     )
-    monkeypatch.setattr(module, "ChatAI", lambda *a, **kw: ai)
+    constructor = Mock(return_value=ai)
+    monkeypatch.setattr(module, "ChatAI", constructor)
     factory = Mock()
     monkeypatch.setattr(module, "create_ai", factory)
     await cli.check_ai(provider="nvidia")
     factory.assert_not_called()
+    assert constructor.call_args.args[2] == "Private persona"
     assert "Chỉ thử NVIDIA" in capsys.readouterr().out
     ai.close.assert_awaited_once()
 

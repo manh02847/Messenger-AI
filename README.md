@@ -56,7 +56,7 @@ README dùng **user service**, nên các lệnh có `--user`. Nếu chưa cài s
 .venv/bin/python -m messenger_ai chat-ai
 ```
 
-`chat-ai` dùng cùng chuỗi nguồn và `persona.txt` như bot để thử nhiều lượt, kể cả viết tắt/sai chính tả. Gõ `/context` để xem lượng ngữ cảnh, `/reset` để bắt đầu lại, `/quit` để thoát. Lịch sử thử chỉ giữ trong RAM, không đọc lịch sử Messenger.
+`chat-ai` dùng cùng chuỗi nguồn và persona như bot (ưu tiên `persona.local.txt` nếu có) để thử nhiều lượt, kể cả viết tắt/sai chính tả. Gõ `/context` để xem lượng ngữ cảnh, `/reset` để bắt đầu lại, `/quit` để thoát. Lịch sử thử chỉ giữ trong RAM, không đọc lịch sử Messenger.
 
 Hai lệnh trên **không kết nối hoặc gửi Messenger**, nhưng có gọi API và tiêu thụ quota thật. Chúng dùng chung bộ đếm thử cục bộ, tách với bộ đếm của bot đang rep.
 
@@ -338,7 +338,7 @@ Khi chạy gửi thật, bot báo **đang nhập** lúc AI bắt đầu soạn v
 ### Bot nhớ những gì?
 
 - Mỗi cuộc trò chuyện có lịch sử riêng, gồm tin người kia và câu trả lời của bot; tin bạn tự nhắn cũng được lưu làm ngữ cảnh.
-- Mặc định giữ tối đa **12 tin tổng hai phía**; mỗi lượt lấy tối đa **3500 ký tự lịch sử**, cộng chỉ dẫn trong `persona.txt`. Mỗi tin đầu vào được giới hạn **1200 ký tự**.
+- Mặc định giữ tối đa **12 tin tổng hai phía**; mỗi lượt lấy tối đa **3500 ký tự lịch sử**, cộng persona đang dùng. Mỗi tin đầu vào được giới hạn **1200 ký tự**.
 - Tin cũ được bỏ dần theo giới hạn, nên ngữ cảnh không phình vô hạn. Bot không đọc lại toàn bộ lịch sử Messenger và không reset trắng sau mỗi lần API hết quota.
 - Lịch sử bot nằm trong `data/`; dữ liệu quá hạn mặc định **7 ngày** được dọn khi khởi động. `chat-ai` là cuộc trò chuyện thử riêng trong RAM.
 
@@ -352,7 +352,21 @@ Bot gom các tin đến sát nhau trong **2,5 giây**. Khi có thêm tin trong l
 
 ### Chỉnh cách nói, bỏ icon
 
-Sửa **[persona.txt](persona.txt)** để đổi xưng hô, độ dài và thông tin AI được biết. Mặc định hướng dẫn nói tự nhiên, không thêm emoji, không bịa Mạnh đang làm gì và nói rõ là trợ lý tự động nếu được hỏi.
+**[persona.txt](persona.txt)** là mẫu chung công khai, không chứa hồ sơ cá nhân. Bản rút gọn khoảng **3.100 ký tự**, giữ cách nói tự nhiên, không icon, hiểu ngữ cảnh/lỗi gõ, không bịa hay nhận lời thay chủ tài khoản.
+
+Muốn tùy chỉnh tên, xưng hô hoặc thông tin riêng, tạo **`persona.local.txt` ngay trên máy chạy bot**. Trên Linux:
+
+```bash
+cp -n persona.txt persona.local.txt
+chmod 600 persona.local.txt
+nano persona.local.txt
+```
+
+`cp -n` giữ nguyên file riêng nếu đã có. Khi file này tồn tại, bot dùng **toàn bộ nội dung của nó thay cho** `persona.txt`; không nối hai bản. Quy tắc này áp dụng cho `run`, `check-ai`, `check-nvidia` và `chat-ai`. File riêng rỗng/không đọc được sẽ báo lỗi để sửa, không âm thầm dùng mẫu chung. Bỏ file riêng nếu muốn quay lại mẫu chung.
+
+Git bỏ qua `persona.local.txt`, nên chỉnh riêng không gây xung đột khi pull và không được thêm bằng `git add` thông thường. Persona đang dùng vẫn được gửi tới nhà cung cấp AI mỗi lượt; giới hạn lịch sử không cắt ngắn persona. Không đưa mật khẩu, cookie hoặc API key vào prompt.
+
+Xóa thông tin khỏi bản hiện tại **không xóa các commit cũ**. Nội dung đã từng công khai vẫn có thể còn trong lịch sử Git hoặc các bản sao.
 
 `reply_prefix` mặc định rỗng. Với cấu hình cũ còn icon hoặc mức 768 token/500 ký tự:
 

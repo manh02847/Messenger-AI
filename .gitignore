@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 config.json
 secrets.json
+persona.local.txt
 .env
 .env.*
 !.env.example

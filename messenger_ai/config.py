@@ -34,6 +34,20 @@ THREAD_PATTERN = re.compile(
 )
 
 
+def load_persona(root: Path = ROOT) -> str:
+    local = root / "persona.local.txt"
+    path = local if local.exists() else root / "persona.txt"
+    try:
+        persona = path.read_text(encoding="utf-8-sig").strip()
+    except (OSError, UnicodeError):
+        raise ValueError(
+            f"Không đọc được {path.name}; kiểm tra file và mã hóa UTF-8."
+        ) from None
+    if not persona:
+        raise ValueError(f"{path.name} đang rỗng.")
+    return persona
+
+
 def private_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp = tempfile.mkstemp(dir=path.parent, prefix="config-")

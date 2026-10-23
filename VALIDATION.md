@@ -2,7 +2,7 @@
 
 Đã kiểm tra trên Linux x86-64, Python 3.12:
 
-- 178 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng, nâng giới hạn và trạng thái đang nhập).
+- 186 bài test offline: đạt (gồm thời gian riêng cho Flash, Google retry, chuyển model/nguồn dự phòng, nâng giới hạn, trạng thái đang nhập và persona riêng).
 - Kiểm tra cú pháp và lint: đạt.
 - Wheel Messenger 2.3.4: kiểm đúng SHA-256 của bản phát hành.
 - Binary E2EE Linux x86-64 thật: kiểm đúng SHA-256, chạy được và trả hợp lệ cho RPC `hello`.
@@ -120,3 +120,19 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
 - Đối chiếu [mã nguồn typing của bridge 2.3.4](https://github.com/m008v/fbchat-v2/blob/aa7abd0386ef1d4cabf8ce592d0f2cf308d8f4f6/bridge-e2ee/bridge/messages.go).
   Chưa đăng nhập Facebook hoặc xác nhận dấu đang nhập hiển thị trên Messenger
   thật; cần cập nhật và thử tại VPS của người dùng.
+
+## Rút gọn persona và hỗ trợ bản riêng trên máy chạy
+
+- Persona công khai giảm từ 8655 xuống 3132 ký tự, bỏ hồ sơ/sở thích và tên riêng,
+  giữ cách xưng hô, ngữ cảnh, ví dụ lỗi gõ, giới hạn quyền hạn và bảo mật. Không
+  đo token theo từng model hoặc khẳng định chất lượng hội thoại qua test offline.
+- Bot ưu tiên persona.local.txt nếu có, dùng thay toàn bộ mẫu công khai cho run,
+  check-ai, check-nvidia và chat-ai. Git bỏ qua file riêng; đọc không sửa nội dung
+  file và không tự nối hai persona khiến prompt dài trở lại.
+- 186 kiểm thử offline và Ruff đạt. Thêm 8 ca kiểm tra dùng mẫu chung, ưu tiên
+  bản riêng kể cả khi thiếu mẫu chung, UTF-8 BOM, giữ nguyên file, lỗi file riêng
+  rỗng/sai mã hóa/không phải file, và check-ai/chat-ai không in persona. Mở rộng
+  kiểm tra NVIDIA riêng để xác nhận cũng nhận persona.local.txt.
+- Kiểm tra cú pháp khối lệnh README và quy tắc Git bỏ qua persona.local.txt đạt.
+  Nội dung đã commit trước đây vẫn còn trong lịch sử Git; lần cập nhật này không
+  viết lại lịch sử hoặc đổi chế độ công khai của repo.
