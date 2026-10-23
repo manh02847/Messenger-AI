@@ -434,7 +434,10 @@ systemctl stop messenger-ai
 
 Tại dòng `Cookie ChatGPT`, dán chuỗi Cookie của tài khoản bạn muốn nối trên
 `chatgpt.com`, rồi Enter. Nội dung được nhập ẩn, không đưa cookie vào đối số shell
-hay shell history. Hỗ trợ `name=value; name2=value2`, có/không tiền tố `Cookie:`,
+hay shell history. Ô nhập trên Linux đọc từng khối thay vì chế độ nhập theo dòng,
+để cookie dài không bị cắt ở 4095 byte. Hỗ trợ bracketed paste; nếu copy kèm xuống
+dòng, phải bấm Enter sau khi dán để xác nhận. Ctrl+C hủy và khôi phục terminal.
+Lệnh chỉ in số byte nhận được để chẩn đoán, không in giá trị cookie. Hỗ trợ `name=value; name2=value2`, có/không tiền tố `Cookie:`,
 và cookie phiên bị chia nhiều phần `.0`, `.1`. Chấp nhận dấu `;` cuối chuỗi và
 dấu nháy bao ngoài do copy. Trong DevTools → Network → Headers → Request Headers,
 chỉ copy **giá trị bên phải Cookie**, không copy cả danh sách request headers.
@@ -529,3 +532,13 @@ thay thế việc dừng bot và có thể làm hai bot chạy cùng lúc. Lện
 check web đều kiểm tra khóa trước khi chạm profile; nhập cookie báo bận trước
 khi yêu cầu dán bí mật. Lỗi `ProviderUnavailable` do ứng dụng tạo nay hiển thị
 thông báo hướng dẫn; lỗi web cũng chỉ rõ bước đang thất bại, không in cookie/DOM.
+
+
+Nếu từng thấy lỗi `Có đoạn thiếu dấu =` dù đã copy đúng Cookie, hãy pull bản mới
+và nhập lại bằng `import-chatgpt-cookie`. Ô nhập cũ dùng getpass trên Linux có thể
+chỉ nhận 4095 byte, làm mất phần cuối cookie dài. Đã tái hiện bằng cookie giả dài
+10.098 byte và kiểm tra ô nhập mới nhận đủ, không echo. Chế độ canonical của
+terminal có [giới hạn dòng 4096 byte tính cả xuống dòng](https://man7.org/linux/man-pages/man3/termios.3.html).
+Nếu vẫn sai định dạng sau cập nhật, gửi dòng lỗi và số byte được nhận, không gửi
+cookie. Có thể dùng `--file` với file lưu bằng editor/SFTP; không dán cookie vào
+lệnh shell hoặc `echo` vì có thể lưu shell history.

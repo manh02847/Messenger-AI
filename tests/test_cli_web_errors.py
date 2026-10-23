@@ -12,7 +12,7 @@ def test_import_refuses_busy_bot_before_requesting_cookie(
     monkeypatch.setattr(cli, "ROOT", tmp_path)
     monkeypatch.setattr("sys.argv", ["messenger_ai", "import-chatgpt-cookie"])
     secret_prompt = Mock()
-    monkeypatch.setattr(cli.getpass, "getpass", secret_prompt)
+    monkeypatch.setattr("messenger_ai.secret_input.read_cookie_hidden", secret_prompt)
     with cli.instance_lock(tmp_path / "data"):
         with pytest.raises(SystemExit) as error:
             cli.main()

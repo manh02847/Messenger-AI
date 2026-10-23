@@ -118,3 +118,17 @@ Thay đổi dựa trên log người dùng có Google chờ 25 giây trước kh
   nhãn Cookie và xuống dòng giữa cặp; vẫn từ chối ngắt dòng giữa giá trị token.
 - Chỉ dùng cookie giả để kiểm thử parser. Không trích xuất hay sử dụng giá trị
   đăng nhập trong ảnh người dùng, chưa xác định nguyên nhân chính xác trên VPS.
+
+
+### Nhận cookie dài qua terminal Linux
+
+- Tái hiện trên pseudo-terminal thật: getpass cũ nhận 4095 byte từ cookie giả
+  dài 10098 byte. Lỗi cắt dòng có thể làm mất dấu = của cookie cuối.
+- Thay ô nhập cookie bằng noncanonical hidden input, đọc theo khối tối đa 64 KiB,
+  hỗ trợ bracketed paste, khôi phục terminal khi thành công/hủy/lỗi và không
+  echo nội dung. Chỉ in độ dài byte sau khi xác nhận.
+- Toàn bộ 171 kiểm thử offline và Ruff đều đạt. 6 ca bổ sung chạy với PTY thật:
+  nhận đủ cookie dài, paste chia khối/nhiều dòng, từ chối quá 64 KiB, Ctrl+C,
+  UTF-8 lỗi và không có terminal. Không dùng cookie tài khoản thật.
+- Đây là lỗi nhập đã tái hiện được ở local, chưa kết luận là nguyên nhân duy
+  nhất của lỗi người dùng hoặc xác nhận đăng nhập trên VPS.

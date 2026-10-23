@@ -520,13 +520,10 @@ def main() -> None:
                     with args.file.open("r", encoding="utf-8") as cookie_file:
                         value = cookie_file.read(65537)
                 else:
-                    if not sys.stdin.isatty():
-                        raise ValueError(
-                            "Cần terminal tương tác để nhập ẩn; hoặc dùng --file."
-                        )
-                    value = getpass.getpass(
-                        "Cookie ChatGPT (nhập ẩn, không ghi shell history): "
-                    )
+                    from .secret_input import read_cookie_hidden
+
+                    value = read_cookie_hidden()
+                print(f"Đã nhận {len(value.encode('utf-8'))} byte dữ liệu cookie.")
                 asyncio.run(import_web_cookies(value))
         elif args.command == "check-chatgpt-web":
             with instance_lock(ROOT / "data"):
