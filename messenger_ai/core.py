@@ -277,6 +277,7 @@ class ReplyBot:
                     thread,
                     self.settings.history_messages,
                     self.settings.history_char_limit,
+                    idle_seconds=self.settings.history_idle_seconds,
                 )
                 if not self.settings.dry_run and thread not in self.typing_tasks:
                     self.typing_tasks[thread] = asyncio.create_task(

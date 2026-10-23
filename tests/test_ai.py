@@ -41,7 +41,9 @@ async def test_request_contract_and_only_final_answer():
     assert captured[0]["include_reasoning"] is False
     assert captured[0]["reasoning_effort"] == "low"
     assert "reasoning_format" not in captured[0]
-    assert captured[0]["messages"][0] == {"role": "system", "content": "Persona"}
+    prompt = captured[0]["messages"][0]
+    assert prompt["role"] == "system"
+    assert prompt["content"].startswith("Persona\n\nDÙNG NGỮ CẢNH\n")
 
 
 @pytest.mark.asyncio

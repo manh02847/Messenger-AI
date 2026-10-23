@@ -46,6 +46,7 @@ def source_bot(tmp_path):
         "google_models": ["gemini-3.5-flash-lite", "gemma-4-31b-it"],
         "max_ai_calls_per_day": 1000,
         "history_char_limit": 4000,
+        "history_idle_seconds": 1800,
         "max_completion_tokens": 3000,
         "allowed_threads": ["e2ee:999@msgr"],
         "reply_scope": "all_private",
@@ -171,6 +172,7 @@ def test_copy_ai_creates_separate_account_without_copying_identity_or_device(
         "nvidia_model",
         "max_ai_calls_per_day",
         "history_char_limit",
+        "history_idle_seconds",
     ):
         assert result[name] == raw[name]
     assert result["allowed_threads"] == [] and result["reply_scope"] == "allowlist"

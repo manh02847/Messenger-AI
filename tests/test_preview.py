@@ -69,10 +69,7 @@ def test_preview_preserves_latest_message_within_limits():
         ],
         settings,
     )
-    assert result == [
-        {"role": "assistant", "content": "fghi"},
-        {"role": "user", "content": "latest"},
-    ]
+    assert result == [{"role": "user", "content": "latest"}]
 
 
 def test_tune_preserves_secrets_recipients_and_larger_budget(tmp_path, monkeypatch):

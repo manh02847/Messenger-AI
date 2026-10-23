@@ -79,6 +79,7 @@ class Settings:
     max_message_age_seconds: float = 120
     history_messages: int = 12
     history_char_limit: int = 3500
+    history_idle_seconds: float = 3600
     input_char_limit: int = 1200
     output_char_limit: int = 4000
     max_completion_tokens: int = 4096
@@ -159,6 +160,7 @@ class Settings:
             "manual_pause_seconds",
             "max_message_age_seconds",
             "minimum_ai_interval_seconds",
+            "history_idle_seconds",
         ):
             number = getattr(result, name)
             if (

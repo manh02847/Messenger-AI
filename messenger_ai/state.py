@@ -4,6 +4,8 @@ import hashlib
 import sqlite3
 from pathlib import Path
 
+from .context import recent_history
+
 
 class State:
     def __init__(self, path: Path):
@@ -52,20 +54,26 @@ class State:
                 (thread, thread, keep),
             )
 
-    def history(self, thread: str, count: int, char_limit: int) -> list[dict[str, str]]:
+    def history(
+        self, thread: str, count: int, char_limit: int, *, idle_seconds: float = 0
+    ) -> list[dict[str, str]]:
         rows = self.db.execute(
-            "SELECT role,content FROM messages WHERE thread=? ORDER BY id DESC LIMIT ?",
+            "SELECT role,content,at FROM messages WHERE thread=? ORDER BY id DESC LIMIT ?",
             (thread, count),
         ).fetchall()
         history: list[dict[str, str]] = []
-        remaining = char_limit
-        for role, content in rows:
-            if remaining <= 0:
+        newer_at = None
+        for role, content, at in rows:
+            if idle_seconds and newer_at is not None and newer_at - at >= idle_seconds:
                 break
-            clipped = content[-remaining:]
-            history.append({"role": role, "content": clipped})
-            remaining -= len(clipped)
-        return list(reversed(history))
+            history.append({"role": role, "content": content})
+            newer_at = at
+        return recent_history(list(reversed(history)), count, char_limit)
+
+    def clear_history(self, thread: str) -> int:
+        with self.db:
+            cursor = self.db.execute("DELETE FROM messages WHERE thread=?", (thread,))
+        return cursor.rowcount
 
     def pause(self, thread: str, until: float) -> None:
         with self.db:

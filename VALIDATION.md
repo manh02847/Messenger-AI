@@ -166,3 +166,29 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
 - Các khối lệnh shell/Python, liên kết nội bộ trong README và git diff --check
   đạt. Không sửa mã bot; không chạy lại 203 test offline của commit trước.
   Chưa cài service hoặc kiểm tra bus trên VPS người dùng.
+
+## Hạn chế ngữ cảnh dẫn lệch và reset riêng từng chat
+
+- Giữ các tin gần nhất còn nguyên nội dung trong giới hạn tin/ký tự; bỏ câu
+  trả lời đứng đầu khi câu hỏi trước nó đã bị loại, thay vì gửi mảnh đuôi tin.
+  Tin mới nhất vượt ngân sách lịch sử được lấy phần đầu để vẫn có đầu vào.
+- Thêm history_idle_seconds, mặc định 3600 giây, 0 là tắt. Ngữ cảnh không vượt
+  qua khoảng cách giữa hai tin từ mức này; hội thoại đang nhắn liên tục vẫn
+  giữ lịch sử dù đã kéo dài nhiều giờ. Áp dụng trên dữ liệu có sẵn sau restart,
+  không cần migration, và dùng chung cách chọn lịch sử với chat-ai.
+- Mỗi nguồn nhận persona đầy đủ cùng hướng dẫn phân biệt chủ tài khoản/người
+  nhắn, đối chiếu thông tin và không coi câu trả lời cũ của bot là chứng cứ.
+  Áp dụng cả persona.local.txt; không sửa file riêng, tự suy diễn giới tính hay
+  gọi AI thêm để tóm tắt. Hướng dẫn thêm vào có tiêu thụ token đầu vào.
+- reset-context chỉ xóa messages của mã chat được chọn trong state.sqlite3,
+  hoặc preview.sqlite3 khi có --preview. Yêu cầu dừng bot/discover bằng khóa
+  tiến trình sẵn có; giữ seen/outbox, cooldown, thời gian nhường, giới hạn,
+  persona, cookie, thiết bị E2EE, các chat và thư mục acc khác.
+- Toàn bộ 227 kiểm thử offline đạt, thêm 24 ca cho giới hạn trọn tin, ranh
+  giới im lặng, cấu hình cũ/sai, tích hợp lượt trả lời và chat-ai, reset từng
+  chat/chế độ, khóa tiến trình, CLI và payload của bốn nhà cung cấp. Cập nhật
+  kiểm tra configure --copy-ai-from để giữ thiết lập thời gian ngữ cảnh.
+- Ruff với E4/E7/E9/F, cú pháp 37 khối lệnh và liên kết cục bộ README, CLI help
+  và git diff --check đạt. Không gọi AI/Facebook thật, không triển khai hay
+  reset dữ liệu trên VPS người dùng. Các test xác nhận cơ chế chọn lịch sử và
+  request; không chứng minh model sẽ luôn làm đúng hoặc hết bịa.

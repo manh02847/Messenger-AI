@@ -17,6 +17,7 @@ from .config import (
     GOOGLE_MODELS,
     NVIDIA_DEFAULT_MODEL,
     ROOT,
+    THREAD_PATTERN,
     Settings,
     load_persona,
     load_secrets,
@@ -37,6 +38,7 @@ AI_SETTINGS = (
     "output_char_limit",
     "history_messages",
     "history_char_limit",
+    "history_idle_seconds",
 )
 AI_SECRETS = (
     "groq_api_key",
@@ -385,6 +387,26 @@ def set_reply_scope(scope: str) -> None:
     print("Khởi động lại bot để áp dụng.")
 
 
+def reset_context(thread: str, *, preview: bool = False) -> None:
+    from .state import State
+
+    if not THREAD_PATTERN.fullmatch(thread):
+        raise ValueError(
+            "Dùng mã cuộc trò chuyện lấy từ discover, dạng e2ee:… hoặc thread:…."
+        )
+    path = ROOT / "data" / ("preview.sqlite3" if preview else "state.sqlite3")
+    if not path.is_file():
+        raise ValueError("Chưa có dữ liệu ngữ cảnh trong chế độ đã chọn.")
+    with instance_lock(ROOT / "data"):
+        state = State(path)
+        try:
+            count = state.clear_history(thread)
+        finally:
+            state.close()
+    print(f"Đã xóa {count} tin ngữ cảnh của cuộc trò chuyện đã chọn.")
+    print("Giữ trạng thái chống gửi trùng, thời gian nhường và bộ đếm giới hạn.")
+
+
 async def check_ai(*, interactive: bool = False, provider: str | None = None) -> None:
     from .ai import create_ai
     from .state import State
@@ -608,6 +630,16 @@ def main() -> None:
     allow.add_argument("thread")
     scope = sub.add_parser("scope", help="Chọn phạm vi tự rep.")
     scope.add_argument("value", choices=("allowlist", "all_private"))
+    reset = sub.add_parser(
+        "reset-context",
+        help="Xóa ngữ cảnh một chat; cần dừng bot trong thư mục này trước.",
+    )
+    reset.add_argument("thread", help="Mã cuộc trò chuyện lấy từ discover.")
+    reset.add_argument(
+        "--preview",
+        action="store_true",
+        help="Xóa ngữ cảnh xem trước thay vì gửi thật.",
+    )
     command = sub.add_parser(
         "run", help="Chạy bot; mặc định theo dry_run trong cấu hình."
     )
@@ -647,6 +679,8 @@ def main() -> None:
             tune_chat()
         elif args.command == "scope":
             set_reply_scope(args.value)
+        elif args.command == "reset-context":
+            reset_context(args.thread, preview=args.preview)
         elif args.command in ("check-ai", "chat-ai"):
             asyncio.run(check_ai(interactive=args.command == "chat-ai"))
         else:

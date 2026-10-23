@@ -45,10 +45,11 @@ async def test_nvidia_payload_uses_fixed_endpoint_context_max_tokens_and_no_thin
         assert request.headers["authorization"] == "Bearer test-nvidia-secret"
         payload = json.loads(request.content)
         assert payload["model"] == NVIDIA_DEFAULT_MODEL
-        assert payload["messages"] == [
-            {"role": "system", "content": "Persona"},
-            *history,
-        ]
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][0]["content"].startswith(
+            "Persona\n\nDÙNG NGỮ CẢNH\n"
+        )
+        assert payload["messages"][1:] == history
         assert payload["max_tokens"] == 4096
         assert "max_completion_tokens" not in payload
         assert "reasoning_effort" not in payload

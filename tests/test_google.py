@@ -41,7 +41,9 @@ async def test_google_native_request_preserves_context_and_hides_thoughts(model)
         assert request.headers["x-goog-api-key"] == "google-secret"
         assert "authorization" not in request.headers
         payload = json.loads(request.content)
-        assert payload["systemInstruction"]["parts"] == [{"text": "Persona"}]
+        prompt = payload["systemInstruction"]["parts"]
+        assert len(prompt) == 1
+        assert prompt[0]["text"].startswith("Persona\n\nDÙNG NGỮ CẢNH\n")
         assert [v["role"] for v in payload["contents"]] == ["user", "model", "user"]
         assert [v["parts"][0]["text"] for v in payload["contents"]] == [
             v["content"] for v in history

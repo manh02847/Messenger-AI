@@ -1,22 +1,21 @@
 """Interactive AI conversation with in-memory context and no Messenger transport."""
 
+from time import monotonic
+
 from .ai import AIError
+from .context import recent_history
 from .handoff import reply_text, requests_human
 
 
 def bounded_history(history, settings):
-    result, remaining = [], settings.history_char_limit
-    for message in reversed(history[-settings.history_messages :]):
-        if remaining <= 0:
-            break
-        content = message["content"][-remaining:]
-        result.append({"role": message["role"], "content": content})
-        remaining -= len(content)
-    return list(reversed(result))
+    return recent_history(
+        history, settings.history_messages, settings.history_char_limit
+    )
 
 
-async def chat_loop(ai, settings, reserve, *, read=input, write=print):
+async def chat_loop(ai, settings, reserve, *, read=input, write=print, clock=monotonic):
     history = []
+    last_activity = None
     write(
         f"Nguồn AI: {getattr(ai, 'description', settings.model)}. Chỉ thử AI; không kết nối Messenger."
     )
@@ -30,6 +29,7 @@ async def chat_loop(ai, settings, reserve, *, read=input, write=print):
             return
         if text == "/reset":
             history.clear()
+            last_activity = None
             write("Đã bắt đầu ngữ cảnh mới.")
             continue
         if text == "/context":
@@ -42,6 +42,15 @@ async def chat_loop(ai, settings, reserve, *, read=input, write=print):
         if requests_human(text):
             write("[Nếu trên Messenger: yêu cầu này sẽ tạm nhường cho Mạnh.]")
             continue
+        now = clock()
+        if (
+            settings.history_idle_seconds
+            and last_activity is not None
+            and now - last_activity >= settings.history_idle_seconds
+        ):
+            history.clear()
+            write("Đã bắt đầu ngữ cảnh mới sau thời gian không nhắn.")
+        last_activity = now
         history.append({"role": "user", "content": text[: settings.input_char_limit]})
         history = bounded_history(history, settings)
         try:
@@ -53,3 +62,4 @@ async def chat_loop(ai, settings, reserve, *, read=input, write=print):
         write("AI: " + answer)
         history.append({"role": "assistant", "content": answer})
         history = bounded_history(history, settings)
+        last_activity = clock()

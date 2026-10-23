@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .config import GOOGLE_MODELS, Settings, valid_nvidia_model
+from .context import system_prompt
 
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GOOGLE_REQUEST_TIMEOUT = 8
@@ -94,7 +95,7 @@ def google_payload(
     settings: Settings, persona: str, history: list[dict[str, str]]
 ) -> dict:
     return {
-        "systemInstruction": {"parts": [{"text": persona}]},
+        "systemInstruction": {"parts": [{"text": system_prompt(persona)}]},
         "contents": [
             {
                 "role": "model" if item["role"] == "assistant" else "user",
@@ -207,7 +208,7 @@ class ChatAI:
     async def generate(
         self, history: list[dict[str, str]], reserve: Callable[[], bool]
     ) -> str:
-        persona = self.persona
+        persona = system_prompt(self.persona)
         if (
             self.provider == "cloudflare"
             and self.settings.model == "@cf/qwen/qwen3-30b-a3b-fp8"

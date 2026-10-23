@@ -412,8 +412,34 @@ Khi chạy gửi thật, bot báo **đang nhập** lúc AI bắt đầu soạn v
 
 - Mỗi cuộc trò chuyện có lịch sử riêng, gồm tin người kia và câu trả lời của bot; tin bạn tự nhắn cũng được lưu làm ngữ cảnh.
 - Mặc định giữ tối đa **12 tin tổng hai phía**; mỗi lượt lấy tối đa **3500 ký tự lịch sử**, cộng persona đang dùng. Mỗi tin đầu vào được giới hạn **1200 ký tự**.
+- Ưu tiên các tin gần nhất còn nguyên nội dung; bỏ câu trả lời đầu ngữ cảnh nếu câu hỏi tương ứng đã bị loại. Không lấy riêng phần đuôi của tin cũ chỉ để lấp đủ giới hạn. Nếu riêng tin mới nhất vượt ngân sách lịch sử, chỉ lấy phần đầu của tin đó.
+- Nếu hai tin liên tiếp trong một chat cách nhau **từ 1 giờ**, lượt tiếp theo bắt đầu ngữ cảnh mới. Điều chỉnh `history_idle_seconds` trong `config.json`; đặt `0` để tắt. Quy tắc cũng áp dụng sau restart và cho `chat-ai`. Dữ liệu cũ vẫn được giữ theo giới hạn lưu trữ, nhưng không gửi qua ranh giới này.
 - Tin cũ được bỏ dần theo giới hạn, nên ngữ cảnh không phình vô hạn. Bot không đọc lại toàn bộ lịch sử Messenger và không reset trắng sau mỗi lần API hết quota.
 - Lịch sử bot nằm trong `data/`; dữ liệu quá hạn mặc định **7 ngày** được dọn khi khởi động. `chat-ai` là cuộc trò chuyện thử riêng trong RAM.
+
+Mỗi request kèm một hướng dẫn ngắn để đối chiếu persona, phân biệt chủ tài khoản với người nhắn và không coi câu trả lời cũ của bot là sự thật đã xác minh. Hướng dẫn áp dụng cả khi có `persona.local.txt`, thêm một ít token đầu vào; không gọi AI riêng để tóm tắt hoặc đánh giá lịch sử. Đây là hướng dẫn cho model, không bảo đảm mọi câu trả lời đều đúng.
+
+### Reset ngữ cảnh của một cuộc trò chuyện
+
+Khi bot cứ lặp lại cách hiểu sai, có thể xóa riêng ngữ cảnh chat đó. Dùng mã đã lấy từ `discover`, thay `e2ee:222@msgr` trong ví dụ bằng mã thật; không dùng trực tiếp số trên thanh địa chỉ Messenger.
+
+Dừng bot trong đúng thư mục trước, rồi chạy lệnh reset và bật lại. Ví dụ với system service:
+
+```bash
+systemctl stop messenger-ai
+.venv/bin/python -m messenger_ai reset-context "e2ee:222@msgr"
+systemctl start messenger-ai
+```
+
+Với acc thứ hai, chạy trong `~/messenger-ai-bot-2` và thay tên service thành `messenger-ai-2`. Nếu dùng user service, thêm `--user` vào lệnh `systemctl`. Nếu chạy trực tiếp, dừng bằng `Ctrl+C`, reset rồi chạy lại `run --live`.
+
+Lệnh chỉ xóa các tin làm ngữ cảnh trong chat đã chọn. Dữ liệu chống gửi trùng, outbox, thời gian nhường, quota, persona và các chat khác được giữ; không xóa tin trên Messenger. Nếu bot/discover còn chạy trong thư mục, lệnh từ chối để tránh gửi bản nháp từ ngữ cảnh cũ. Chế độ xem trước dùng dữ liệu riêng:
+
+```bash
+.venv/bin/python -m messenger_ai reset-context "e2ee:222@msgr" --preview
+```
+
+Trong `chat-ai`, dùng `/reset` để xóa ngữ cảnh thử trong RAM. Sửa persona vẫn cần khởi động lại bot để đọc bản mới.
 
 ### Khi bạn nhắn thủ công
 
@@ -471,6 +497,7 @@ Sửa `config.json`, đối chiếu [config.example.json](config.example.json). 
 | `max_message_age_seconds` | `120` | Bỏ tin quá cũ; không rep bù lịch sử |
 | `history_messages` | `12` | Số tin tối đa trong ngữ cảnh, tổng hai phía |
 | `history_char_limit` | `3500` | Tổng ký tự lịch sử lấy cho mỗi lượt |
+| `history_idle_seconds` | `3600` | Bắt đầu ngữ cảnh mới khi hai tin cách nhau từ mức này; `0` tắt |
 | `input_char_limit` | `1200` | Giới hạn ký tự mỗi tin đưa vào ngữ cảnh |
 | `output_char_limit` | `4000` | Giới hạn ký tự câu trả lời, chưa tính tiền tố |
 | `max_completion_tokens` | `4096` | Ngân sách token cho một lần tạo phản hồi; có thể gồm suy luận |

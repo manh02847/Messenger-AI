@@ -15,6 +15,7 @@
   "max_message_age_seconds": 120,
   "history_messages": 12,
   "history_char_limit": 3500,
+  "history_idle_seconds": 3600,
   "input_char_limit": 1200,
   "output_char_limit": 4000,
   "max_completion_tokens": 4096,
