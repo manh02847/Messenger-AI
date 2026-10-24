@@ -7,9 +7,18 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
-from .ai import AIError
+from .ai import AIError, ChatAI
 from .config import Settings
+from .context import recent_history
 from .handoff import reply_text, requests_human
+from .images import (
+    IMAGE_FAILURE,
+    MAX_IMAGES,
+    ImageAttachment,
+    ImageError,
+    ImageInput,
+    image_attachments,
+)
 from .state import State
 
 VIETNAM = timezone(timedelta(hours=7))
@@ -29,6 +38,7 @@ class Message:
     thread_id: int = 0
     is_private: bool = False
     thread_type: int = 1
+    images: tuple[ImageAttachment, ...] = ()
 
 
 def parse_event(event: object) -> Message | None:
@@ -74,6 +84,7 @@ def parse_event(event: object) -> Message | None:
             is_private=bool(
                 re.fullmatch(r"[1-9][0-9]*(?:\.[0-9]+)?(?::[0-9]+)?@msgr", jid)
             ),
+            images=image_attachments(data.get("attachments")),
         )
     tid = data.get("threadId")
     if isinstance(tid, bool) or not str(tid).isdigit() or int(tid) <= 0:
@@ -92,6 +103,7 @@ def parse_event(event: object) -> Message | None:
         thread_type=data["threadType"]
         if type(data.get("threadType")) is int and data["threadType"] > 0
         else 1,
+        images=image_attachments(data.get("attachments")),
     )
 
 
@@ -106,6 +118,10 @@ class Transport(Protocol):
 
     async def set_typing(self, message: Message, is_typing: bool) -> None: ...
 
+    async def load_image(
+        self, image: ImageAttachment, *, encrypted: bool
+    ) -> ImageInput: ...
+
 
 class ReplyBot:
     def __init__(
@@ -118,6 +134,7 @@ class ReplyBot:
         *,
         clock: Callable[[], float] = time.time,
         log: Callable[[str], None] = print,
+        image_ai: ChatAI | None = None,
     ):
         self.settings, self.state, self.ai, self.transport = (
             settings,
@@ -133,6 +150,19 @@ class ReplyBot:
         self.tasks: dict[str, asyncio.Task] = {}
         self.typing_tasks: dict[str, asyncio.Task] = {}
         self.closing = False
+        self.image_ai = image_ai
+        self.pending_images: dict[str, list[tuple[ImageAttachment, bool]]] = {}
+        self.image_slots = asyncio.Semaphore(1)
+
+    def _input_content(self, message: Message) -> str:
+        content = message.text[: self.settings.input_char_limit]
+        if message.images:
+            content += (
+                "\n[Người nhắn gửi ảnh đính kèm.]"
+                if self.image_ai is not None
+                else "\n[Ảnh đính kèm chưa được cung cấp cho AI vì chức năng đọc ảnh chưa bật.]"
+            )
+        return content.strip()
 
     def receive(self, message: Message) -> None:
         if self.closing:
@@ -156,6 +186,7 @@ class ReplyBot:
                 return
             self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
             self.pending.discard(message.thread)
+            self.pending_images.pop(message.thread, None)
             self.state.pause(message.thread, now + self.settings.manual_pause_seconds)
             self._cancel_typing(message.thread)
             if message.text.strip():
@@ -170,24 +201,35 @@ class ReplyBot:
                 "Bạn vừa nhắn thủ công: tạm dừng auto rep trong cuộc trò chuyện này."
             )
             return
-        if not message.text.strip():
+        if not message.text.strip() and not (
+            message.images and self.image_ai is not None
+        ):
+            if message.images:
+                self.log(
+                    "Nhận ảnh nhưng chưa bật nguồn đọc ảnh; bỏ qua tin chỉ có ảnh."
+                )
             return
         self.state.remember(
             message.thread,
             "user",
-            message.text[: self.settings.input_char_limit],
+            self._input_content(message),
             now,
             self.settings.history_messages,
         )
         if requests_human(message.text):
             self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
             self.pending.discard(message.thread)
+            self.pending_images.pop(message.thread, None)
             self.state.pause(message.thread, now + self.settings.manual_pause_seconds)
             self._cancel_typing(message.thread)
             self.log("Người nhắn yêu cầu dừng hoặc gặp Mạnh: tạm nhường trả lời.")
             return
         if self.state.paused(message.thread, now):
             return
+        if message.images and self.image_ai is not None:
+            queued = self.pending_images.setdefault(message.thread, [])
+            queued.extend((image, bool(message.chat_jid)) for image in message.images)
+            self.pending_images[message.thread] = queued[-MAX_IMAGES:]
         self.latest[message.thread] = message
         self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
         self.pending.add(message.thread)
@@ -244,6 +286,7 @@ class ReplyBot:
             await asyncio.gather(task, return_exceptions=True)
 
     async def _worker(self, thread: str) -> None:
+        image_cache: dict[tuple[ImageAttachment, bool], ImageInput] = {}
         try:
             while thread in self.pending:
                 revision = self.revisions[thread]
@@ -279,11 +322,69 @@ class ReplyBot:
                     self.settings.history_char_limit,
                     idle_seconds=self.settings.history_idle_seconds,
                 )
+                if not history or history[-1]["role"] != "user":
+                    # A prior send can finish after the next input was stored.
+                    # Keep that pending input last, including with a tiny budget.
+                    for index in range(len(history) - 1, -1, -1):
+                        if history[index]["role"] == "user":
+                            history.pop(index)
+                            break
+                    history.append(
+                        {
+                            "role": "user",
+                            "content": self._input_content(self.latest[thread]),
+                        }
+                    )
+                    history = recent_history(
+                        history,
+                        self.settings.history_messages,
+                        self.settings.history_char_limit,
+                    )
                 if not self.settings.dry_run and thread not in self.typing_tasks:
                     self.typing_tasks[thread] = asyncio.create_task(
                         self._typing_worker(self.latest[thread])
                     )
-                text = await self.ai.generate(history, self._reserve_ai)
+                attachments = list(self.pending_images.get(thread, ()))
+                if attachments and self.image_ai is not None:
+                    async with self.image_slots:
+                        if not self._may_send(thread):
+                            break
+                        if revision != self.revisions[thread]:
+                            continue
+                        image_cache = {
+                            key: value
+                            for key, value in image_cache.items()
+                            if key in attachments
+                        }
+                        try:
+                            for attachment, encrypted in attachments:
+                                key = (attachment, encrypted)
+                                if key not in image_cache:
+                                    image_cache[key] = await self.transport.load_image(
+                                        attachment, encrypted=encrypted
+                                    )
+                                if (
+                                    not self._may_send(thread)
+                                    or revision != self.revisions[thread]
+                                ):
+                                    break
+                            if not self._may_send(thread):
+                                break
+                            if revision != self.revisions[thread]:
+                                continue
+                            text = await self.image_ai.generate(
+                                history,
+                                self._reserve_ai,
+                                images=[image_cache[key] for key in attachments],
+                            )
+                            self.log(f"Đã đọc ảnh bằng: {self.image_ai.last_used}.")
+                        except ImageError:
+                            self.log(
+                                "Không tải/xử lý được ảnh; không gọi AI để đoán nội dung."
+                            )
+                            text = IMAGE_FAILURE
+                else:
+                    text = await self.ai.generate(history, self._reserve_ai)
                 if not self._may_send(thread):
                     break
                 if revision != self.revisions[thread]:
@@ -295,6 +396,8 @@ class ReplyBot:
                     + text.strip()[: self.settings.output_char_limit]
                 )
                 self.pending.discard(thread)
+                self.pending_images.pop(thread, None)
+                image_cache.clear()
                 if self.settings.dry_run:
                     self.log(f"[XEM TRƯỚC — CHƯA GỬI] {text}")
                     continue
@@ -347,6 +450,7 @@ class ReplyBot:
             )
         finally:
             self.pending.discard(thread)
+            self.pending_images.pop(thread, None)
             await self._finish_typing(thread)
             # A new message may arrive while the typing-off RPC is finishing.
             if thread in self.pending and not self.closing:
@@ -356,6 +460,7 @@ class ReplyBot:
         # Let any in-flight send finish instead of blindly cancelling/replaying it.
         self.closing = True
         self.pending.clear()
+        self.pending_images.clear()
         for thread in self.typing_tasks:
             self._cancel_typing(thread)
         if self.typing_tasks:

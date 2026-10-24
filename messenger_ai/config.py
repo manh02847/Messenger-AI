@@ -70,6 +70,8 @@ class Settings:
     fallback_model: str = ""
     google_models: tuple[str, ...] = ()
     nvidia_model: str = ""
+    vision_provider: str = ""
+    vision_model: str = ""
     model: str = "openai/gpt-oss-120b"
     dry_run: bool = True
     reply_prefix: str = ""
@@ -123,6 +125,33 @@ class Settings:
             )
         value["google_models"] = tuple(google_models)
         result = cls(**value)
+        if (
+            not isinstance(result.vision_provider, str)
+            or not isinstance(result.vision_model, str)
+            or result.vision_provider
+            not in ("", "nvidia", "google", "groq", "cloudflare")
+            or bool(result.vision_provider) != bool(result.vision_model)
+        ):
+            raise ValueError(
+                "vision_provider/vision_model phải cùng được chọn hoặc cùng rỗng."
+            )
+        if result.vision_model:
+            model = result.vision_model
+            if (
+                len(model) > 200
+                or not re.fullmatch(r"[@A-Za-z0-9][A-Za-z0-9@._/-]*", model)
+                or (
+                    result.vision_provider == "nvidia" and not valid_nvidia_model(model)
+                )
+                or (result.vision_provider == "google" and model not in GOOGLE_MODELS)
+                or (
+                    result.vision_provider == "cloudflare"
+                    and not model.startswith("@cf/")
+                )
+            ):
+                raise ValueError(
+                    "vision_model chưa hợp lệ cho nguồn đã chọn; xem configure-vision."
+                )
         if result.nvidia_model != "" and not valid_nvidia_model(result.nvidia_model):
             raise ValueError(
                 "nvidia_model phải là mã model dạng hãng/tên-model, hoặc chuỗi rỗng để tắt."

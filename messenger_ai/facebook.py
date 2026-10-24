@@ -6,7 +6,19 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from .core import Message
+from .images import (
+    MAX_IMAGE_BYTES,
+    MEDIA_TIMEOUT,
+    ImageAttachment,
+    ImageError,
+    ImageInput,
+    prepare_image,
+    validate_attachment,
+    validate_media_url,
+)
 
 
 class FacebookTransport:
@@ -23,6 +35,7 @@ class FacebookTransport:
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self.overflowed = False
         self.closing = False
+        self.media_client: httpx.AsyncClient | None = None
 
     async def connect(self) -> None:
         # Import only after setup, so configure/help can run without dependencies.
@@ -149,3 +162,68 @@ class FacebookTransport:
         if self.task is not None:
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await self.task
+        if self.media_client is not None:
+            await self.media_client.aclose()
+
+    async def load_image(
+        self, image: ImageAttachment, *, encrypted: bool
+    ) -> ImageInput:
+        from fbchat_v2._messaging._bridge_actions import BridgeActions
+
+        if self.listener is None or self.closing:
+            raise ImageError()
+        validate_attachment(image, encrypted=encrypted)
+        try:
+            async with asyncio.timeout(MEDIA_TIMEOUT):
+                if encrypted:
+                    if self.listener._bridge is None:
+                        raise ImageError()
+                    result = await BridgeActions(
+                        self.listener._bridge
+                    ).download_e2ee_media(
+                        image.direct_path,
+                        image.media_key,
+                        image.media_sha256,
+                        image.media_enc_sha256,
+                        "image",
+                        image.mime_type,
+                        image.file_size,
+                    )
+                    data = result.get("data")
+                    if not isinstance(data, bytes) or len(data) != image.file_size:
+                        raise ImageError()
+                else:
+                    data = await self._download_photo(image.url)
+                return await asyncio.to_thread(prepare_image, data)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise ImageError() from None
+
+    async def _download_photo(self, url: str) -> bytes:
+        if self.media_client is None:
+            # Signed Meta CDN URLs do not need the Facebook cookie.
+            self.media_client = httpx.AsyncClient(
+                timeout=10, follow_redirects=False, trust_env=False
+            )
+        for _ in range(5):
+            validate_media_url(url)
+            async with self.media_client.stream(
+                "GET", url, headers={"Accept-Encoding": "identity"}
+            ) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location", "")
+                    url = str(response.url.join(location))
+                    validate_media_url(url)
+                    continue
+                response.raise_for_status()
+                length = response.headers.get("content-length")
+                if length is not None and int(length) > MAX_IMAGE_BYTES:
+                    raise ImageError()
+                data = bytearray()
+                async for chunk in response.aiter_bytes(65536):
+                    if len(data) + len(chunk) > MAX_IMAGE_BYTES:
+                        raise ImageError()
+                    data.extend(chunk)
+                return bytes(data)
+        raise ImageError()

@@ -31,6 +31,8 @@ AI_SETTINGS = (
     "fallback_model",
     "google_models",
     "nvidia_model",
+    "vision_provider",
+    "vision_model",
     "max_completion_tokens",
     "max_ai_calls_per_day",
     "minimum_ai_interval_seconds",
@@ -294,6 +296,92 @@ def configure_nvidia(model: str | None = None, *, disable: bool = False) -> None
     )
 
 
+def configure_vision(
+    provider: str | None, model: str | None, *, disable: bool = False
+) -> None:
+    from .ai import validate_connection
+
+    path = ROOT / "config.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    Settings.from_dict(raw)
+    if disable:
+        if provider is not None or model is not None:
+            raise ValueError("Dùng riêng --disable để tắt đọc ảnh.")
+        raw.update(vision_provider="", vision_model="")
+        Settings.from_dict(raw)
+        private_json(path, raw)
+        print("Đã tắt đọc ảnh; giữ key và cấu hình nhắn chữ.")
+        return
+    if not provider or not model:
+        raise ValueError(
+            "Chọn nguồn và --model hỗ trợ ảnh, ví dụ configure-vision nvidia --model google/gemma-4-31b-it."
+        )
+    raw.update(vision_provider=provider, vision_model=model)
+    settings = Settings.from_dict(raw)
+    secrets = load_secrets(ROOT)
+    key = {
+        "nvidia": "nvidia_api_key",
+        "google": "google_api_key",
+        "groq": "groq_api_key",
+        "cloudflare": "cloudflare_api_token",
+    }[provider]
+    secrets[key] = (
+        getpass.getpass("API key đọc ảnh (Enter để giữ key nguồn này): ").strip()
+        or secrets[key]
+    )
+    if provider == "cloudflare":
+        secrets["cloudflare_account_id"] = (
+            input("Cloudflare Account ID (Enter để giữ cũ): ").strip()
+            or secrets["cloudflare_account_id"]
+        )
+    # Validate credentials without constructing clients or calling any API.
+    validate_connection(
+        secrets[key],
+        replace(settings, ai_provider=provider, model=model),
+        secrets.get("cloudflare_account_id", ""),
+    )
+    private_json(ROOT / "secrets.json", secrets)
+    private_json(path, raw)
+    print(f"Nguồn đọc ảnh: {provider} / {model}.")
+    print(
+        "Mới xác minh cấu hình; chạy check-vision rồi khởi động lại bot. Ảnh được gửi tới nguồn đã chọn."
+    )
+
+
+async def check_vision() -> None:
+    from .ai import create_vision_ai
+    from .images import test_image
+    from .state import State
+    from .core import VIETNAM
+    from datetime import datetime
+
+    settings = Settings.load()
+    if not settings.vision_provider:
+        raise ValueError("Chưa bật đọc ảnh. Chạy configure-vision trước.")
+    ai = create_vision_ai(load_secrets(), settings, load_persona(ROOT))
+    state = None
+    try:
+        image = await asyncio.to_thread(test_image)
+        state = State(ROOT / "data" / "ai-check.sqlite3")
+        started = time.monotonic()
+        text = await ai.generate(
+            [{"role": "user", "content": "Ảnh này có màu gì? Trả lời một câu ngắn."}],
+            lambda: state.reserve_ai(
+                datetime.now(VIETNAM).date().isoformat(), settings.max_ai_calls_per_day
+            ),
+            images=[image],
+        )
+        print(f"{ai.last_used} đã trả lời: {text[: settings.output_char_limit]}")
+        print(f"Ảnh thử là ô màu đỏ. Thời gian: {time.monotonic() - started:.2f} giây.")
+        print(
+            "Chỉ thử nguồn đọc ảnh; không fallback nguồn chữ, không kết nối/gửi Messenger."
+        )
+    finally:
+        await ai.close()
+        if state is not None:
+            state.close()
+
+
 def doctor() -> None:
     from scripts.fetch_assets import ensure_bridge
 
@@ -468,7 +556,7 @@ async def check_ai(*, interactive: bool = False, provider: str | None = None) ->
 
 async def run(*, discovery: bool, live: bool, preview: bool) -> None:
     from scripts.fetch_assets import ensure_bridge
-    from .ai import create_ai
+    from .ai import create_ai, create_vision_ai
     from .core import ReplyBot, parse_event
     from .facebook import FacebookTransport
     from .state import State
@@ -494,6 +582,7 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
     )
     state = None
     ai = None
+    image_ai = None
     bot = None
     started_at = time.time()
     with instance_lock(ROOT / "data"):
@@ -507,14 +596,20 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                 state.prune(time.time(), settings.retention_days)
                 persona = load_persona(ROOT)
                 ai = create_ai(secrets, settings, persona)
+                image_ai = create_vision_ai(secrets, settings, persona)
             await transport.connect()
             if discovery:
                 print(
                     "DISCOVER: nhờ đúng người bạn muốn thử nhắn một tin mới. Chỉ in mã, không đọc nội dung ra màn hình và không gửi trả lời. Ctrl+C để dừng."
                 )
             else:
-                bot = ReplyBot(settings, state, ai, transport, transport.own_id)
+                bot = ReplyBot(
+                    settings, state, ai, transport, transport.own_id, image_ai=image_ai
+                )
                 print(f"AI: {ai.description}")
+                print(
+                    f"Đọc ảnh: {image_ai.description if image_ai is not None else 'TẮT'}"
+                )
                 print(
                     "Chế độ: XEM TRƯỚC, chưa gửi tin."
                     if settings.dry_run
@@ -550,6 +645,8 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
             await transport.close()
             if ai is not None:
                 await ai.close()
+            if image_ai is not None:
+                await image_ai.close()
             if state is not None:
                 state.close()
 
@@ -624,6 +721,19 @@ def main() -> None:
         "check-nvidia",
         help="Thử riêng NVIDIA; không fallback API, không gửi Messenger.",
     )
+    vision = sub.add_parser(
+        "configure-vision",
+        help="Chọn riêng nguồn/model đọc ảnh, giữ cấu hình nhắn chữ.",
+    )
+    vision.add_argument(
+        "provider", nargs="?", choices=("nvidia", "google", "groq", "cloudflare")
+    )
+    vision.add_argument("--model", help="Mã model hỗ trợ ảnh, nhập thủ công.")
+    vision.add_argument("--disable", action="store_true")
+    sub.add_parser(
+        "check-vision",
+        help="Gửi ảnh thử màu đỏ tới riêng nguồn đọc ảnh, không gửi Messenger.",
+    )
     allow = sub.add_parser(
         "allow", help="Thêm mã cuộc trò chuyện đã xác minh vào danh sách tự rep."
     )
@@ -660,6 +770,10 @@ def main() -> None:
             configure_nvidia(args.model, disable=args.disable)
         elif args.command == "check-nvidia":
             asyncio.run(check_ai(provider="nvidia"))
+        elif args.command == "configure-vision":
+            configure_vision(args.provider, args.model, disable=args.disable)
+        elif args.command == "check-vision":
+            asyncio.run(check_vision())
         elif args.command == "doctor":
             doctor()
         elif args.command == "allow":

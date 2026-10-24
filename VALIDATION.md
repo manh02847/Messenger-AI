@@ -192,3 +192,47 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
   và git diff --check đạt. Không gọi AI/Facebook thật, không triển khai hay
   reset dữ liệu trên VPS người dùng. Các test xác nhận cơ chế chọn lịch sử và
   request; không chứng minh model sẽ luôn làm đúng hoặc hết bịa.
+
+## Đọc ảnh Messenger với model thị giác được chọn riêng
+
+- Thêm configure-vision và check-vision; nguồn/model ảnh do người dùng chọn
+  thủ công, mặc định tắt. Tái sử dụng key của NVIDIA/Google/Groq/Cloudflare,
+  giữ model/chuỗi fallback chữ. Lệnh cấu hình xác minh định dạng/quyền lưu
+  file cục bộ, chưa xác minh quyền inference; check-vision gửi ô màu đỏ tạo
+  tại máy để người dùng kiểm tra câu trả lời, không đăng nhập Messenger.
+- Nhận attachments type=image theo schema upstream 2.3.4 ở cả sự kiện thường
+  và E2EE. Gom ảnh mới với câu hỏi mới trong cùng lượt, dùng tối đa hai ảnh
+  gần nhất. Bộ lọc phạm vi/nhóm, tuổi tin, chống trùng, thời gian nhường và
+  giới hạn gửi chạy trước khi tải ảnh. Nguồn ảnh dùng chung bộ đếm AI live,
+  mỗi lượt thử một request, deadline 30 giây và HTTP read timeout 25 giây;
+  không fallback qua nguồn chỉ hỗ trợ chữ.
+- Giới hạn mỗi ảnh 8 MiB/20 triệu pixel; Pillow 13.0.0 đọc JPG/PNG/WebP tĩnh,
+  thu nhỏ 1600 px, xoay theo EXIF rồi chuyển JPEG bỏ metadata, tối đa 1 MiB
+  dữ liệu nén trước base64. Tải thường giới hạn streaming và kiểm tra host
+  Meta ở từng redirect, không gửi cookie/key. Tải E2EE dùng BridgeActions
+  downloadE2EEMedia với khóa/hash/size từ sự kiện; yêu cầu size dương để giới
+  hạn cứng file tạm của bridge. Không lưu URL ký/khóa/ảnh vào SQLite.
+- Giữ ảnh đã xử lý trong RAM cho lượt đang chờ; tin mới làm bỏ bản nháp có
+  thể tái sử dụng ảnh đó. Xóa khi lượt kết thúc/nhường/dừng; không giữ ảnh cho
+  các lượt sau. Ảnh lỗi tải/định dạng trả câu báo chưa mở được; lỗi API bỏ
+  lượt, không gọi model chữ để bịa. Tin chỉ có ảnh khi chưa bật được bỏ qua.
+- Sửa race khi tin mới đến lúc lần gửi trước đang chờ xác nhận: câu trả lời
+  cũ có thể được lưu sau câu hỏi mới. Ngữ cảnh dùng cho lần gọi tiếp đặt lại
+  câu hỏi đang chờ ở cuối, kể cả khi giới hạn chỉ một tin; ảnh mới không bị
+  ghép nhầm với ảnh của lượt đã gửi.
+- Toàn bộ 294 kiểm thử offline đạt (67 ca mới): payload ảnh thực tế của cả
+  bốn giao thức, persona riêng, quota/timeout/lỗi không retry ảnh, parser và
+  giới hạn bytes/pixel/EXIF/transparency/host/redirect, action serializer thật
+  trong wheel 2.3.4, gom tin, cô lập chat, lỗi tải, nhường thủ công, thay nháp,
+  ảnh đến khi đang gửi, cấu hình/CLI/check-vision và đóng client. Kiểm tra
+  configure --copy-ai-from có lấy các thiết lập nguồn/model ảnh riêng.
+- Ruff E4/E7/E9/F, cú pháp 39 khối lệnh README, liên kết cục bộ, CLI help và
+  git diff --check đạt. Binary Linux amd64 ghim SHA-256 qua doctor; gọi hai
+  RPC downloadMedia/downloadE2EEMedia không có client trả client not initialised,
+  chứng minh handler tồn tại, không phải thử tải/giải mã ảnh Facebook thật.
+- Đối chiếu [schema sự kiện](https://github.com/m008v/fbchat-v2/blob/aa7abd0386ef1d4cabf8ce592d0f2cf308d8f4f6/bridge-e2ee/bridge/events.go)
+  và [cách tải media](https://github.com/m008v/fbchat-v2/blob/aa7abd0386ef1d4cabf8ce592d0f2cf308d8f4f6/bridge-e2ee/bridge/media.go),
+  tài liệu ảnh chính thức của NVIDIA/Gemini/Groq/Cloudflare được dẫn trong README.
+  Chưa gọi AI thật, chưa đăng nhập/tải ảnh từ Messenger, chưa triển khai trên
+  VPS người dùng hoặc đo chất lượng OCR/chi phí thực tế. Cần chạy check-vision
+  bằng key trên VPS và thử gửi ảnh mới trước khi kết luận luồng thật hoạt động.

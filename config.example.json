@@ -6,6 +6,8 @@
   "fallback_model": "",
   "google_models": [],
   "nvidia_model": "",
+  "vision_provider": "",
+  "vision_model": "",
   "model": "openai/gpt-oss-120b",
   "dry_run": true,
   "reply_prefix": "",

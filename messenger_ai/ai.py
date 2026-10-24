@@ -14,6 +14,7 @@ import httpx
 
 from .config import GOOGLE_MODELS, Settings, valid_nvidia_model
 from .context import system_prompt
+from .images import ImageInput, MAX_IMAGES
 
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GOOGLE_REQUEST_TIMEOUT = 8
@@ -21,6 +22,7 @@ GOOGLE_MODEL_TIMEOUT = 12
 GOOGLE_POOL_TIMEOUT = 20
 GOOGLE_GEMMA_TIMEOUT = 10
 NVIDIA_MODEL_TIMEOUT = 12
+VISION_TIMEOUT = 30
 
 
 class AIError(RuntimeError):
@@ -92,9 +94,12 @@ def google_cooldown(response: httpx.Response, default: float) -> float:
 
 
 def google_payload(
-    settings: Settings, persona: str, history: list[dict[str, str]]
+    settings: Settings,
+    persona: str,
+    history: list[dict[str, str]],
+    images: list[ImageInput] | None = None,
 ) -> dict:
-    return {
+    payload = {
         "systemInstruction": {"parts": [{"text": system_prompt(persona)}]},
         "contents": [
             {
@@ -114,6 +119,12 @@ def google_payload(
             },
         },
     }
+    if images:
+        payload["contents"][-1]["parts"].extend(
+            {"inlineData": {"mimeType": image.mime_type, "data": image.data}}
+            for image in images
+        )
+    return payload
 
 
 def google_text(data: dict) -> str:
@@ -206,9 +217,25 @@ class ChatAI:
         self._last_attempt = 0.0
 
     async def generate(
-        self, history: list[dict[str, str]], reserve: Callable[[], bool]
+        self,
+        history: list[dict[str, str]],
+        reserve: Callable[[], bool],
+        *,
+        images: list[ImageInput] | None = None,
     ) -> str:
+        if images and (
+            len(images) > MAX_IMAGES or not history or history[-1]["role"] != "user"
+        ):
+            raise AIError(
+                "Lượt đọc ảnh cần tin người nhắn cuối cùng và tối đa hai ảnh."
+            )
         persona = system_prompt(self.persona)
+        if images:
+            persona += (
+                f"\nLượt này cung cấp {len(images)} ảnh gần nhất. Trả lời theo câu hỏi và persona; "
+                "nếu chỉ gửi ảnh thì nhận xét ngắn tự nhiên. Không đoán chữ hoặc chi tiết mờ, "
+                "không khẳng định đã xem các ảnh khác không có trong request."
+            )
         if (
             self.provider == "cloudflare"
             and self.settings.model == "@cf/qwen/qwen3-30b-a3b-fp8"
@@ -220,6 +247,17 @@ class ChatAI:
             "temperature": 0.6,
             "stream": False,
         }
+        if images:
+            payload["messages"][-1] = {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": history[-1]["content"]},
+                    *(
+                        {"type": "image_url", "image_url": {"url": image.data_url}}
+                        for image in images
+                    ),
+                ],
+            }
         token_field = (
             "max_tokens"
             if self.provider == "nvidia"
@@ -249,9 +287,21 @@ class ChatAI:
         if self.provider == "nvidia":
             headers["Accept"] = "application/json"
         if self.provider == "google":
-            payload = google_payload(self.settings, self.persona, history)
+            payload = google_payload(self.settings, self.persona, history, images)
+            if images:
+                payload["systemInstruction"]["parts"][0]["text"] = persona
             headers = {"x-goog-api-key": self.api_key}
         async with self._lock:
+            if images:
+                try:
+                    async with asyncio.timeout(VISION_TIMEOUT):
+                        return await self._request(
+                            payload, headers, reserve, vision=True
+                        )
+                except TimeoutError:
+                    raise ProviderUnavailable(
+                        "Nguồn đọc ảnh phản hồi quá chậm; bỏ lượt này.", 60
+                    ) from None
             if self.provider == "nvidia":
                 try:
                     async with asyncio.timeout(NVIDIA_MODEL_TIMEOUT):
@@ -271,10 +321,12 @@ class ChatAI:
                     ) from None
             return await self._request(payload, headers, reserve)
 
-    async def _request(self, payload, headers, reserve):
+    async def _request(self, payload, headers, reserve, *, vision=False):
         google = self.provider == "google"
         nvidia = self.provider == "nvidia"
-        attempts = 1 if nvidia else (2 if google else (1 if self.fail_fast else 3))
+        attempts = (
+            1 if vision or nvidia else (2 if google else (1 if self.fail_fast else 3))
+        )
         for attempt in range(attempts):
             wait = self.settings.minimum_ai_interval_seconds - (
                 time.monotonic() - self._last_attempt
@@ -285,7 +337,9 @@ class ChatAI:
                 raise AIError("Đã đạt giới hạn gọi AI trong ngày do bạn đặt.")
             self._last_attempt = time.monotonic()
             request_options = (
-                {"timeout": httpx.Timeout(GOOGLE_REQUEST_TIMEOUT, connect=4)}
+                {"timeout": httpx.Timeout(25, connect=4)}
+                if vision
+                else {"timeout": httpx.Timeout(GOOGLE_REQUEST_TIMEOUT, connect=4)}
                 if google
                 else {"timeout": httpx.Timeout(10, connect=4)}
                 if nvidia
@@ -335,6 +389,7 @@ class ChatAI:
                     delay = google_cooldown(response, delay)
                     quick_retry = (
                         attempt == 0
+                        and attempt + 1 < attempts
                         and response.status_code in (500, 502, 503, 504)
                         and time.monotonic() - self._last_attempt <= 2
                         and delay <= 2
@@ -564,3 +619,24 @@ def create_ai(secrets: dict[str, str], settings: Settings, persona: str):
         for token, config, account_id in configs
     ]
     return FallbackAI(*clients) if len(clients) > 1 else clients[0]
+
+
+def create_vision_ai(secrets: dict[str, str], settings: Settings, persona: str):
+    if not settings.vision_provider:
+        return None
+    config = replace(
+        settings, ai_provider=settings.vision_provider, model=settings.vision_model
+    )
+    key = {
+        "nvidia": "nvidia_api_key",
+        "google": "google_api_key",
+        "groq": "groq_api_key",
+        "cloudflare": "cloudflare_api_token",
+    }[config.ai_provider]
+    return ChatAI(
+        secrets.get(key, ""),
+        config,
+        persona,
+        account_id=secrets.get("cloudflare_account_id", ""),
+        fail_fast=True,
+    )
