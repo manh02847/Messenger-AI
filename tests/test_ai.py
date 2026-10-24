@@ -238,8 +238,17 @@ def test_configure_cloudflare_preserves_facebook_scope_and_history(
     updated = json.loads((tmp_path / "config.json").read_text())
     assert updated == {
         **config,
-        "ai_provider": "cloudflare",
-        "model": "@cf/qwen/qwen3-30b-a3b-fp8",
+        "provider_enabled": {
+            "nvidia": False,
+            "google": False,
+            "groq": True,
+            "cloudflare": True,
+        },
+        "text_models": [
+            "cloudflare:@cf/qwen/qwen3-30b-a3b-fp8",
+            "groq:openai/gpt-oss-120b",
+        ],
+        "vision_models": [],
         "max_ai_calls_per_day": 1000,
     }
     saved = load_secrets(tmp_path)
@@ -468,9 +477,9 @@ def test_fallback_requires_both_credentials_before_saving(tmp_path, monkeypatch)
     assert not (tmp_path / "secrets.json").exists()
     (tmp_path / "secrets.json").write_text('{"groq_api_key":"groq-token"}')
     cli.configure_ai("cloudflare", fallback=True)
-    assert Settings.load(tmp_path).ai_fallback is True
+    assert Settings.load(tmp_path).provider_flags["groq"] is True
     cli.configure_ai("cloudflare", fallback=False)
-    assert Settings.load(tmp_path).ai_fallback is False
+    assert Settings.load(tmp_path).provider_flags["groq"] is False
 
 
 @pytest.mark.asyncio
@@ -565,8 +574,10 @@ def test_upgrade_chat_updates_models_limits_and_preserves_other_data(
     raw = {
         "ai_provider": provider,
         "ai_fallback": fallback,
-        "model": "old-model",
-        "fallback_model": "old-backup",
+        "model": "@cf/old-model" if provider == "cloudflare" else "old-model",
+        "fallback_model": "old-backup"
+        if provider == "cloudflare"
+        else "@cf/old-backup",
         "reply_scope": "all_private",
         "history_messages": 20,
         "manual_pause_seconds": 300,
@@ -589,6 +600,9 @@ def test_upgrade_chat_updates_models_limits_and_preserves_other_data(
         expected["fallback_model"] = CHAT_MODELS[
             "groq" if provider == "cloudflare" else "cloudflare"
         ]
+    from messenger_ai.config import canonical_config
+
+    expected = canonical_config(expected)
     assert updated == expected
     assert secret.read_text() == "unchanged-secret"
     cli.upgrade_chat()

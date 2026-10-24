@@ -12,7 +12,12 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from .config import GOOGLE_MODELS, PROVIDER_KEYS, Settings, valid_nvidia_model
+from .config import (
+    GOOGLE_MODELS,
+    PROVIDER_KEYS,
+    Settings,
+    valid_nvidia_model,
+)
 from .context import system_prompt
 from .images import ImageInput, MAX_IMAGES
 
@@ -481,46 +486,33 @@ CHAT_MODELS = {
     "cloudflare": "@cf/qwen/qwen3.8-27b",
 }
 
-DEFAULT_MODELS = {
-    "groq": "openai/gpt-oss-120b",
-    "cloudflare": "@cf/qwen/qwen3-30b-a3b-fp8",
-}
 
-
-def provider_configs(secrets: dict[str, str], settings: Settings):
-    configs = []
-    if settings.nvidia_model:
-        configs.append(
-            replace(settings, ai_provider="nvidia", model=settings.nvidia_model)
-        )
-    configs.extend(
-        replace(settings, ai_provider="google", model=model)
-        for model in settings.google_models
-    )
-    if settings.ai_provider != "google" or not settings.google_models:
-        configs.append(settings)
-    if settings.ai_fallback:
-        other = "groq" if settings.ai_provider == "cloudflare" else "cloudflare"
-        configs.append(
-            replace(
-                settings,
-                ai_provider=other,
-                model=settings.fallback_model or DEFAULT_MODELS[other],
-            )
-        )
+def connection_configs(secrets: dict[str, str], settings: Settings, targets):
     result = []
-    for config in configs:
-        key = {
-            "cloudflare": "cloudflare_api_token",
-            "groq": "groq_api_key",
-            "google": "google_api_key",
-            "nvidia": "nvidia_api_key",
-        }[config.ai_provider]
-        token = secrets.get(key, "")
+    for provider, model in targets:
+        config = replace(settings, ai_provider=provider, model=model)
+        token = secrets.get(PROVIDER_KEYS[provider], "")
         account_id = secrets.get("cloudflare_account_id", "")
         validate_connection(token, config, account_id)
         result.append((token, config, account_id))
     return result
+
+
+def provider_configs(secrets: dict[str, str], settings: Settings):
+    return connection_configs(secrets, settings, settings.text_targets)
+
+
+class DisabledAI:
+    label = description = "TẮT: chưa có model chữ thuộc nguồn đang bật"
+    last_used = ""
+
+    async def generate(self, history, reserve):
+        raise AIError(
+            "Chưa bật nguồn/model trả lời chữ; xem lệnh providers. Bỏ lượt này."
+        )
+
+    async def close(self):
+        pass
 
 
 class FallbackAI:
@@ -546,7 +538,7 @@ class FallbackAI:
                 ) from None
 
     async def _generate(self, history, reserve):
-        google_started = None
+        google_remaining = GOOGLE_POOL_TIMEOUT
         gemma_remaining = GOOGLE_GEMMA_TIMEOUT
         has_flash = any(
             getattr(ai, "provider", None) == "google"
@@ -560,9 +552,7 @@ class FallbackAI:
                 continue
             try:
                 if getattr(ai, "provider", None) == "google":
-                    if google_started is None:
-                        google_started = self.clock()
-                    remaining = GOOGLE_POOL_TIMEOUT - (self.clock() - google_started)
+                    remaining = google_remaining
                     if remaining <= 0:
                         continue
                     gemma = has_flash and ai.settings.model.startswith("gemma-")
@@ -587,11 +577,13 @@ class FallbackAI:
                                 "Google đã hết thời gian chờ của lượt này; chuyển sang nguồn khác."
                             )
                             # Skip remaining Google models for this turn.
-                            google_started = self.clock() - GOOGLE_POOL_TIMEOUT
+                            google_remaining = 0
                         continue
                     finally:
+                        elapsed = max(0, self.clock() - attempt_started)
+                        google_remaining -= elapsed
                         if gemma:
-                            gemma_remaining -= max(0, self.clock() - attempt_started)
+                            gemma_remaining -= elapsed
                 else:
                     answer = await ai.generate(history, reserve)
             except ProviderUnavailable as error:
@@ -679,18 +671,13 @@ def create_ai(secrets: dict[str, str], settings: Settings, persona: str):
         )
         for token, config, account_id in configs
     ]
-    return FallbackAI(*clients) if len(clients) > 1 else clients[0]
+    if len(clients) > 1:
+        return FallbackAI(*clients)
+    return clients[0] if clients else DisabledAI()
 
 
 def vision_configs(secrets: dict[str, str], settings: Settings):
-    configs = []
-    for provider, model in settings.vision_targets:
-        config = replace(settings, ai_provider=provider, model=model)
-        token = secrets.get(PROVIDER_KEYS[provider], "")
-        account_id = secrets.get("cloudflare_account_id", "")
-        validate_connection(token, config, account_id)
-        configs.append((token, config, account_id))
-    return configs
+    return connection_configs(secrets, settings, settings.vision_targets)
 
 
 def create_vision_ai(secrets: dict[str, str], settings: Settings, persona: str):

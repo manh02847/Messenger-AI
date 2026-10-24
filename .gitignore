@@ -4,6 +4,7 @@ __pycache__/
 .ruff_cache/
 *.pyc
 config.json
+config.before-providers.bak
 secrets.json
 persona.local.txt
 .env

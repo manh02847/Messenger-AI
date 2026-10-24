@@ -32,6 +32,21 @@ PROVIDER_KEYS = {
     "groq": "groq_api_key",
     "cloudflare": "cloudflare_api_token",
 }
+DEFAULT_MODELS = {
+    "groq": "openai/gpt-oss-120b",
+    "cloudflare": "@cf/qwen/qwen3-30b-a3b-fp8",
+}
+LEGACY_ROUTING = {
+    "ai_provider",
+    "model",
+    "ai_fallback",
+    "fallback_model",
+    "nvidia_model",
+    "google_models",
+    "vision_provider",
+    "vision_model",
+    "chatgpt_web",
+}
 
 
 def valid_nvidia_model(value: object) -> bool:
@@ -42,9 +57,9 @@ def valid_nvidia_model(value: object) -> bool:
     )
 
 
-def vision_target(value: str) -> tuple[str, str]:
+def model_target(value: str) -> tuple[str, str]:
     if not isinstance(value, str):
-        raise ValueError("vision_models phải chứa mã nguồn:model.")
+        raise ValueError("Danh sách model phải chứa mã nguồn:model.")
     provider, _, model = value.partition(":")
     if (
         provider not in PROVIDER_KEYS
@@ -55,10 +70,11 @@ def vision_target(value: str) -> tuple[str, str]:
         or (provider == "google" and model not in GOOGLE_MODELS)
         or (provider == "cloudflare" and not model.startswith("@cf/"))
     ):
-        raise ValueError(
-            "Model đọc ảnh chưa hợp lệ; dùng nguồn:model trong configure-vision --chain."
-        )
+        raise ValueError("Mã model chưa hợp lệ; dùng dạng nguồn:model.")
     return provider, model
+
+
+vision_target = model_target
 
 
 THREAD_PATTERN = re.compile(
@@ -95,6 +111,8 @@ def private_json(path: Path, value: dict) -> None:
 
 @dataclass(frozen=True)
 class Settings:
+    provider_enabled: dict[str, bool] | None = None
+    text_models: tuple[str, ...] | None = None
     allowed_threads: tuple[str, ...] = ()
     reply_scope: str = "allowlist"
     ai_provider: str = "groq"
@@ -124,12 +142,47 @@ class Settings:
     retention_days: int = 7
 
     @property
-    def vision_targets(self) -> tuple[tuple[str, str], ...]:
+    def all_vision_targets(self) -> tuple[tuple[str, str], ...]:
         if self.vision_models:
             return tuple(vision_target(value) for value in self.vision_models)
         if self.vision_provider:
             return ((self.vision_provider, self.vision_model),)
         return ()
+
+    @property
+    def all_text_targets(self) -> tuple[tuple[str, str], ...]:
+        if self.text_models is not None:
+            return tuple(model_target(value) for value in self.text_models)
+        targets = []
+        if self.nvidia_model:
+            targets.append(("nvidia", self.nvidia_model))
+        targets.extend(("google", model) for model in self.google_models)
+        if self.ai_provider != "google" or not self.google_models:
+            targets.append((self.ai_provider, self.model))
+        if self.ai_fallback:
+            other = "groq" if self.ai_provider == "cloudflare" else "cloudflare"
+            targets.append((other, self.fallback_model or DEFAULT_MODELS[other]))
+        return tuple(dict.fromkeys(targets))
+
+    @property
+    def provider_flags(self) -> dict[str, bool]:
+        if self.provider_enabled is not None:
+            return dict(self.provider_enabled)
+        used = {
+            provider
+            for provider, _ in (*self.all_text_targets, *self.all_vision_targets)
+        }
+        return {provider: provider in used for provider in PROVIDER_KEYS}
+
+    @property
+    def text_targets(self) -> tuple[tuple[str, str], ...]:
+        flags = self.provider_flags
+        return tuple((p, m) for p, m in self.all_text_targets if flags[p])
+
+    @property
+    def vision_targets(self) -> tuple[tuple[str, str], ...]:
+        flags = self.provider_flags
+        return tuple((p, m) for p, m in self.all_vision_targets if flags[p])
 
     @classmethod
     def from_dict(cls, raw: dict) -> "Settings":
@@ -141,6 +194,26 @@ class Settings:
         names = {field.name for field in fields(cls)}
         if set(value) - names:
             raise ValueError("config.json có tên tùy chọn không được hỗ trợ.")
+        modern = "text_models" in value or "provider_enabled" in value
+        if modern:
+            if LEGACY_ROUTING.intersection(value):
+                raise ValueError(
+                    "Không trộn cấu hình nguồn cũ với text_models/provider_enabled."
+                )
+            flags = value.get("provider_enabled")
+            if (
+                not isinstance(flags, dict)
+                or set(flags) != set(PROVIDER_KEYS)
+                or any(type(flag) is not bool for flag in flags.values())
+            ):
+                raise ValueError("provider_enabled cần cờ true/false cho cả bốn nguồn.")
+            models = value.get("text_models")
+            if not isinstance(models, list) or len(models) > 24:
+                raise ValueError("text_models phải là danh sách tối đa 24 model.")
+            targets = [model_target(model) for model in models]
+            if len(set(targets)) != len(targets):
+                raise ValueError("text_models có model bị trùng.")
+            value["text_models"] = tuple(models)
         allowed = value.get("allowed_threads", [])
         if not isinstance(allowed, list) or any(
             not isinstance(item, str) or not THREAD_PATTERN.fullmatch(item)
@@ -264,6 +337,42 @@ class Settings:
             raw.pop("chatgpt_web")
             private_json(path, raw)
         return result
+
+
+def canonical_config(raw: dict) -> dict:
+    settings = Settings.from_dict(raw)
+    result = {name: value for name, value in raw.items() if name not in LEGACY_ROUTING}
+    result.update(
+        provider_enabled=settings.provider_flags,
+        text_models=[f"{p}:{m}" for p, m in settings.all_text_targets],
+        vision_models=[f"{p}:{m}" for p, m in settings.all_vision_targets],
+    )
+    Settings.from_dict(result)
+    return result
+
+
+def read_config(root: Path = ROOT) -> dict:
+    return canonical_config(
+        json.loads((root / "config.json").read_text(encoding="utf-8"))
+    )
+
+
+def save_config(root: Path, raw: dict) -> None:
+    value = canonical_config(raw)
+    path = root / "config.json"
+    if path.exists():
+        old = json.loads(path.read_text(encoding="utf-8"))
+        if "text_models" not in old:
+            backup = root / "config.before-providers.bak"
+            try:
+                fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(old, handle, ensure_ascii=False, indent=2)
+                    handle.write("\n")
+    private_json(path, value)
 
 
 def load_secrets(root: Path = ROOT) -> dict[str, str]:

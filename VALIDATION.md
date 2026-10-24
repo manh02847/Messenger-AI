@@ -322,3 +322,39 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
   request đều chỉ tới generativelanguage.googleapis.com, không gọi nguồn khác.
 - Ruff E4/E7/E9/F, git diff --check, CLI help và cú pháp 44 khối Bash README
   đạt. Không gọi API/Facebook thật, không triển khai hoặc đổi cấu hình VPS.
+
+## Thống nhất bật/tắt nhà cung cấp — 25/10/2026
+
+- Cấu hình nguồn mới chỉ gồm provider_enabled, text_models và vision_models.
+  Cờ true/false của từng nhà cung cấp lọc cả chữ/ảnh trước khi xác minh thông
+  tin kết nối hoặc tạo HTTP client; không còn nguồn chính bắt buộc ở cuối.
+  Tắt một nguồn không xóa model, thứ tự hoặc key. Tắt toàn bộ vẫn cho bot
+  nhận tin, nhưng không gọi AI/gửi phản hồi và không tính ngân sách AI.
+- Thêm providers để xem offline và providers enable/disable/only cho một
+  hoặc nhiều tên nguồn. Bật/chỉ dùng nguồn yêu cầu đã chọn model và có key;
+  tắt nguồn không cần đọc secrets. Cờ lưu chung cho cả hai tuyến ảnh/chữ.
+- configure-ai hỗ trợ cả bốn nguồn, --model/--models dùng chung bộ xử lý.
+  configure-google/configure-nvidia và các cờ cũ là lớp gọi tương thích;
+  --fallback chuyển thành thao tác cờ nguồn. configure-vision --chain mẫu
+  chỉ lấy nguồn đang bật/có key, không bật lại các nguồn đã tắt. Danh sách
+  ảnh chọn tường minh bật các nguồn được nêu; danh sách chữ giữ nguyên.
+- Đọc được cấu hình cũ; chuyển sang ba trường mới khi lưu cấu hình nguồn.
+  Tạo config.before-providers.bak quyền 0600 trước khi đổi, không ghi đè bản
+  sao đã có và bỏ qua file này trong Git. Giữ nguyên tuyến/thứ tự thực tế,
+  kể cả nguồn chỉ dùng cho ảnh, chế độ Google duy nhất và cookie/persona/
+  dữ liệu/giới hạn. Cấu hình cũ sai hoặc key thiếu không bị ghi dở.
+- Cập nhật cookie giữ cờ và thứ tự model, kể cả tất cả nguồn đang tắt.
+  Copy AI sang acc khác lấy danh sách/cờ theo cùng schema, vẫn yêu cầu
+  cookie riêng và không lấy persona/lịch sử/thiết bị. Google pool chỉ tính
+  thời gian đã dùng cho Google, để hỗ trợ xen nguồn trong thứ tự mới mà
+  không tiêu hao thời gian chờ của Google khi đang gọi API khác.
+- 426 kiểm thử offline đạt, gồm 41 ca mới cho thao tác giống nhau ở bốn
+  nguồn, HTTP payload thật qua MockTransport cho cả chữ/ảnh khi thành công
+  và lỗi, nguồn tắt không được gọi khi nguồn khác lỗi, không bắt buộc key
+  của bên khác, tắt toàn bộ không tạo client/tính quota, chuyển cấu hình
+  cũ/bản sao riêng tư, CLI, khởi tạo Google/NVIDIA và giữ thứ tự/cờ khi đổi
+  cookie. Các kiểm thử cũ được cập nhật để kiểm tra schema mới và hành vi
+  tắt mà vẫn giữ model, thay cho xóa model hoặc bắt buộc nguồn chính cũ.
+- Ruff E4/E7/E9/F, git diff --check, CLI help, config.example.json và cú
+  pháp 35 khối Bash + một khối JSON trong README đạt. Không gọi AI hay
+  Facebook thật, không sửa dữ liệu hoặc triển khai trên VPS người dùng.

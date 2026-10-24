@@ -74,12 +74,13 @@ def test_only_google_removes_every_other_route_and_preserves_private_data(
     configs = provider_configs(load_secrets(root), settings)
     assert [c.model for _, c, _ in configs] == MODELS
     assert all(c.ai_provider == "google" for _, c, _ in configs)
-    assert (
-        not settings.nvidia_model
-        and not settings.ai_fallback
-        and not settings.fallback_model
-    )
-    if previous_vision == "off":
+    assert settings.provider_flags == {
+        "nvidia": False,
+        "google": True,
+        "groq": False,
+        "cloudflare": False,
+    }
+    if previous_vision in ("off", "single"):
         assert not settings.vision_targets
     else:
         assert settings.vision_targets == tuple(("google", model) for model in MODELS)
@@ -180,7 +181,7 @@ def test_only_without_models_keeps_the_independently_selected_google_vision_orde
     (root / "config.json").write_text(json.dumps(raw))
     cli.configure_google(only=True)
     settings = Settings.load(root)
-    assert list(settings.google_models) == MODELS
+    assert settings.text_targets == tuple(("google", model) for model in MODELS)
     assert settings.vision_targets == tuple(("google", m) for m in reversed(MODELS))
 
 
@@ -208,16 +209,17 @@ def test_cookie_update_in_google_only_mode_never_asks_for_other_keys(
     cli.configure()
     assert len(prompts) == 2
     assert "Google" in prompts[0] and "Cookie" in prompts[1]
-    assert Settings.load(root).ai_provider == "google"
+    assert all(provider == "google" for provider, _ in Settings.load(root).text_targets)
 
 
-def test_google_only_cannot_be_disabled_without_selecting_another_primary(account):
+def test_google_only_can_be_disabled_without_losing_models(account):
     root, _ = account
     cli.configure_google(MODELS, only=True)
-    before = (root / "config.json").read_bytes()
-    with pytest.raises(ValueError, match="configure-ai"):
-        cli.configure_google(disable=True)
-    assert (root / "config.json").read_bytes() == before
+    before = Settings.load(root).all_text_targets
+    cli.configure_google(disable=True)
+    settings = Settings.load(root)
+    assert not settings.text_targets and not settings.vision_targets
+    assert settings.all_text_targets == before
 
 
 def test_only_flag_conflicts_with_disable_without_writing_files(account):

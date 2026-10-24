@@ -9,7 +9,7 @@ import httpx
 
 from messenger_ai import cli
 from messenger_ai.ai import AIError
-from messenger_ai.config import VISION_PRESET, Settings
+from messenger_ai.config import VISION_PRESET, Settings, canonical_config
 
 
 @pytest.fixture
@@ -50,10 +50,12 @@ def test_configure_vision_manual_model_keeps_text_models_persona_and_data(
     factory = Mock(side_effect=AssertionError("Must not call API or construct client"))
     monkeypatch.setattr("messenger_ai.ai.ChatAI", factory)
     cli.configure_vision("nvidia", "owner/manually-selected-vision-model")
-    assert json.loads((root / "config.json").read_text()) == dict(
-        raw,
-        vision_provider="nvidia",
-        vision_model="owner/manually-selected-vision-model",
+    assert json.loads((root / "config.json").read_text()) == canonical_config(
+        dict(
+            raw,
+            vision_provider="nvidia",
+            vision_model="owner/manually-selected-vision-model",
+        )
     )
     assert (root / "persona.local.txt").read_text() == "PRIVATE PERSONA"
     assert (root / "data" / "messenger-device.db").read_bytes() == b"PRIVATE DEVICE"
@@ -72,9 +74,7 @@ def test_disable_vision_does_not_require_key_or_change_text_provider(
         cli, "load_secrets", Mock(side_effect=AssertionError("No credentials needed"))
     )
     cli.configure_vision(None, None, disable=True)
-    assert json.loads((root / "config.json").read_text()) == dict(
-        raw, vision_provider="", vision_model=""
-    )
+    assert json.loads((root / "config.json").read_text()) == canonical_config(raw)
     assert (root / "secrets.json").read_bytes() == secret_before
 
 
@@ -175,8 +175,13 @@ def test_configure_chain_uses_existing_keys_without_prompting_or_changing_other_
     factory = Mock(side_effect=AssertionError("No HTTP client needed"))
     monkeypatch.setattr("messenger_ai.ai.ChatAI", factory)
     cli.configure_vision(None, None, chain=[])
-    assert json.loads((root / "config.json").read_text()) == dict(
-        raw, vision_provider="", vision_model="", vision_models=list(VISION_PRESET)
+    selected = [
+        target
+        for target in VISION_PRESET
+        if target.partition(":")[0] in ("nvidia", "groq")
+    ]
+    assert json.loads((root / "config.json").read_text()) == canonical_config(
+        dict(raw, vision_models=selected)
     )
     assert secret.read_bytes() == b"PRIVATE EXISTING FILE"
     assert (root / "config.json").stat().st_mode & 0o777 == 0o600
@@ -189,13 +194,18 @@ def test_configure_chain_uses_existing_keys_without_prompting_or_changing_other_
 def test_preset_omits_unconfigured_providers_and_reports_them(
     account, monkeypatch, capsys
 ):
-    root, _ = account
+    root, raw = account
+    raw["google_models"] = ["gemini-3.5-flash-lite"]
+    (root / "config.json").write_text(json.dumps(raw))
     monkeypatch.setattr(cli, "load_secrets", lambda _: {"google_api_key": "PRIVATE"})
     cli.configure_vision(None, None, chain=[])
     settings = Settings.load(root)
     assert settings.vision_models == VISION_PRESET[:2]
     output = capsys.readouterr().out
-    assert "Bỏ khỏi mẫu vì chưa có key: nvidia, groq, cloudflare" in output
+    assert (
+        "Bỏ khỏi mẫu vì nguồn đang tắt hoặc chưa có key: nvidia, groq, cloudflare"
+        in output
+    )
     assert "PRIVATE" not in output
 
 
@@ -246,10 +256,11 @@ def test_switching_back_to_single_source_or_disabling_removes_the_chain(
         None if disable else "google/gemma-4-31b-it",
         disable=disable,
     )
-    assert json.loads((root / "config.json").read_text()) == dict(
-        raw,
-        vision_provider="" if disable else "nvidia",
-        vision_model="" if disable else "google/gemma-4-31b-it",
+    assert json.loads((root / "config.json").read_text()) == canonical_config(
+        dict(
+            raw,
+            vision_models=[] if disable else ["nvidia:google/gemma-4-31b-it"],
+        )
     )
 
 

@@ -21,20 +21,26 @@ from .config import (
     THREAD_PATTERN,
     VISION_PRESET,
     Settings,
+    canonical_config,
     load_persona,
     load_secrets,
     private_json,
+    model_target,
+    read_config,
+    save_config,
+)
+from .providers import (
+    DEFAULT_TEXT_MODELS,
+    describe_routes,
+    models_for,
+    set_models,
+    switch_providers,
+    validate_routes,
 )
 
 AI_SETTINGS = (
-    "ai_provider",
-    "model",
-    "ai_fallback",
-    "fallback_model",
-    "google_models",
-    "nvidia_model",
-    "vision_provider",
-    "vision_model",
+    "provider_enabled",
+    "text_models",
     "vision_models",
     "max_completion_tokens",
     "max_ai_calls_per_day",
@@ -104,19 +110,33 @@ def instance_lock(data_dir: Path):
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
+def _ask_ai_key(secrets: dict, provider: str) -> None:
+    if provider == "cloudflare":
+        secrets["cloudflare_account_id"] = input(
+            "Cloudflare Account ID (Enter để giữ cũ): "
+        ).strip() or secrets.get("cloudflare_account_id", "")
+    labels = {
+        "google": "Google AI Studio",
+        "nvidia": "NVIDIA",
+        "groq": "Groq",
+        "cloudflare": "Workers AI",
+    }
+    key = PROVIDER_KEYS[provider]
+    secrets[key] = getpass.getpass(
+        f"{labels[provider]} API key (Enter để giữ cũ): "
+    ).strip() or secrets.get(key, "")
+
+
 def configure(*, provider: str | None = None, copy_ai_from: Path | None = None) -> None:
-    if provider is not None and provider not in ("groq", "cloudflare"):
-        raise ValueError("Nguồn chính phải là groq hoặc cloudflare.")
+    if provider is not None and provider not in PROVIDER_KEYS:
+        raise ValueError("Nguồn phải là google/nvidia/groq/cloudflare.")
     if provider is not None and copy_ai_from is not None:
         raise ValueError("Chỉ chọn --provider hoặc --copy-ai-from.")
     path = ROOT / "config.json"
-    defaults = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
-    raw = (
-        json.loads(path.read_text(encoding="utf-8"))
-        if path.exists()
-        else dict(defaults)
+    defaults = canonical_config(
+        json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
     )
-    settings = Settings.from_dict(raw)
+    raw = read_config(ROOT) if path.exists() else dict(defaults)
     secrets = load_secrets(ROOT)
     print(
         "Nhập thông tin tại máy bạn. Không dán cookie hoặc API key vào GitHub/chat công khai."
@@ -125,13 +145,11 @@ def configure(*, provider: str | None = None, copy_ai_from: Path | None = None) 
         source = copy_ai_from.expanduser().resolve()
         if source == ROOT.resolve():
             raise ValueError("Thư mục nguồn phải khác thư mục bot đang cấu hình.")
-        source_path = source / "config.json"
-        if not source_path.is_file():
+        if not (source / "config.json").is_file():
             raise ValueError(
                 "Thư mục nguồn chưa có config.json; chọn bản bot đã cấu hình."
             )
-        source_raw = json.loads(source_path.read_text(encoding="utf-8"))
-        Settings.from_dict(source_raw)
+        source_raw = read_config(source)
         source_secrets = load_secrets(source)
         raw.update({name: source_raw.get(name, defaults[name]) for name in AI_SETTINGS})
         secrets.update({name: source_secrets[name] for name in AI_SECRETS})
@@ -139,32 +157,22 @@ def configure(*, provider: str | None = None, copy_ai_from: Path | None = None) 
             "Cookie Facebook của acc này (nhập mới, không lấy từ bot nguồn): "
         ).strip()
     else:
-        selected = provider or settings.ai_provider
-        if selected != settings.ai_provider:
-            from .ai import DEFAULT_MODELS
-
-            raw.update(
-                ai_provider=selected, model=DEFAULT_MODELS[selected], fallback_model=""
+        settings = Settings.from_dict(raw)
+        targets = (*settings.text_targets, *settings.vision_targets)
+        selected = provider or (targets[0][0] if targets else "groq")
+        if not path.exists():
+            raw["text_models"] = []
+            raw["provider_enabled"] = {p: p == selected for p in PROVIDER_KEYS}
+        if provider is not None or not path.exists():
+            set_models(
+                raw,
+                selected,
+                models_for(raw, selected) or DEFAULT_TEXT_MODELS[selected],
+                primary=True,
             )
-        if selected == "cloudflare":
-            secrets["cloudflare_account_id"] = (
-                input("Cloudflare Account ID (Enter để giữ cũ): ").strip()
-                or secrets["cloudflare_account_id"]
-            )
-            secrets["cloudflare_api_token"] = (
-                getpass.getpass("Workers AI API token (Enter để giữ cũ): ").strip()
-                or secrets["cloudflare_api_token"]
-            )
-        elif selected == "google":
-            secrets["google_api_key"] = (
-                getpass.getpass("Google AI Studio API key (Enter để giữ cũ): ").strip()
-                or secrets["google_api_key"]
-            )
-        else:
-            secrets["groq_api_key"] = (
-                getpass.getpass("Groq API key (Enter để giữ giá trị cũ): ").strip()
-                or secrets["groq_api_key"]
-            )
+            raw["provider_enabled"][selected] = True
+        if provider is not None or targets or not path.exists():
+            _ask_ai_key(secrets, selected)
         cookie = (
             getpass.getpass(
                 "Cookie Facebook dạng c_user=...; xs=...; (Enter để giữ cũ): "
@@ -175,180 +183,95 @@ def configure(*, provider: str | None = None, copy_ai_from: Path | None = None) 
         raise ValueError("Cookie cần có ít nhất c_user và xs.")
     if os.environ.get("FACEBOOK_COOKIE") and os.environ["FACEBOOK_COOKIE"] != cookie:
         raise ValueError(
-            "Biến môi trường FACEBOOK_COOKIE đang ghi đè cookie của acc này. "
-            "Gỡ biến đó khỏi môi trường rồi cấu hình lại."
+            "Biến môi trường FACEBOOK_COOKIE đang ghi đè cookie của acc này. Gỡ biến đó khỏi môi trường rồi cấu hình lại."
         )
-    from .ai import provider_configs
-
-    provider_configs(secrets, Settings.from_dict(raw))
-    private_json(
-        ROOT / "secrets.json",
-        {**secrets, "facebook_cookie": cookie},
-    )
-    private_json(path, raw)
+    validate_routes(raw, secrets)
+    private_json(ROOT / "secrets.json", {**secrets, "facebook_cookie": cookie})
+    save_config(ROOT, raw)
     if copy_ai_from is not None:
         print(
             "Đã lấy cấu hình và key AI; cookie, người nhận, persona và data không được sao chép."
         )
     print(
-        "Đã lưu cấu hình. Chưa gọi API/đăng nhập Messenger. Chạy check-ai rồi chọn phạm vi rep."
+        "Đã lưu cấu hình. Chưa gọi API/đăng nhập Messenger. Chạy providers rồi check-ai để kiểm tra."
     )
+
+
+def providers(action: str | None = None, names: list[str] | None = None) -> None:
+    raw = read_config(ROOT)
+    if action is not None:
+        switch_providers(raw, action, names or [])
+        if action != "disable":
+            validate_routes(raw, load_secrets(ROOT))
+        save_config(ROOT, raw)
+    describe_routes(raw)
+    if action is not None:
+        print("Đã lưu cờ bật/tắt; giữ model và key. Khởi động lại bot để áp dụng.")
 
 
 def configure_ai(
-    provider: str, daily_limit: int | None = None, fallback: bool | None = None
+    provider: str,
+    daily_limit: int | None = None,
+    fallback: bool | None = None,
+    *,
+    models: list[str] | None = None,
+    disable: bool = False,
+    only: bool = False,
 ) -> None:
-    path = ROOT / "config.json"
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    Settings.from_dict(raw)
-    secrets = load_secrets(ROOT)
-    if provider == "cloudflare":
-        secrets["cloudflare_account_id"] = (
-            input("Cloudflare Account ID (Enter để giữ cũ): ").strip()
-            or secrets["cloudflare_account_id"]
-        )
-        secrets["cloudflare_api_token"] = (
-            getpass.getpass("Workers AI API token (Enter để giữ cũ): ").strip()
-            or secrets["cloudflare_api_token"]
-        )
-        model = "@cf/qwen/qwen3-30b-a3b-fp8"
-    else:
-        secrets["groq_api_key"] = (
-            getpass.getpass("Groq API key (Enter để giữ cũ): ").strip()
-            or secrets["groq_api_key"]
-        )
-        model = "openai/gpt-oss-120b"
-    if provider != raw.get("ai_provider", "groq") and "fallback_model" in raw:
-        raw["fallback_model"] = ""
-    raw.update(ai_provider=provider, model=model)
+    if provider not in PROVIDER_KEYS:
+        raise ValueError("Nguồn phải là google/nvidia/groq/cloudflare.")
+    if disable:
+        if only or models is not None:
+            raise ValueError("Dùng riêng --disable để tắt nguồn.")
+        providers("disable", [provider])
+        return
+    raw = read_config(ROOT)
+    selected = list(
+        models or models_for(raw, provider) or DEFAULT_TEXT_MODELS[provider]
+    )
+    set_models(raw, provider, selected, primary=True)
+    switch_providers(raw, "only" if only else "enable", [provider])
     if fallback is not None:
-        raw["ai_fallback"] = fallback
+        if provider not in ("groq", "cloudflare"):
+            raise ValueError(
+                "--fallback chỉ dùng cho cặp Groq/Cloudflare; các nguồn khác dùng providers."
+            )
+        other = "groq" if provider == "cloudflare" else "cloudflare"
+        if fallback and not models_for(raw, other):
+            set_models(raw, other, DEFAULT_TEXT_MODELS[other])
+        switch_providers(raw, "enable" if fallback else "disable", [other])
     if daily_limit is not None:
         raw["max_ai_calls_per_day"] = daily_limit
-    settings = Settings.from_dict(raw)
-
-    from .ai import provider_configs
-
-    provider_configs(secrets, settings)
+    Settings.from_dict(raw)
+    secrets = load_secrets(ROOT)
+    _ask_ai_key(secrets, provider)
+    validate_routes(raw, secrets)
     private_json(ROOT / "secrets.json", secrets)
-    private_json(path, raw)
+    save_config(ROOT, raw)
+    describe_routes(raw)
     print(
-        f"Đã chọn {provider} / {model}; giới hạn cục bộ {settings.max_ai_calls_per_day} lần gọi/ngày."
+        "Đã lưu model/key và cờ nguồn; chưa gọi API thật. Khởi động lại bot để áp dụng."
     )
-    print("Tự chuyển nguồn dự phòng:", "BẬT" if settings.ai_fallback else "TẮT")
-    print("Chưa kiểm tra API thật. Chạy check-ai rồi khởi động lại bot.")
 
 
 def configure_google(
     models: list[str] | None = None, *, disable: bool = False, only: bool = False
 ) -> None:
-    path = ROOT / "config.json"
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    current = Settings.from_dict(raw)
-    if disable and only:
-        raise ValueError("Dùng riêng --only hoặc --disable.")
-    if disable and current.ai_provider == "google":
-        raise ValueError(
-            "Đang chọn Google làm nguồn chính; dùng configure-ai groq/cloudflare trước khi tắt Google."
-        )
-    selected = list(models or (current.google_models if only else ()) or GOOGLE_MODELS)
-    raw["google_models"] = [] if disable else selected
-    if only:
-        raw.update(
-            ai_provider="google",
-            model=selected[0],
-            nvidia_model="",
-            ai_fallback=False,
-            fallback_model="",
-        )
-        if current.vision_targets:
-            image_models = (
-                selected
-                if models
-                else (
-                    [
-                        model
-                        for provider, model in current.vision_targets
-                        if provider == "google"
-                    ]
-                    or selected
-                )
-            )
-            raw.update(
-                vision_provider="",
-                vision_model="",
-                vision_models=[f"google:{model}" for model in image_models],
-            )
-    elif current.ai_provider == "google":
-        raw["model"] = selected[0]
-    settings = Settings.from_dict(raw)
-    if not disable:
-        from .ai import provider_configs
-
-        secrets = load_secrets(ROOT)
-        secrets["google_api_key"] = (
-            getpass.getpass("Google AI Studio API key (Enter để giữ cũ): ").strip()
-            or secrets["google_api_key"]
-        )
-        if not secrets["google_api_key"]:
-            raise ValueError("Chưa nhập Google AI Studio API key.")
-        provider_configs(secrets, settings)
-        private_json(ROOT / "secrets.json", secrets)
-    private_json(path, raw)
-    if disable:
-        print("Đã tắt nguồn Google; giữ API key và các nguồn cũ.")
-    else:
-        print("Ưu tiên Google:", " → ".join(settings.google_models))
-        if settings.ai_provider == "google":
-            print(
-                "Nguồn chữ chính: Google; hết nguồn đang bật thì bỏ lượt, chờ tin mới."
-            )
-        else:
-            print(
-                "Khi các model Google chờ quota, dùng các nguồn Groq/Cloudflare đang cấu hình."
-            )
-        if only:
-            print(
-                "Đã tắt NVIDIA/Groq/Cloudflare cho tin chữ và chuỗi đọc ảnh đang bật."
-            )
-            print("Đọc ảnh:", " → ".join(settings.vision_models) or "TẮT")
-        print(
-            "Giữ nguyên ngân sách gọi AI cục bộ; quota Google có thể dùng chung giữa model."
-        )
-    print("Chạy check-ai/chat-ai để thử rồi khởi động lại service bot.")
+    configure_ai("google", models=models, disable=disable, only=only)
 
 
 def configure_nvidia(model: str | None = None, *, disable: bool = False) -> None:
-    path = ROOT / "config.json"
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    Settings.from_dict(raw)
-    current = raw.get("nvidia_model") or NVIDIA_DEFAULT_MODEL
+    if disable:
+        configure_ai("nvidia", disable=True)
+        return
+    raw = read_config(ROOT)
+    current = (models_for(raw, "nvidia") or [NVIDIA_DEFAULT_MODEL])[0]
     selected = (
-        ""
-        if disable
-        else (
-            model
-            or input(f"Mã model NVIDIA (Enter để dùng {current}): ").strip()
-            or current
-        )
+        model
+        or input(f"Mã model NVIDIA (Enter để dùng {current}): ").strip()
+        or current
     )
-    raw["nvidia_model"] = selected
-    settings = Settings.from_dict(raw)
-    if not disable:
-        from .ai import provider_configs
-
-        secrets = load_secrets(ROOT)
-        secrets["nvidia_api_key"] = (
-            getpass.getpass("NVIDIA API key (Enter để giữ cũ): ").strip()
-            or secrets["nvidia_api_key"]
-        )
-        provider_configs(secrets, settings)
-        private_json(ROOT / "secrets.json", secrets)
-    private_json(path, raw)
-    print("NVIDIA:", "TẮT" if disable else settings.nvidia_model)
-    print(
-        "Giữ nguyên Google/Groq/Cloudflare, ngữ cảnh và các giới hạn. Chạy check-nvidia để thử riêng."
-    )
+    configure_ai("nvidia", models=[selected])
 
 
 def configure_vision(
@@ -360,17 +283,13 @@ def configure_vision(
 ) -> None:
     from .ai import validate_connection, vision_configs
 
-    path = ROOT / "config.json"
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    Settings.from_dict(raw)
+    raw = read_config(ROOT)
     if disable:
         if provider is not None or model is not None or chain is not None:
             raise ValueError("Dùng riêng --disable để tắt đọc ảnh.")
-        raw.update(vision_provider="", vision_model="")
-        raw.pop("vision_models", None)
-        Settings.from_dict(raw)
-        private_json(path, raw)
-        print("Đã tắt đọc ảnh; giữ key và cấu hình nhắn chữ.")
+        raw["vision_models"] = []
+        save_config(ROOT, raw)
+        print("Đã tắt đọc ảnh; giữ cờ nguồn, key và cấu hình nhắn chữ.")
         return
     if chain is not None:
         if provider is not None or model is not None:
@@ -378,63 +297,50 @@ def configure_vision(
                 "Dùng --chain riêng với danh sách nguồn:model theo thứ tự."
             )
         secrets = load_secrets(ROOT)
-        selected, missing = list(chain), []
+        selected, omitted = list(chain), []
         if not selected:
             for target in VISION_PRESET:
                 source = target.partition(":")[0]
-                if secrets.get(PROVIDER_KEYS[source], "").strip():
+                if (
+                    raw["provider_enabled"][source]
+                    and secrets.get(PROVIDER_KEYS[source], "").strip()
+                ):
                     selected.append(target)
-                elif source not in missing:
-                    missing.append(source)
+                elif source not in omitted:
+                    omitted.append(source)
             if not selected:
-                raise ValueError("Chưa có key nguồn đọc ảnh; cấu hình API trước.")
-        raw.update(vision_provider="", vision_model="", vision_models=selected)
-        settings = Settings.from_dict(raw)
-        vision_configs(secrets, settings)
-        private_json(path, raw)
-        print("Thứ tự đọc ảnh:", " → ".join(settings.vision_models))
-        if missing:
-            print("Bỏ khỏi mẫu vì chưa có key:", ", ".join(missing))
-        print(
-            "Dùng key hiện có; mỗi model thử một lần khi nguồn trước lỗi. "
-            "Chạy check-vision --all để thử từng model rồi khởi động lại bot."
-        )
+                raise ValueError(
+                    "Chưa có nguồn đọc ảnh đang bật và có key; xem providers."
+                )
+        raw["vision_models"] = selected
+        sources = list(dict.fromkeys(model_target(target)[0] for target in selected))
+        switch_providers(raw, "enable", sources)
+        vision_configs(secrets, Settings.from_dict(raw))
+        save_config(ROOT, raw)
+        print("Thứ tự đọc ảnh:", " → ".join(selected))
+        if omitted:
+            print("Bỏ khỏi mẫu vì nguồn đang tắt hoặc chưa có key:", ", ".join(omitted))
+        print("Dùng cờ nguồn chung; chạy check-vision --all rồi khởi động lại bot.")
         return
     if not provider or not model:
         raise ValueError(
             "Chọn nguồn và --model hỗ trợ ảnh, hoặc configure-vision --chain."
         )
-    raw.update(vision_provider=provider, vision_model=model)
-    raw.pop("vision_models", None)
+    raw["vision_models"] = [f"{provider}:{model}"]
+    switch_providers(raw, "enable", [provider])
     settings = Settings.from_dict(raw)
     secrets = load_secrets(ROOT)
-    key = {
-        "nvidia": "nvidia_api_key",
-        "google": "google_api_key",
-        "groq": "groq_api_key",
-        "cloudflare": "cloudflare_api_token",
-    }[provider]
-    secrets[key] = (
-        getpass.getpass("API key đọc ảnh (Enter để giữ key nguồn này): ").strip()
-        or secrets[key]
-    )
-    if provider == "cloudflare":
-        secrets["cloudflare_account_id"] = (
-            input("Cloudflare Account ID (Enter để giữ cũ): ").strip()
-            or secrets["cloudflare_account_id"]
-        )
-    # Validate credentials without constructing clients or calling any API.
+    _ask_ai_key(secrets, provider)
     validate_connection(
-        secrets[key],
+        secrets[PROVIDER_KEYS[provider]],
         replace(settings, ai_provider=provider, model=model),
         secrets.get("cloudflare_account_id", ""),
     )
+    vision_configs(secrets, settings)
     private_json(ROOT / "secrets.json", secrets)
-    private_json(path, raw)
+    save_config(ROOT, raw)
     print(f"Nguồn đọc ảnh: {provider} / {model}.")
-    print(
-        "Mới xác minh cấu hình; chạy check-vision rồi khởi động lại bot. Ảnh được gửi tới nguồn đã chọn."
-    )
+    print("Chưa kiểm tra API thật; chạy check-vision rồi khởi động lại bot.")
 
 
 async def check_vision(*, all_models: bool = False) -> None:
@@ -551,20 +457,23 @@ def tune_chat() -> None:
 def upgrade_chat() -> None:
     from .ai import CHAT_MODELS
 
-    path = ROOT / "config.json"
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw = read_config(ROOT)
     settings = Settings.from_dict(raw)
-    raw["model"] = CHAT_MODELS[settings.ai_provider]
-    if settings.ai_fallback:
-        other = "groq" if settings.ai_provider == "cloudflare" else "cloudflare"
-        raw["fallback_model"] = CHAT_MODELS[other]
+    raw["text_models"] = list(
+        dict.fromkeys(
+            f"{provider}:{CHAT_MODELS.get(provider, model)}"
+            for provider, model in settings.all_text_targets
+        )
+    )
     raw["max_replies_per_thread_per_day"] = max(
         settings.max_replies_per_thread_per_day, 1000
     )
     raw["max_ai_calls_per_day"] = max(settings.max_ai_calls_per_day, 1000)
     Settings.from_dict(raw)
-    private_json(path, raw)
-    print(f"Đã chọn {raw['model']}; nhà cung cấp và trạng thái dự phòng giữ nguyên.")
+    save_config(ROOT, raw)
+    print(
+        "Đã cập nhật model Groq/Cloudflare đang cấu hình; giữ cờ nguồn và model khác."
+    )
     print(
         f"Giới hạn: {raw['max_replies_per_thread_per_day']} câu/chat/ngày; {raw['max_ai_calls_per_day']} lần gọi AI/ngày cho toàn bot."
     )
@@ -622,12 +531,17 @@ async def check_ai(*, interactive: bool = False, provider: str | None = None) ->
     if provider == "nvidia":
         from .ai import ChatAI
 
-        if not settings.nvidia_model:
+        models = [
+            model for source, model in settings.text_targets if source == "nvidia"
+        ]
+        if not models:
             state.close()
-            raise ValueError("Chạy configure-nvidia để chọn model và nhập key trước.")
+            raise ValueError(
+                "Chọn model NVIDIA bằng configure-nvidia và bật nguồn bằng providers enable nvidia trước."
+            )
         ai = ChatAI(
             secrets["nvidia_api_key"],
-            replace(settings, ai_provider="nvidia", model=settings.nvidia_model),
+            replace(settings, ai_provider="nvidia", model=models[0]),
             persona,
             fail_fast=True,
         )
@@ -779,8 +693,8 @@ def main() -> None:
     initial_options = initial_config.add_mutually_exclusive_group()
     initial_options.add_argument(
         "--provider",
-        choices=("groq", "cloudflare"),
-        help="Chọn nguồn chính ngay khi cài mới.",
+        choices=tuple(PROVIDER_KEYS),
+        help="Chọn nguồn ngay khi cài mới.",
     )
     initial_options.add_argument(
         "--copy-ai-from",
@@ -800,7 +714,21 @@ def main() -> None:
     ai_config = sub.add_parser(
         "configure-ai", help="Đổi nguồn AI, giữ cookie và ngữ cảnh."
     )
-    ai_config.add_argument("provider", choices=("groq", "cloudflare"))
+    ai_config.add_argument("provider", choices=tuple(PROVIDER_KEYS))
+    ai_config.add_argument(
+        "--model",
+        "--models",
+        dest="models",
+        nargs="+",
+        help="Model tự chọn của nguồn này.",
+    )
+    provider_command = sub.add_parser(
+        "providers", help="Xem hoặc bật/tắt nguồn chung cho chữ và ảnh."
+    )
+    provider_command.add_argument(
+        "action", nargs="?", choices=("enable", "disable", "only")
+    )
+    provider_command.add_argument("names", nargs="*", choices=tuple(PROVIDER_KEYS))
     ai_config.add_argument(
         "--daily-limit", type=int, help="Giới hạn số lần gọi AI cục bộ mỗi ngày."
     )
@@ -892,7 +820,11 @@ def main() -> None:
         if args.command == "configure":
             configure(provider=args.provider, copy_ai_from=args.copy_ai_from)
         elif args.command == "configure-ai":
-            configure_ai(args.provider, args.daily_limit, args.fallback)
+            configure_ai(
+                args.provider, args.daily_limit, args.fallback, models=args.models
+            )
+        elif args.command == "providers":
+            providers(args.action, args.names)
         elif args.command == "configure-google":
             configure_google(args.models, disable=args.disable, only=args.only)
         elif args.command == "configure-nvidia":

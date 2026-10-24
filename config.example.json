@@ -1,15 +1,14 @@
 {
   "allowed_threads": [],
   "reply_scope": "allowlist",
-  "ai_provider": "groq",
-  "ai_fallback": false,
-  "fallback_model": "",
-  "google_models": [],
-  "nvidia_model": "",
-  "vision_provider": "",
-  "vision_model": "",
+  "provider_enabled": {
+    "nvidia": false,
+    "google": false,
+    "groq": true,
+    "cloudflare": false
+  },
+  "text_models": ["groq:openai/gpt-oss-120b"],
   "vision_models": [],
-  "model": "openai/gpt-oss-120b",
   "dry_run": true,
   "reply_prefix": "",
   "debounce_seconds": 2.5,

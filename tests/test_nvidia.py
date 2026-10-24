@@ -229,13 +229,20 @@ def test_configure_nvidia_preserves_all_existing_sources_and_credentials(
     )
     monkeypatch.setattr(cli.getpass, "getpass", lambda _: "nvidia-key")
     cli.configure_nvidia(NVIDIA_DEFAULT_MODEL)
-    assert json.loads(path.read_text()) == {**raw, "nvidia_model": NVIDIA_DEFAULT_MODEL}
+    configured = Settings.load(tmp_path)
+    assert configured.text_targets[0] == ("nvidia", NVIDIA_DEFAULT_MODEL)
+    assert (
+        configured.reply_scope == raw["reply_scope"]
+        and configured.manual_pause_seconds == raw["manual_pause_seconds"]
+    )
+    before_targets = configured.all_text_targets
     saved = secrets.read_bytes()
     assert json.loads(saved)["facebook_cookie"] == "keep-cookie"
     assert json.loads(saved)["nvidia_api_key"] == "nvidia-key"
     assert secrets.stat().st_mode & 0o777 == 0o600
     cli.configure_nvidia(disable=True)
-    assert json.loads(path.read_text()) == {**raw, "nvidia_model": ""}
+    assert Settings.load(tmp_path).all_text_targets == before_targets
+    assert not Settings.load(tmp_path).provider_flags["nvidia"]
     assert secrets.read_bytes() == saved
 
 
@@ -311,9 +318,9 @@ def test_manual_model_prompt_accepts_new_model_without_code_changes(
     monkeypatch.setattr("builtins.input", lambda _: "my-provider/new-chat-model")
     monkeypatch.setattr(cli.getpass, "getpass", lambda _: "test-nvidia-key")
     cli.configure_nvidia()
-    assert (
-        json.loads((tmp_path / "config.json").read_text())["nvidia_model"]
-        == "my-provider/new-chat-model"
+    assert Settings.load(tmp_path).text_targets[0] == (
+        "nvidia",
+        "my-provider/new-chat-model",
     )
 
 

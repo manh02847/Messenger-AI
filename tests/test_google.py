@@ -283,10 +283,17 @@ def test_configure_google_preserves_other_settings_and_can_disable(
     secret.write_text(json.dumps(secrets))
     monkeypatch.setattr(cli.getpass, "getpass", lambda _: "google-key")
     cli.configure_google()
-    assert json.loads(config.read_text()) == {
-        **raw,
-        "google_models": list(GOOGLE_MODELS),
-    }
+    settings = Settings.load(tmp_path)
+    assert settings.text_targets == (
+        *(("google", model) for model in GOOGLE_MODELS),
+        ("groq", "qwen/qwen3.8-27b"),
+        ("cloudflare", "@cf/qwen/qwen3.8-27b"),
+    )
+    assert (
+        settings.reply_scope == raw["reply_scope"]
+        and settings.manual_pause_seconds == raw["manual_pause_seconds"]
+    )
+    before_targets = settings.all_text_targets
     assert load_secrets(tmp_path) == {
         **secrets,
         "google_api_key": "google-key",
@@ -295,11 +302,12 @@ def test_configure_google_preserves_other_settings_and_can_disable(
     assert secret.stat().st_mode & 0o777 == 0o600
     saved_secret = secret.read_bytes()
     cli.configure_google(disable=True)
-    assert json.loads(config.read_text()) == {**raw, "google_models": []}
+    assert Settings.load(tmp_path).all_text_targets == before_targets
+    assert not Settings.load(tmp_path).provider_flags["google"]
     assert secret.read_bytes() == saved_secret
     monkeypatch.setattr(cli.getpass, "getpass", lambda _: "")
     cli.configure_google([GOOGLE_MODELS[0]])
-    assert Settings.load(tmp_path).google_models == (GOOGLE_MODELS[0],)
+    assert Settings.load(tmp_path).text_targets[0] == ("google", GOOGLE_MODELS[0])
 
 
 def test_empty_google_key_does_not_change_files(tmp_path, monkeypatch):

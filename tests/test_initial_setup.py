@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from messenger_ai import cli
-from messenger_ai.config import Settings
+from messenger_ai.config import Settings, canonical_config
 
 NEW_COOKIE = "c_user=222; xs=new-session;"
 OLD_COOKIE = "c_user=111; xs=old-session;"
@@ -104,8 +104,7 @@ def test_first_cloudflare_setup_works_without_groq_key(destination, monkeypatch)
     monkeypatch.setattr(cli.getpass, "getpass", lambda _: next(answers))
     cli.configure(provider="cloudflare")
     settings = Settings.load(destination)
-    assert settings.ai_provider == "cloudflare"
-    assert settings.model == "@cf/qwen/qwen3-30b-a3b-fp8"
+    assert settings.text_targets == (("cloudflare", "@cf/qwen/qwen3-30b-a3b-fp8"),)
     assert saved(destination, "secrets.json")["groq_api_key"] == ""
 
 
@@ -129,7 +128,7 @@ def test_cookie_update_keeps_existing_cloudflare_model_scope_and_budget(
     monkeypatch.setattr("builtins.input", lambda _: "")
     monkeypatch.setattr(cli.getpass, "getpass", lambda _: next(answers))
     cli.configure()
-    assert saved(destination, "config.json") == raw
+    assert saved(destination, "config.json") == canonical_config(raw)
     assert saved(destination, "secrets.json")["facebook_cookie"] == NEW_COOKIE
 
 
@@ -167,18 +166,14 @@ def test_copy_ai_creates_separate_account_without_copying_identity_or_device(
     assert len(prompts) == 1 and "Cookie Facebook" in prompts[0]
     result = saved(destination, "config.json")
     for name in (
-        "ai_provider",
-        "model",
-        "fallback_model",
-        "google_models",
-        "nvidia_model",
-        "vision_provider",
-        "vision_model",
+        "provider_enabled",
+        "text_models",
+        "vision_models",
         "max_ai_calls_per_day",
         "history_char_limit",
         "history_idle_seconds",
     ):
-        assert result[name] == raw[name]
+        assert result[name] == canonical_config(raw)[name]
     assert result["allowed_threads"] == [] and result["reply_scope"] == "allowlist"
     assert result["dry_run"] is True and result["reply_prefix"] == ""
     assert "chatgpt_web" not in result

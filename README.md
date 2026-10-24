@@ -68,36 +68,15 @@ Hai lệnh trên **không kết nối hoặc gửi Messenger**, nhưng có gọi
 
 Để kiểm tra chuỗi đọc ảnh, dùng `check-vision`; thêm `--all` để thử riêng từng model. Xem [bật đọc ảnh](#đọc-ảnh-trên-messenger). `check-ai` và `chat-ai` chỉ thử tin chữ, không chứng minh model đọc được ảnh.
 
-### Xem toàn bộ thứ tự nguồn/model đang bật
-
-Sao chép cả khối sau vào terminal Linux:
+### Xem nguồn đang bật và thứ tự model
 
 ```bash
-.venv/bin/python - <<'PY'
-from messenger_ai.ai import provider_configs
-from messenger_ai.config import Settings, load_secrets
-
-for index, (_, config, _) in enumerate(provider_configs(load_secrets(), Settings.load()), 1):
-    print(f"{index}. {config.ai_provider}: {config.model}")
-PY
+.venv/bin/python -m messenger_ai providers
 ```
 
-Khối này chỉ đọc cấu hình và kiểm tra định dạng thông tin kết nối; **không gọi API, không in key**. Nó không thể xác nhận key còn quota hoặc model có quyền truy cập.
+Lệnh chỉ đọc cấu hình, in cờ **BẬT/TẮT**, model chữ/ảnh đã lưu và hai chuỗi thực sự đang dùng; không đọc/in key hay gọi API. Nguồn tắt được bỏ qua ở cả hai chuỗi.
 
-Thứ tự chung:
-
-| Ưu tiên | Nguồn được thử |
-|---|---|
-| 1 | NVIDIA với model bạn tự chọn, nếu đã bật |
-| 2 | Các model Google, theo thứ tự trong `google_models` |
-| 3 | Nguồn chính: Groq hoặc Cloudflare |
-| 4 | Nguồn còn lại trong Groq/Cloudflare, nếu `ai_fallback: true` |
-
-Ví dụ **NVIDIA → Google → Cloudflare → Groq** chỉ đúng khi đã bật NVIDIA/Google, chọn Cloudflare làm chính và bật dự phòng Groq. Nếu chọn Groq làm chính thì hai nguồn cuối đổi chỗ. Cài mới mặc định **chỉ có Groq**, các nguồn khác cần cấu hình thêm.
-
-Nếu đã chọn `configure-google --only`, nguồn chữ chính là Google và các nguồn NVIDIA/Groq/Cloudflare được tắt. Các lượt ảnh đang bật cũng chỉ dùng danh sách Google đã chọn; xem [chế độ chỉ Google](#chỉ-dùng-google-cho-chữ-và-ảnh).
-
-Với tin chữ, bot thử lần lượt đến khi có câu trả lời; không gọi nhiều model song song rồi ghép nội dung. Các nguồn được thử nhận cùng persona/ngữ cảnh trong giới hạn cấu hình. Lượt có ảnh dùng riêng danh sách model thị giác đã chọn; thứ tự ảnh độc lập với chuỗi nguồn chữ.
+Bot thử model từ trên xuống đến khi có câu trả lời, theo `text_models` cho chữ và `vision_models` cho ảnh. Cài mới chỉ bật Groq; các nguồn khác cần chọn model/key rồi bật. Không có nhà cung cấp nào bắt buộc phải làm nguồn cuối.
 
 ## 3. Cài đặt lần đầu
 
@@ -126,13 +105,13 @@ Tải ZIP qua **Code → Download ZIP** rồi giải nén. Cài [Python 3.11+](h
 py -3 setup_bot.py
 ```
 
-Trong các lệnh tiếp theo, thay `.venv/bin/python` bằng `.venv\Scripts\python.exe`. Phần systemd chỉ dành cho Linux; khối Python xem thứ tự nguồn ở trên dùng cú pháp shell Linux.
+Trong các lệnh tiếp theo, thay `.venv/bin/python` bằng `.venv\Scripts\python.exe`. Phần systemd chỉ dành cho Linux.
 
 </details>
 
 ### Bước 2: Nhập API key và cookie Facebook
 
-Chọn nguồn chính ngay khi cài: [Groq](https://console.groq.com/keys) hoặc Cloudflare Workers AI. Các nguồn Google/NVIDIA và dự phòng có thể thêm ở mục 4.
+Chọn nguồn khi cài: mặc định [Groq](https://console.groq.com/keys), hoặc truyền `--provider cloudflare`, `--provider google`, `--provider nvidia`. Các nguồn khác có thể thêm ở mục 4.
 
 Với Groq:
 
@@ -146,7 +125,7 @@ Với Cloudflare, không cần key Groq:
 .venv/bin/python -m messenger_ai configure --provider cloudflare
 ```
 
-Lệnh hỏi thông tin AI của nguồn chính và **cookie Facebook**, ẩn key/cookie khi nhập. Sau khi kiểm tra định dạng đầy đủ, lệnh lưu `secrets.json` và `config.json`; chưa gọi API hay đăng nhập Messenger. Cấu hình lại bằng `configure` không có cờ sẽ giữ nguồn/model hiện tại, Enter để giữ thông tin cũ. `--provider` đổi sang nguồn chính được chọn nếu khác hiện tại.
+Lệnh hỏi thông tin AI của nguồn được chọn và **cookie Facebook**, ẩn key/cookie khi nhập. Sau khi kiểm tra định dạng, lệnh lưu `secrets.json` và `config.json`; chưa gọi API hay đăng nhập Messenger. Cấu hình lại bằng `configure` không có cờ giữ nguyên cờ nguồn và thứ tự model, kể cả khi tất cả nguồn đang tắt; Enter để giữ thông tin cũ. `--provider` cấu hình và bật nguồn được nêu.
 
 Nếu đã có một bản bot trên cùng VPS, có thể dùng lại riêng phần AI bằng `configure --copy-ai-from THU_MUC_BOT_CU`; xem phần thêm acc ở mục 6.
 
@@ -171,116 +150,74 @@ Chạy `check-ai`, chọn [nguồn AI](#4-thêm-nguồn-và-chọn-model) nếu 
 
 ## 4. Thêm nguồn và chọn model
 
-Chạy các lệnh trong thư mục bot. Lệnh cấu hình chỉ lưu thiết lập; sau khi kiểm tra, **khởi động lại bot để áp dụng**. Key cũ có thể giữ bằng Enter. Dùng dashboard của từng bên để xem quota thực tế; thêm nguồn không làm tăng hạn mức của từng tài khoản.
+Mọi lệnh chạy trong đúng thư mục bot. Sau khi thay đổi nguồn hoặc model, khởi động lại đúng service để áp dụng.
 
-### NVIDIA NIM: tự nhập model
-
-Lấy key và mã model ở [NVIDIA API Catalog](https://build.nvidia.com/), sau đó:
+### Bật/tắt nguồn: cùng một lệnh cho cả bốn bên
 
 ```bash
-.venv/bin/python -m messenger_ai configure-nvidia
-.venv/bin/python -m messenger_ai check-nvidia
+.venv/bin/python -m messenger_ai providers
 ```
 
-Bạn tự chọn **một model** dạng `hãng/tên-model`, không nhập cả URL. Lệnh gợi ý `google/gemma-4-31b-it` khi chưa chọn; không có danh sách khóa sẵn và không tự xoay các model NVIDIA. Có thể chỉ định model ngay trong lệnh:
+| Việc cần làm | Lệnh |
+|---|---|
+| Chỉ dùng Google | `.venv/bin/python -m messenger_ai providers only google` |
+| Chỉ dùng NVIDIA | `.venv/bin/python -m messenger_ai providers only nvidia` |
+| Chỉ dùng Groq | `.venv/bin/python -m messenger_ai providers only groq` |
+| Chỉ dùng Cloudflare | `.venv/bin/python -m messenger_ai providers only cloudflare` |
+| Bật thêm NVIDIA và Groq | `.venv/bin/python -m messenger_ai providers enable nvidia groq` |
+| Tắt NVIDIA và Cloudflare | `.venv/bin/python -m messenger_ai providers disable nvidia cloudflare` |
+| Chỉ giữ Google và Groq | `.venv/bin/python -m messenger_ai providers only google groq` |
+
+`only` chỉ bật các nguồn được nêu; `enable` bật thêm, `disable` tắt các nguồn được nêu. Cờ dùng chung cho chữ và ảnh. Các lệnh này **giữ nguyên toàn bộ model, thứ tự và key**, không hỏi lại key/cookie hoặc gọi API. Nguồn bật cần có ít nhất một model đã chọn và thông tin kết nối hợp lệ; nguồn đang tắt không bị gọi hoặc yêu cầu key.
+
+Có thể tắt toàn bộ nguồn: bot tiếp tục nhận tin nhưng không gọi AI/gửi phản hồi. Bật lại sẽ dùng các model đã lưu. Nếu nguồn chỉ có model ảnh thì chỉ xử lý ảnh; muốn rep chữ cần chọn thêm model chữ.
+
+### Nhập key và chọn model bằng lệnh chung
+
+`configure-ai` dùng được cho Google, NVIDIA, Groq và Cloudflare. Có thể truyền một hoặc nhiều model của cùng nguồn; ví dụ dưới đây là các lựa chọn độc lập, chỉ chạy dòng của nguồn muốn cấu hình:
 
 ```bash
-.venv/bin/python -m messenger_ai configure-nvidia --model google/gemma-4-31b-it
+.venv/bin/python -m messenger_ai configure-ai google --models gemini-3.5-flash-lite gemini-3.1-flash-lite
+.venv/bin/python -m messenger_ai configure-ai nvidia --model google/gemma-4-31b-it
+.venv/bin/python -m messenger_ai configure-ai groq --model openai/gpt-oss-120b
+.venv/bin/python -m messenger_ai configure-ai cloudflare --model @cf/qwen/qwen3.8-27b
 ```
 
-Model cần hỗ trợ chat completions trên endpoint NVIDIA. Tên đúng định dạng chưa đảm bảo tài khoản có quyền gọi, nên dùng `check-nvidia` để xác nhận riêng. NVIDIA được đặt trước các nguồn cũ, giữ nguyên cấu hình của chúng.
+Lệnh lưu model/key và bật nguồn được chọn, dùng cùng bộ xử lý cấu hình cho cả bốn bên. Ở dòng key, Enter giữ key cũ. Không truyền model thì giữ danh sách đã chọn; nguồn chưa có model dùng mẫu cố định của chương trình. Thứ tự thực tế được in ra sau khi lưu.
 
-Tắt NVIDIA, giữ key:
+Key và mã model lấy tại [NVIDIA API Catalog](https://build.nvidia.com/), [Google AI Studio](https://aistudio.google.com/apikey), [Groq Console](https://console.groq.com/) hoặc [Cloudflare REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). Cloudflare cần thêm Account ID. NVIDIA nhận mã `hãng/tên-model`, không nhập URL; Google dùng danh sách `GOOGLE_MODELS` được hỗ trợ. Chọn model mới vẫn là thao tác thủ công, không tự đọc catalog.
 
-```bash
-.venv/bin/python -m messenger_ai configure-nvidia --disable
+Lệnh cũ `configure-google`, `configure-nvidia`, `configure-google --only` và `--disable` vẫn được chuyển vào cùng bộ xử lý. `--fallback` / `--no-fallback` của Groq/Cloudflare chỉ bật/tắt cờ nguồn còn lại; nên dùng `providers` để quản lý thống nhất.
+
+`upgrade-chat` đổi các model chữ Groq/Cloudflare đã cấu hình sang Qwen3.8, giữ model nguồn khác và cờ bật/tắt. Lệnh nâng ngân sách cục bộ lên ít nhất 1000 lần gọi/ngày và 1000 lượt rep/chat/ngày, không cấp thêm quota API.
+
+### Ba trường quản lý nguồn trong config.json
+
+Ví dụ phần nguồn, với Google đang bật và NVIDIA đang tắt:
+
+```json
+{
+  "provider_enabled": {
+    "nvidia": false,
+    "google": true,
+    "groq": false,
+    "cloudflare": false
+  },
+  "text_models": [
+    "nvidia:google/gemma-4-31b-it",
+    "google:gemini-3.5-flash-lite",
+    "google:gemini-3.1-flash-lite"
+  ],
+  "vision_models": [
+    "google:gemini-3.5-flash-lite",
+    "nvidia:google/gemma-4-31b-it"
+  ]
+}
 ```
 
-### Google AI Studio: chọn danh sách model
+Có thể sửa trực tiếp các cờ true/false hoặc thứ tự hai danh sách, giữ các thiết lập khác trong file rồi restart bot. Model có trong danh sách nhưng nguồn tắt sẽ không được gọi. Model chữ và ảnh được chọn riêng; model đọc ảnh phải hỗ trợ thị giác.
 
-Tạo key ở [Google AI Studio](https://aistudio.google.com/apikey):
-
-```bash
-.venv/bin/python -m messenger_ai configure-google
-.venv/bin/python -m messenger_ai check-ai
-```
-
-Mặc định thêm các model theo thứ tự:
-
-1. `gemma-4-31b-it`
-2. `gemma-4-26b-a4b-it`
-3. `gemini-3.5-flash-lite`
-4. `gemini-3.1-flash-lite`
-
-Để chỉ dùng một phần hoặc đổi thứ tự, chọn trong bốn model được hỗ trợ ở trên:
-
-```bash
-.venv/bin/python -m messenger_ai configure-google --models gemma-4-31b-it gemini-3.5-flash-lite
-```
-
-Tắt nguồn Google bổ sung, giữ key (nếu đang chọn Google làm nguồn chính, chọn lại Groq/Cloudflare trước):
-
-```bash
-.venv/bin/python -m messenger_ai configure-google --disable
-```
-
-Google đứng sau NVIDIA và trước Groq/Cloudflare. `check-ai` có thể được nguồn khác trả lời; luôn đọc tên nguồn/model trong kết quả. Nhiều model Google có thể dùng chung quota, nên không cộng chúng thành số lượt được bảo đảm.
-
-### Chỉ dùng Google cho chữ và ảnh
-
-Trong đúng thư mục bot, chạy:
-
-```bash
-.venv/bin/python -m messenger_ai configure-google --only \
-  --models gemini-3.5-flash-lite gemini-3.1-flash-lite
-```
-
-Ở dòng API key, nhấn Enter để giữ key Google đang có. Bot dùng hai model theo thứ tự trên cho chữ và chuỗi đọc ảnh đã bật, tắt NVIDIA/Groq/Cloudflare. Nếu đọc ảnh đang tắt thì vẫn tắt. Các key nguồn khác được giữ để dùng lại sau; không cần key của chúng để chạy chế độ này.
-
-Nếu bỏ `--models`, lệnh giữ thứ tự model Google đang có của từng chuỗi chữ/ảnh, loại các nguồn khác. Khi chuỗi chữ chưa có danh sách Google thì dùng mẫu bốn model ở trên; ảnh đang bật mà chưa có model Google thì lấy theo chuỗi chữ. `--only` lưu `ai_provider: "google"`, xóa lựa chọn NVIDIA và tắt dự phòng Groq/Cloudflare. Khi tất cả model Google lỗi/hết quota, bot bỏ lượt và chờ tin mới. Khởi động lại đúng service sau khi cấu hình.
-
-Muốn dùng thêm nguồn khác sau này, chọn nguồn chính bằng `configure-ai groq` hoặc `configure-ai cloudflare`, rồi cấu hình nguồn/dự phòng cần dùng. Phần ảnh chọn lại bằng `configure-vision --chain` hoặc danh sách thủ công.
-
-### Groq và Cloudflare: nguồn chính và dự phòng
-
-Chọn Groq làm chính:
-
-```bash
-.venv/bin/python -m messenger_ai configure-ai groq
-```
-
-Chọn Cloudflare làm chính:
-
-```bash
-.venv/bin/python -m messenger_ai configure-ai cloudflare
-```
-
-Cloudflare cần **Account ID** và **Workers AI API token** của đúng tài khoản, lấy theo [hướng dẫn REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). Bot vẫn chạy trên VPS; chỉ phần tạo câu trả lời dùng Workers AI.
-
-Để dùng **Cloudflare chính, Groq dự phòng**, nhập key Groq trước nếu chưa có rồi bật dự phòng:
-
-```bash
-.venv/bin/python -m messenger_ai configure-ai groq --no-fallback
-.venv/bin/python -m messenger_ai configure-ai cloudflare --fallback
-```
-
-Nếu đã có đủ thông tin hai bên, chỉ cần dòng thứ hai. Đổi sang **Groq chính, Cloudflare dự phòng** bằng `configure-ai groq --fallback`. Tắt dự phòng bằng `--no-fallback` với nguồn chính muốn giữ. Không có cờ này thì trạng thái dự phòng hiện tại được giữ nguyên.
-
-| Nguồn | Model do `configure-ai` chọn | Model do `upgrade-chat` chọn |
-|---|---|---|
-| Groq | `openai/gpt-oss-120b` | `qwen/qwen3.8-27b` |
-| Cloudflare | `@cf/qwen/qwen3-30b-a3b-fp8` | `@cf/qwen/qwen3.8-27b` |
-
-Muốn dùng các model Qwen3.8 ở bảng và nâng ngân sách cục bộ:
-
-```bash
-.venv/bin/python -m messenger_ai upgrade-chat
-.venv/bin/python -m messenger_ai check-ai
-```
-
-`upgrade-chat` đổi model chính và model Groq/Cloudflare dự phòng nếu đã bật; giữ NVIDIA, Google và thứ tự nguồn. Nó nâng lên **ít nhất 1000 lần gọi AI/ngày cho toàn bot** và **1000 lượt rep/chat/ngày**, giữ mức cao hơn bạn đã đặt. Đây là giới hạn cục bộ, không cấp thêm quota API. Khi NVIDIA/Google trả lời trước, model Qwen chưa cần được gọi.
-
-**Lưu ý:** chạy lại `configure-ai` sẽ chọn lại model mặc định ở cột giữa. Muốn giữ Qwen3.8 thì chạy `upgrade-chat` sau đó, hoặc sửa đúng trường model trong `config.json` rồi kiểm tra.
+Cấu hình cũ vẫn được đọc theo đúng thứ tự đang dùng. Lần đầu lưu cấu hình nguồn bằng lệnh mới, chương trình đổi sang ba trường trên và tạo `config.before-providers.bak` riêng tư, không ghi đè bản sao đã có. Key vẫn ở `secrets.json`; persona, lịch sử và các giới hạn được giữ. Không thêm lại các trường nguồn cũ như `ai_provider` hoặc `ai_fallback` vào file đã chuyển.
 
 <details>
 <summary>Khi một nguồn lỗi, bot chuyển nguồn như thế nào?</summary>
@@ -432,7 +369,7 @@ Cập nhật thư viện bằng `python3 setup_bot.py` khi đã dừng bot. Nế
 .venv/bin/python -m messenger_ai check-vision
 ```
 
-Mẫu ưu tiên theo thứ tự dưới, chỉ thêm nguồn đã có key và in rõ nguồn bị bỏ qua. Dùng key hiện có, không hỏi lại cookie/key. Model trong mẫu được đặt cố định; bot không tự lấy model từ catalog.
+Mẫu ưu tiên theo thứ tự dưới, chỉ thêm nguồn **đang bật và đã có key**, in rõ nguồn bị bỏ qua. Dùng key hiện có, không hỏi lại cookie/key. Mẫu không bật lại nguồn bạn đã tắt bằng `providers`. Model trong mẫu được đặt cố định; bot không tự lấy model từ catalog.
 
 | Thứ tự | Nguồn | Model |
 |---|---|---|
@@ -455,13 +392,13 @@ Muốn **tự chọn model/thứ tự**, ghi rõ danh sách (tối đa 12 mục,
   nvidia:google/gemma-4-31b-it
 ```
 
-Danh sách tự chọn yêu cầu đủ key tương ứng; thiếu key sẽ báo lỗi trước khi lưu. Chuyển về **một nguồn** bằng lệnh cũ; ví dụ NVIDIA:
+Danh sách tự chọn yêu cầu đủ key tương ứng và bật các nguồn được nêu, theo cờ chung cho cả chữ/ảnh; thiếu key sẽ báo lỗi trước khi lưu. Chuyển về **một model ảnh** bằng lệnh cũ; ví dụ NVIDIA:
 
 ```bash
 .venv/bin/python -m messenger_ai configure-vision nvidia --model google/gemma-4-31b-it
 ```
 
-Khi cấu hình một nguồn, ở dòng API key nhấn Enter để dùng key hiện có. Chế độ này giữ deadline **30 giây/lượt**. `configure-vision` chỉ kiểm tra cấu hình, không gọi API hay đổi model nhắn chữ. Cấu hình một nguồn trước đây vẫn chạy như cũ sau `git pull`, chỉ xoay nhiều model khi bạn bật `--chain`.
+Khi cấu hình một nguồn, ở dòng API key nhấn Enter để dùng key hiện có. Chế độ này giữ deadline **30 giây/lượt**. `configure-vision` không gọi API hay đổi danh sách model chữ; nguồn được chọn sẽ được bật bằng cờ chung, nên các model chữ đã lưu của nguồn đó cũng có thể chạy. Cấu hình một nguồn trước đây vẫn chạy như cũ sau `git pull`, chỉ xoay nhiều model khi bạn bật `--chain`.
 
 `check-vision` gửi một ô màu đỏ tạo tại máy qua chuỗi, in model trả lời thực tế và thời gian; thành công chỉ chứng minh một model đã trả lời. Để thử **riêng tất cả model** dù model đầu đã chạy được:
 
@@ -572,15 +509,9 @@ Sửa `config.json`, đối chiếu [config.example.json](config.example.json). 
 | `reply_scope` | `"allowlist"` | `all_private`: tất cả chat riêng; `allowlist`: chỉ danh sách |
 | `allowed_threads` | `[]` | Mã cuộc trò chuyện đã xác minh bằng `discover` |
 | `dry_run` | `true` | Xem trước nếu không có cờ `--live` |
-| `nvidia_model` | `""` | Model NVIDIA tự chọn; rỗng là tắt |
-| `vision_provider` | `""` | Nguồn đọc ảnh khi chọn một model; để rỗng khi dùng `vision_models` |
-| `vision_model` | `""` | Model ảnh của nguồn đơn, chọn bằng configure-vision |
-| `vision_models` | `[]` | Danh sách `nguồn:model` theo thứ tự; dùng configure-vision --chain. Cả danh sách và nguồn đơn rỗng là tắt |
-| `google_models` | `[]` | Danh sách model Google theo thứ tự |
-| `ai_provider` | `"groq"` | Nguồn chính: `groq` / `cloudflare` hoặc `google` qua configure-google --only |
-| `model` | `"openai/gpt-oss-120b"` | Model của nguồn chính |
-| `ai_fallback` | `false` | Bật nguồn Groq/Cloudflare còn lại làm dự phòng |
-| `fallback_model` | `""` | Model nguồn dự phòng; rỗng dùng mặc định của nguồn đó |
+| `provider_enabled` | Chỉ Groq bật | Cờ true/false cho từng nguồn, dùng chung cho chữ và ảnh |
+| `text_models` | `["groq:openai/gpt-oss-120b"]` | Danh sách model chữ theo thứ tự; bỏ qua nguồn tắt |
+| `vision_models` | `[]` | Danh sách model ảnh theo thứ tự; rỗng là tắt ảnh; bỏ qua nguồn tắt |
 | `reply_prefix` | `""` | Tiền tố thêm trước câu trả lời |
 | `debounce_seconds` | `2.5` | Thời gian gom tin đến liên tiếp |
 | `reply_cooldown_seconds` | `8` | Khoảng cách tối thiểu giữa hai lượt gửi cùng chat |
