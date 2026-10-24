@@ -137,6 +137,7 @@ class Settings:
     output_char_limit: int = 4000
     max_completion_tokens: int = 4096
     max_ai_calls_per_day: int = 150
+    ai_retry_enabled: bool = True
     max_replies_per_thread_per_day: int = 1000
     minimum_ai_interval_seconds: float = 6
     retention_days: int = 7
@@ -277,6 +278,8 @@ class Settings:
             raise ValueError("fallback_model phải là chuỗi.")
         if not isinstance(result.dry_run, bool):
             raise ValueError("dry_run phải là true hoặc false.")
+        if not isinstance(result.ai_retry_enabled, bool):
+            raise ValueError("ai_retry_enabled phải là true hoặc false.")
         if result.ai_provider not in ("groq", "cloudflare", "google"):
             raise ValueError("ai_provider phải là groq, cloudflare hoặc google.")
         if result.ai_provider == "google" and result.ai_fallback:

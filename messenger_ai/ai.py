@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 import re
 import time
@@ -37,10 +38,16 @@ class AIError(RuntimeError):
     pass
 
 
+class AIBudgetExceeded(AIError):
+    def __init__(self):
+        super().__init__("Đã đạt giới hạn gọi AI trong ngày do bạn đặt.")
+
+
 class ProviderUnavailable(AIError):
-    def __init__(self, message: str, cooldown: float = 300):
+    def __init__(self, message: str, cooldown: float = 300, *, retryable: bool = True):
         super().__init__(message)
-        self.cooldown = cooldown
+        self.cooldown = cooldown if math.isfinite(cooldown) and cooldown >= 0 else 300
+        self.retryable = retryable
 
 
 def retry_delay(value: str | None, attempt: int) -> float:
@@ -308,7 +315,7 @@ class ChatAI:
                         )
                 except TimeoutError:
                     raise ProviderUnavailable(
-                        "Nguồn đọc ảnh phản hồi quá chậm; bỏ lượt này.", 60
+                        "Nguồn đọc ảnh phản hồi quá chậm; có thể thử lại sau.", 60
                     ) from None
             if self.provider == "nvidia":
                 try:
@@ -342,7 +349,7 @@ class ChatAI:
             if wait > 0:
                 await asyncio.sleep(wait)
             if not reserve():
-                raise AIError("Đã đạt giới hạn gọi AI trong ngày do bạn đặt.")
+                raise AIBudgetExceeded()
             self._last_attempt = time.monotonic()
             request_options = (
                 {"timeout": httpx.Timeout(25, connect=4)}
@@ -373,17 +380,29 @@ class ChatAI:
                     f"{self.label} từ chối quyền truy cập hoặc model đọc ảnh chưa sẵn sàng "
                     f"(HTTP {response.status_code}); kiểm tra key/model.",
                     600 if response.status_code in (401, 403) else 3600,
+                    retryable=False,
                 )
             if nvidia:
                 if response.status_code in (202, 404, 410):
+                    cooldown = 30 if response.status_code == 202 else 3600
+                    if response.status_code == 202:
+                        try:
+                            cooldown = max(
+                                cooldown,
+                                retry_delay(response.headers.get("retry-after"), 0),
+                            )
+                        except ProviderUnavailable as error:
+                            cooldown = max(cooldown, error.cooldown)
                     raise ProviderUnavailable(
                         f"NVIDIA chưa có câu trả lời hoặc model chưa sẵn sàng (HTTP {response.status_code}).",
-                        30 if response.status_code == 202 else 3600,
+                        cooldown,
+                        retryable=response.status_code == 202,
                     )
                 if response.status_code in (401, 403):
                     raise ProviderUnavailable(
                         f"NVIDIA từ chối xác thực hoặc quyền truy cập (HTTP {response.status_code}); kiểm tra API key gốc trong tài khoản NVIDIA.",
                         600,
+                        retryable=False,
                     )
                 if response.status_code in (408, 429) or response.status_code >= 500:
                     try:
@@ -437,6 +456,7 @@ class ChatAI:
                 raise ProviderUnavailable(
                     "Model Google không khả dụng; kiểm tra model trong AI Studio.",
                     cooldown=3600,
+                    retryable=False,
                 )
             if response.status_code in (401, 403):
                 raise AIError(
@@ -525,7 +545,20 @@ class FallbackAI:
         self.last_used = ""
         self.clock, self.log = clock, log
         self.blocked_until = [0.0] * len(self.clients)
+        self.failures: list[ProviderUnavailable | None] = [None] * len(self.clients)
         self._lock = asyncio.Lock()
+
+    def unavailable(self, label: str) -> AIError:
+        waits = [
+            max(0, deadline - self.clock())
+            for deadline, failure in zip(self.blocked_until, self.failures)
+            if failure is None or failure.retryable
+        ]
+        if not waits:
+            return AIError(
+                f"{label} không dùng được; kiểm tra key/model/quyền truy cập."
+            )
+        return ProviderUnavailable(f"{label} đang lỗi hoặc chờ phục hồi.", min(waits))
 
     async def generate(self, history, reserve):
         async with self._lock:
@@ -533,8 +566,8 @@ class FallbackAI:
                 async with asyncio.timeout(60):
                     return await self._generate(history, reserve)
             except TimeoutError:
-                raise AIError(
-                    "Các nguồn AI phản hồi quá chậm; bỏ lượt này, chờ tin mới."
+                raise ProviderUnavailable(
+                    "Các nguồn AI phản hồi quá chậm; có thể thử lại sau.", 30
                 ) from None
 
     async def _generate(self, history, reserve):
@@ -567,6 +600,9 @@ class FallbackAI:
                             answer = await ai.generate(history, reserve)
                     except TimeoutError:
                         self.blocked_until[index] = self.clock() + 30
+                        self.failures[index] = ProviderUnavailable(
+                            "Google phản hồi quá chậm.", 30
+                        )
                         if gemma_deadline:
                             gemma_remaining = 0
                             self.log(
@@ -588,16 +624,16 @@ class FallbackAI:
                     answer = await ai.generate(history, reserve)
             except ProviderUnavailable as error:
                 self.blocked_until[index] = self.clock() + error.cooldown
+                self.failures[index] = error
                 self.log(
                     f"{getattr(ai, 'description', ai.label)}: {error} Nghỉ {error.cooldown:.0f} giây."
                 )
                 continue
             self.last_used = getattr(ai, "description", ai.label)
+            self.failures[index] = None
             self.log(f"Đã tạo câu trả lời bằng: {self.last_used}.")
             return answer
-        raise AIError(
-            "Các nguồn AI đang lỗi hoặc chờ phục hồi; bỏ lượt này, chờ tin mới."
-        )
+        raise self.unavailable("Các nguồn AI")
 
     async def close(self):
         results = await asyncio.gather(
@@ -625,8 +661,8 @@ class VisionFallbackAI(FallbackAI):
                 async with asyncio.timeout(VISION_POOL_TIMEOUT):
                     return await self._generate_images(history, reserve, images)
             except TimeoutError:
-                raise AIError(
-                    "Các nguồn đọc ảnh đã hết thời gian chờ; bỏ lượt này, chờ tin mới."
+                raise ProviderUnavailable(
+                    "Các nguồn đọc ảnh đã hết thời gian chờ; có thể thử lại sau.", 30
                 ) from None
 
     async def _generate_images(self, history, reserve, images):
@@ -648,15 +684,15 @@ class VisionFallbackAI(FallbackAI):
                     ) from None
             except ProviderUnavailable as error:
                 self.blocked_until[index] = self.clock() + error.cooldown
+                self.failures[index] = error
                 self.log(
                     f"Đọc ảnh {ai.description}: {error} Nghỉ {error.cooldown:.0f} giây."
                 )
                 continue
             self.last_used = ai.description
+            self.failures[index] = None
             return answer
-        raise AIError(
-            "Các nguồn đọc ảnh đang lỗi hoặc chờ phục hồi; bỏ lượt này, chờ tin mới."
-        )
+        raise self.unavailable("Các nguồn đọc ảnh")
 
 
 def create_ai(secrets: dict[str, str], settings: Settings, persona: str):

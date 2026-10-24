@@ -50,6 +50,7 @@ def make_bot(tmp_path, **options):
         debounce_seconds=0,
         reply_cooldown_seconds=0,
         minimum_ai_interval_seconds=0,
+        ai_retry_enabled=False,
     )
     ai = options.pop("ai", FakeAI())
     sender = options.pop("sender", Sender())

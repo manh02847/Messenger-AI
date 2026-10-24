@@ -83,8 +83,9 @@ async def test_nvidia_unavailable_does_not_retry_or_leak_response(status):
         assert len(calls) == 1
         assert "private-response" not in str(error.value)
         assert "test-nvidia-secret" not in str(error.value)
-        if status == 429:
+        if status in (202, 429):
             assert error.value.cooldown >= 120
+        assert error.value.retryable is (status not in (401, 403, 404, 410))
 
 
 @pytest.mark.asyncio

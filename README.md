@@ -222,14 +222,26 @@ Cấu hình cũ vẫn được đọc theo đúng thứ tự đang dùng. Lần 
 <details>
 <summary>Khi một nguồn lỗi, bot chuyển nguồn như thế nào?</summary>
 
-- Bot chuyển nguồn khi gặp lỗi khả dụng như mạng, timeout hoặc quota; nguồn lỗi được tạm bỏ qua trong các lượt sau. Không phải mọi lỗi đều được chuyển: lỗi cấu hình, nội dung sai định dạng, bị cắt/chặn hoặc hết ngân sách cục bộ có thể dừng lượt đó.
+- Bot chuyển nguồn khi gặp lỗi khả dụng như mạng, timeout hoặc quota; nguồn lỗi được tạm bỏ qua trong các lượt sau. Lỗi cấu hình hoặc nội dung phản hồi sai định dạng/bị cắt/chặn cần xử lý riêng, không thử vô hạn.
 - **NVIDIA:** một lần thử/lượt, tối đa 12 giây. HTTP 202 đang xếp hàng được bỏ qua, không polling. HTTP 401/403 cho nguồn nghỉ 600 giây rồi thử nguồn sau; 429 nghỉ ít nhất 60 giây và tôn trọng `Retry-After`.
 - **Google:** cả nhóm dùng tối đa 20 giây/lượt. Khi có Flash trong danh sách, các Gemma dùng chung tối đa 10 giây để còn thời gian thử Flash. Lỗi 500/502/503/504 trả về nhanh có thể được thử lại một lần; lỗi chậm, timeout và 429 chuyển tiếp luôn. Key/quyền sai hoặc HTTP 400 cần sửa cấu hình, không tự chuyển để bỏ qua lỗi đó.
 - **Groq/Cloudflare khi có nhiều nguồn:** mỗi bên thử một lần/lượt. HTTP 429 cho nguồn nghỉ ít nhất 5 phút; lỗi dịch vụ ít nhất 1 phút, lỗi mạng mặc định 5 phút; tôn trọng thời gian chờ dài hơn từ API.
-- Khi có nhiều nguồn/model, toàn chuỗi bị giới hạn **60 giây/lượt**. Nếu hết thời gian hoặc tất cả nguồn đang nghỉ, bot bỏ lượt và chờ **tin mới**, không tự rep bù tin cũ.
+- Khi có nhiều nguồn/model, mỗi vòng thử bị giới hạn **60 giây**. Khi hết thời gian hoặc tất cả nguồn đang nghỉ vì lỗi tạm thời, bot giữ lượt chờ và thử vòng sau theo thời gian nghỉ, nếu `ai_retry_enabled: true`.
 - Trạng thái nghỉ nguồn nằm trong RAM; bộ đếm gọi AI cục bộ lưu trên đĩa. Restart không làm mới quota API. Mỗi lần retry/chuyển sang gọi nguồn khác đều tính một lần gọi AI.
 
 </details>
+
+### Giữ câu chờ khi AI quá tải hoặc hết quota
+
+Mặc định **bật** (`ai_retry_enabled: true` trong `config.json`). Chỉ dùng một nhà cung cấp vẫn có cơ chế này: bot thử các model đang bật, rồi giữ lượt chờ nếu gặp lỗi mạng, timeout, HTTP 408/429/5xx hoặc NVIDIA còn xếp hàng. Không cần người nhắn gửi thêm để kích hoạt lại.
+
+Thời gian thử lại tăng từ **5 → 10 → 20 → 40 → 60 giây**, nhưng luôn chờ lâu hơn nếu nguồn báo cooldown/`Retry-After`. Các cuộc chat trong cùng một bot dùng chung một chuỗi chia sẻ thời gian nghỉ và chỉ có một lần tạo câu trả lời đang chạy; tin mới không làm gọi dồn vào API đang lỗi. Khi đang chờ, bot tắt trạng thái đang nhập; bật lại khi thực sự thử tạo phản hồi.
+
+Mỗi request thật vẫn tính vào ngân sách AI. Hết ngân sách cục bộ hoặc giới hạn rep/chat/ngày thì giữ lượt tới ngày mới theo giờ Việt Nam; quota nhà cung cấp dùng thời gian reset của bên đó nếu API có chỉ dẫn. Không tự tăng/reset giới hạn. Lỗi key/quyền/model không tồn tại, HTTP 400, nội dung bị chặn hoặc câu trả lời hỏng/bị cắt không được gọi lại vô hạn.
+
+Tin **đã được nhận khi còn mới** không bị bỏ chỉ vì chờ vượt `max_message_age_seconds`. Tin mới trong cùng chat thay lượt đang chờ bằng ngữ cảnh mới nhất; các lần gọi lỗi không thêm tin nháp vào lịch sử. Bạn tự rep hoặc người nhắn yêu cầu dừng thì hủy lượt chờ và nhường như cũ. Lượt gửi Messenger chưa rõ kết quả vẫn không tự gửi lại để tránh trùng.
+
+Lượt chờ và ảnh đã xử lý hiện nằm **trong RAM của phiên bot**: dừng/restart sẽ xóa lượt chờ, không tự đọc lại lịch sử để phục hồi. `check-ai`, `check-vision` và `chat-ai` vẫn là lệnh thử hữu hạn; `run --dry-run` có thể giữ lượt/gọi lại API nhưng không gửi Messenger. Đặt `ai_retry_enabled: false` rồi restart nếu muốn bỏ lượt sau vòng lỗi như trước.
 
 ## 5. Chọn phạm vi rep và chạy thử
 
@@ -381,7 +393,7 @@ Mẫu ưu tiên theo thứ tự dưới, chỉ thêm nguồn **đang bật và �
 
 Bot thử từ trên xuống, dừng ngay khi một model trả lời được. Lỗi mạng, timeout, HTTP 202/408/429/5xx hoặc model/quyền truy cập chưa sẵn sàng sẽ chuyển tiếp. Model lỗi được tạm nghỉ, tôn trọng `Retry-After`; hết thời gian nghỉ thì lại được thử theo thứ tự ưu tiên. Log ghi nguồn lỗi và model thực sự đã đọc ảnh.
 
-Với nhiều model, toàn chuỗi chờ tối đa **45 giây**, mỗi model tối đa **10 giây**, riêng NVIDIA **6 giây** để còn thời gian thử nguồn khác. Mỗi model thử một request/lượt, không retry liên tục. Nếu hết thời gian hoặc mọi nguồn đều lỗi/nghỉ, bỏ lượt và chờ tin mới. HTTP 400 do cấu hình, nội dung bị chặn, phản hồi hỏng/bị cắt hoặc hết ngân sách gọi AI cục bộ sẽ dừng lượt để xử lý lỗi.
+Với nhiều model, mỗi vòng chờ tối đa **45 giây**, mỗi model tối đa **10 giây**, riêng NVIDIA **6 giây** để còn thời gian thử nguồn khác. Mỗi model thử một request/vòng. Khi hết thời gian hoặc mọi nguồn đều lỗi/nghỉ tạm thời, giữ ảnh đã xử lý và câu hỏi trong RAM để thử vòng sau theo cơ chế trên. HTTP 400 do cấu hình, nội dung bị chặn hoặc phản hồi hỏng/bị cắt cần xử lý riêng.
 
 Muốn **tự chọn model/thứ tự**, ghi rõ danh sách (tối đa 12 mục, không trùng); ví dụ:
 
@@ -413,7 +425,7 @@ Có thể thay `nvidia` bằng `google`, `groq` hoặc `cloudflare` và nhập m
 Lượt có ảnh gọi thẳng model thị giác để tạo câu trả lời, không gọi thêm model chữ để viết lại. **Mỗi request khi chuyển model đều tính một lượt gọi AI**, dùng chung ngân sách live với tin chữ; có tin mới làm bỏ bản nháp rồi tạo lại thì vẫn tốn lượt cho request đã gọi. Các model được thử nhận cùng ảnh đã xử lý, persona và ngữ cảnh. Ảnh dùng thêm token đầu vào theo nhà cung cấp, không nằm trong 3500 ký tự lịch sử chữ.
 
 - Tối đa **hai ảnh gần nhất** trong một lượt gom tin; mỗi ảnh tối đa **8 MiB**, **20 triệu pixel**. Hỗ trợ JPG/PNG/WebP tĩnh, thu nhỏ cạnh dài tối đa **1600 px**, chuyển JPEG và bỏ metadata trước khi gửi tới AI. Chữ quá nhỏ/mờ có thể đọc sai.
-- Ảnh được gửi tới các nguồn thị giác trong danh sách đã chọn theo thứ tự cần thử. Khi lỗi tải/định dạng, bot báo chưa đọc được ảnh; lỗi API khả dụng thì thử model ảnh tiếp theo. Nếu tất cả lỗi thì bỏ lượt và ghi log.
+- Ảnh được gửi tới các nguồn thị giác trong danh sách đã chọn theo thứ tự cần thử. Khi lỗi tải/định dạng, bot báo chưa đọc được ảnh; lỗi API khả dụng thì thử model ảnh tiếp theo. Nếu tất cả lỗi tạm thời, giữ lượt/ảnh trong RAM để thử lại, không tải ảnh lại ở mỗi lần gọi AI.
 - Bộ tải chỉ lấy URL ảnh từ host Meta được phép; ảnh E2EE tải và giải mã qua bridge đang có. Bridge dùng file tạm riêng khi giải mã và tự dọn. Bot không lưu URL ký, khóa giải mã hoặc dữ liệu ảnh trong SQLite; chỉ lưu dấu có ảnh và phần trả lời bằng chữ làm ngữ cảnh.
 - Metadata kích thước ảnh E2EE có thể thiếu hoặc không chính xác. Bot dùng giới hạn tải cứng 8 MiB cho bridge và kiểm tra SHA-256 của dữ liệu nhận được, không bắt số byte phải bằng metadata. Khi tải/xử lý thất bại, log có mã lỗi cố định để phân biệt thiếu dữ liệu, lỗi HTTP, giải mã, timeout và thư viện ảnh; không in nguyên lỗi máy chủ chứa URL ký/khóa.
 - Sau khi trả lời, bot không giữ ảnh gốc cho các lượt tiếp theo. Nếu cần xem lại chi tiết, gửi lại ảnh kèm câu hỏi. Ảnh trích dẫn từ tin cũ, sticker/GIF động, video, file và ghi âm chưa được đọc.
@@ -516,7 +528,7 @@ Sửa `config.json`, đối chiếu [config.example.json](config.example.json). 
 | `debounce_seconds` | `2.5` | Thời gian gom tin đến liên tiếp |
 | `reply_cooldown_seconds` | `8` | Khoảng cách tối thiểu giữa hai lượt gửi cùng chat |
 | `manual_pause_seconds` | `300` | Thời gian nhường khi bạn tự nhắn/yêu cầu dừng hoặc gửi chưa rõ kết quả |
-| `max_message_age_seconds` | `120` | Bỏ tin quá cũ; không rep bù lịch sử |
+| `max_message_age_seconds` | `120` | Lọc tuổi tin khi mới nhận; lượt đã nhận được giữ khi bật retry |
 | `history_messages` | `12` | Số tin tối đa trong ngữ cảnh, tổng hai phía |
 | `history_char_limit` | `3500` | Tổng ký tự lịch sử lấy cho mỗi lượt |
 | `history_idle_seconds` | `3600` | Bắt đầu ngữ cảnh mới khi hai tin cách nhau từ mức này; `0` tắt |
@@ -524,6 +536,7 @@ Sửa `config.json`, đối chiếu [config.example.json](config.example.json). 
 | `output_char_limit` | `4000` | Giới hạn ký tự câu trả lời, chưa tính tiền tố |
 | `max_completion_tokens` | `4096` | Ngân sách token cho một lần tạo phản hồi; có thể gồm suy luận |
 | `max_ai_calls_per_day` | `150` | Tổng lần gọi AI/ngày, tính cả retry và chuyển nguồn |
+| `ai_retry_enabled` | `true` | Giữ lượt chờ và thử lại khi AI lỗi tạm thời; tắt nếu muốn bỏ lượt lỗi |
 | `max_replies_per_thread_per_day` | `1000` | Lượt gửi/cố gửi tối đa mỗi chat/ngày |
 | `minimum_ai_interval_seconds` | `6` | Khoảng cách tối thiểu giữa các lần bắt đầu gọi cùng model/nguồn |
 | `retention_days` | `7` | Dọn dữ liệu cũ khi khởi động |
@@ -570,7 +583,7 @@ Biến chỉ đặt trong phiên SSH chưa chắc được truyền vào systemd
 | HTTP 429 | Chạm giới hạn API hoặc tần suất. Xem quota/dashboard và thời gian chờ; restart không cấp thêm quota |
 | Hết ngân sách gọi AI cục bộ | Kiểm tra `max_ai_calls_per_day`; retry cũng được tính. Tăng nếu phù hợp, quota API vẫn áp dụng |
 | `Câu trả lời chạm max_completion_tokens` | Là giới hạn của một lần tạo phản hồi. Dùng `tune-chat` nếu cấu hình cũ thấp; không đồng nghĩa hết quota ngày |
-| Tất cả nguồn đang lỗi/nghỉ | Bot bỏ lượt, chờ tin mới sau khi nguồn phục hồi; không tự gửi bù |
+| Tất cả nguồn đang lỗi/nghỉ | Bật ai_retry_enabled để giữ lượt và tự thử lại; xem thời gian nghỉ trong log. Key/cấu hình sai cần sửa trước |
 | Cookie/phiên Facebook hết hạn hoặc checkpoint | Đăng nhập Facebook bình thường, xử lý xác minh rồi nhập cookie mới bằng `configure` |
 | Bridge lỗi checksum/phiên bản | Dừng bot, chạy `doctor`; tải lại tài sản đã ghim qua `setup_bot.py`, không dùng binary không khớp checksum |
 | Git không cho pull vì có sửa cục bộ | Lưu lại và xử lý thay đổi của bạn trước; không reset xóa cấu hình/persona đang cần |

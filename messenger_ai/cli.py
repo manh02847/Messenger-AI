@@ -44,6 +44,7 @@ AI_SETTINGS = (
     "vision_models",
     "max_completion_tokens",
     "max_ai_calls_per_day",
+    "ai_retry_enabled",
     "minimum_ai_interval_seconds",
     "input_char_limit",
     "output_char_limit",
@@ -635,6 +636,10 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                     settings, state, ai, transport, transport.own_id, image_ai=image_ai
                 )
                 print(f"AI: {ai.description}")
+                print(
+                    "Giữ lượt chờ khi AI lỗi tạm thời:",
+                    "BẬT" if settings.ai_retry_enabled else "TẮT",
+                )
                 print(
                     f"Đọc ảnh: {image_ai.description if image_ai is not None else 'TẮT'}"
                 )

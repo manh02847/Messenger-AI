@@ -22,6 +22,7 @@
   "output_char_limit": 4000,
   "max_completion_tokens": 4096,
   "max_ai_calls_per_day": 150,
+  "ai_retry_enabled": true,
   "max_replies_per_thread_per_day": 1000,
   "minimum_ai_interval_seconds": 6,
   "retention_days": 7

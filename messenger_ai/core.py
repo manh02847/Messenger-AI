@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
-from .ai import AIError, ChatAI
+from .ai import AIBudgetExceeded, AIError, ChatAI, ProviderUnavailable
 from .config import Settings
 from .context import recent_history
 from .handoff import reply_text, requests_human
@@ -24,6 +24,12 @@ from .state import State
 VIETNAM = timezone(timedelta(hours=7))
 TYPING_REFRESH_SECONDS = 4
 TYPING_UPDATE_TIMEOUT = 2
+AI_RETRY_MIN_SECONDS = 5
+AI_RETRY_MAX_BACKOFF_SECONDS = 60
+
+
+class RetryWaiting(ProviderUnavailable):
+    """A shared cooldown prevented an API attempt; do not extend it."""
 
 
 @dataclass(frozen=True)
@@ -153,6 +159,15 @@ class ReplyBot:
         self.image_ai = image_ai
         self.pending_images: dict[str, list[tuple[ImageAttachment, bool]]] = {}
         self.image_slots = asyncio.Semaphore(1)
+        self.retry_wakeups: dict[str, asyncio.Event] = {}
+        self.retry_after: dict[int, float] = {}
+        self.budget_retry_at = 0.0
+        self.ai_slots: dict[int, asyncio.Lock] = {}
+
+    def _wake_retry(self, thread: str) -> None:
+        event = self.retry_wakeups.get(thread)
+        if event is not None:
+            event.set()
 
     def _input_content(self, message: Message) -> str:
         content = message.text[: self.settings.input_char_limit]
@@ -186,6 +201,7 @@ class ReplyBot:
                 return
             self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
             self.pending.discard(message.thread)
+            self._wake_retry(message.thread)
             self.pending_images.pop(message.thread, None)
             self.state.pause(message.thread, now + self.settings.manual_pause_seconds)
             self._cancel_typing(message.thread)
@@ -219,6 +235,7 @@ class ReplyBot:
         if requests_human(message.text):
             self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
             self.pending.discard(message.thread)
+            self._wake_retry(message.thread)
             self.pending_images.pop(message.thread, None)
             self.state.pause(message.thread, now + self.settings.manual_pause_seconds)
             self._cancel_typing(message.thread)
@@ -233,6 +250,7 @@ class ReplyBot:
         self.latest[message.thread] = message
         self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
         self.pending.add(message.thread)
+        self.retry_wakeups.setdefault(message.thread, asyncio.Event()).set()
         if message.thread not in self.tasks or self.tasks[message.thread].done():
             self.tasks[message.thread] = asyncio.create_task(
                 self._worker(message.thread)
@@ -240,11 +258,15 @@ class ReplyBot:
 
     def _may_send(self, thread: str) -> bool:
         now = self.clock()
+        # Freshness was checked on receipt; a retained turn may wait past that age.
         return (
             thread in self.pending
             and not self.state.paused(thread, now)
-            and now - self.latest[thread].timestamp
-            <= self.settings.max_message_age_seconds
+            and (
+                self.settings.ai_retry_enabled
+                or now - self.latest[thread].timestamp
+                <= self.settings.max_message_age_seconds
+            )
         )
 
     def _reserve_ai(self) -> bool:
@@ -285,11 +307,76 @@ class ReplyBot:
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
 
+    def _next_day_delay(self) -> float:
+        now = datetime.fromtimestamp(self.clock(), VIETNAM)
+        midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return max(1, midnight.timestamp() - self.clock() + 1)
+
+    def _check_retry_cooldown(self, ai) -> None:
+        if self.clock() < self.budget_retry_at:
+            raise AIBudgetExceeded()
+        remaining = self.retry_after.get(id(ai), 0) - self.clock()
+        if remaining > 0:
+            raise RetryWaiting("Nguồn AI đang chờ hết thời gian nghỉ.", remaining)
+
+    async def _wait_retry(self, thread: str, revision: int, delay: float) -> None:
+        await self._finish_typing(thread)
+        event = self.retry_wakeups.setdefault(thread, asyncio.Event())
+        event.clear()
+        if (
+            self.closing
+            or not self._may_send(thread)
+            or revision != self.revisions[thread]
+        ):
+            return
+        try:
+            await asyncio.wait_for(event.wait(), timeout=delay)
+        except TimeoutError:
+            pass
+
+    async def _create_draft(self, thread, revision, history, attachments, image_cache):
+        if not attachments or self.image_ai is None:
+            return await self.ai.generate(history, self._reserve_ai)
+        async with self.image_slots:
+            if not self._may_send(thread) or revision != self.revisions[thread]:
+                return None
+            for key in list(image_cache):
+                if key not in attachments:
+                    del image_cache[key]
+            try:
+                for attachment, encrypted in attachments:
+                    key = (attachment, encrypted)
+                    if key not in image_cache:
+                        image_cache[key] = await self.transport.load_image(
+                            attachment, encrypted=encrypted
+                        )
+                    if not self._may_send(thread) or revision != self.revisions[thread]:
+                        return None
+                text = await self.image_ai.generate(
+                    history,
+                    self._reserve_ai,
+                    images=[image_cache[key] for key in attachments],
+                )
+                self.log(f"Đã đọc ảnh bằng: {self.image_ai.last_used}.")
+                return text
+            except ImageError as error:
+                self.log(
+                    f"Không tải/xử lý được ảnh: {error} Không gọi AI để đoán nội dung."
+                )
+                return IMAGE_FAILURE
+
     async def _worker(self, thread: str) -> None:
         image_cache: dict[tuple[ImageAttachment, bool], ImageInput] = {}
+        retry_count = 0
+        previous_revision = None
         try:
             while thread in self.pending:
                 revision = self.revisions[thread]
+                if revision != previous_revision:
+                    retry_count = 0
+                    previous_revision = revision
                 await asyncio.sleep(self.settings.debounce_seconds)
                 if revision != self.revisions[thread]:
                     continue
@@ -315,6 +402,9 @@ class ReplyBot:
                     >= self.settings.max_replies_per_thread_per_day
                 ):
                     self.log("Đã đạt giới hạn trả lời trong ngày của cuộc trò chuyện.")
+                    if self.settings.ai_retry_enabled:
+                        await self._wait_retry(thread, revision, self._next_day_delay())
+                        continue
                     break
                 history = self.state.history(
                     thread,
@@ -340,51 +430,75 @@ class ReplyBot:
                         self.settings.history_messages,
                         self.settings.history_char_limit,
                     )
-                if not self.settings.dry_run and thread not in self.typing_tasks:
-                    self.typing_tasks[thread] = asyncio.create_task(
-                        self._typing_worker(self.latest[thread])
-                    )
                 attachments = list(self.pending_images.get(thread, ()))
-                if attachments and self.image_ai is not None:
-                    async with self.image_slots:
-                        if not self._may_send(thread):
-                            break
-                        if revision != self.revisions[thread]:
+                active_ai = (
+                    self.image_ai
+                    if attachments and self.image_ai is not None
+                    else self.ai
+                )
+                try:
+                    async with self.ai_slots.setdefault(id(active_ai), asyncio.Lock()):
+                        if (
+                            not self._may_send(thread)
+                            or revision != self.revisions[thread]
+                        ):
                             continue
-                        image_cache = {
-                            key: value
-                            for key, value in image_cache.items()
-                            if key in attachments
-                        }
-                        try:
-                            for attachment, encrypted in attachments:
-                                key = (attachment, encrypted)
-                                if key not in image_cache:
-                                    image_cache[key] = await self.transport.load_image(
-                                        attachment, encrypted=encrypted
-                                    )
-                                if (
-                                    not self._may_send(thread)
-                                    or revision != self.revisions[thread]
-                                ):
-                                    break
-                            if not self._may_send(thread):
-                                break
-                            if revision != self.revisions[thread]:
-                                continue
-                            text = await self.image_ai.generate(
-                                history,
-                                self._reserve_ai,
-                                images=[image_cache[key] for key in attachments],
+                        self._check_retry_cooldown(active_ai)
+                        if (
+                            not self.settings.dry_run
+                            and thread not in self.typing_tasks
+                        ):
+                            self.typing_tasks[thread] = asyncio.create_task(
+                                self._typing_worker(self.latest[thread])
                             )
-                            self.log(f"Đã đọc ảnh bằng: {self.image_ai.last_used}.")
-                        except ImageError as error:
-                            self.log(
-                                f"Không tải/xử lý được ảnh: {error} Không gọi AI để đoán nội dung."
-                            )
-                            text = IMAGE_FAILURE
-                else:
-                    text = await self.ai.generate(history, self._reserve_ai)
+                        text = await self._create_draft(
+                            thread, revision, history, attachments, image_cache
+                        )
+                except AIBudgetExceeded:
+                    if not self.settings.ai_retry_enabled:
+                        if revision != self.revisions[thread] and self._may_send(
+                            thread
+                        ):
+                            continue
+                        raise
+                    delay = (
+                        max(0, self.budget_retry_at - self.clock())
+                        or self._next_day_delay()
+                    )
+                    self.budget_retry_at = self.clock() + delay
+                    self.log(
+                        "Đã hết ngân sách gọi AI cục bộ; giữ lượt chờ tới ngày mới."
+                    )
+                    await self._wait_retry(thread, revision, delay)
+                    continue
+                except RetryWaiting as error:
+                    await self._wait_retry(thread, revision, error.cooldown)
+                    continue
+                except ProviderUnavailable as error:
+                    if not self.settings.ai_retry_enabled or not error.retryable:
+                        if revision != self.revisions[thread] and self._may_send(
+                            thread
+                        ):
+                            continue
+                        raise
+                    retry_count += 1
+                    delay = max(
+                        error.cooldown,
+                        min(
+                            AI_RETRY_MIN_SECONDS * 2 ** min(retry_count - 1, 6),
+                            AI_RETRY_MAX_BACKOFF_SECONDS,
+                        ),
+                    )
+                    self.retry_after[id(active_ai)] = self.clock() + delay
+                    self.log(f"{error} Giữ lượt chờ, thử lại sau {delay:.0f} giây.")
+                    await self._wait_retry(thread, revision, delay)
+                    continue
+                except AIError:
+                    if revision != self.revisions[thread] and self._may_send(thread):
+                        continue
+                    raise
+                if text is None:
+                    continue
                 if not self._may_send(thread):
                     break
                 if revision != self.revisions[thread]:
@@ -455,12 +569,16 @@ class ReplyBot:
             # A new message may arrive while the typing-off RPC is finishing.
             if thread in self.pending and not self.closing:
                 self.tasks[thread] = asyncio.create_task(self._worker(thread))
+            else:
+                self.retry_wakeups.pop(thread, None)
 
     async def close(self) -> None:
         # Let any in-flight send finish instead of blindly cancelling/replaying it.
         self.closing = True
         self.pending.clear()
         self.pending_images.clear()
+        for event in self.retry_wakeups.values():
+            event.set()
         for thread in self.typing_tasks:
             self._cancel_typing(thread)
         if self.typing_tasks:

@@ -76,6 +76,7 @@ def make_bot(tmp_path, *, enabled=True, vision=None, **options):
         debounce_seconds=0,
         reply_cooldown_seconds=0,
         minimum_ai_interval_seconds=0,
+        ai_retry_enabled=False,
     )
     state, text_ai, transport = State(tmp_path / "state.sqlite3"), TextAI(), Transport()
     vision = vision or VisionAI()

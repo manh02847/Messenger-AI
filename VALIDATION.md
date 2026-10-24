@@ -358,3 +358,38 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
 - Ruff E4/E7/E9/F, git diff --check, CLI help, config.example.json và cú
   pháp 35 khối Bash + một khối JSON trong README đạt. Không gọi AI hay
   Facebook thật, không sửa dữ liệu hoặc triển khai trên VPS người dùng.
+
+## Giữ lượt chờ và thử lại khi AI lỗi tạm thời — 25/10/2026
+
+- Thêm ai_retry_enabled, mặc định true. Worker giữ câu hỏi/ảnh đang chờ khi
+  mạng, timeout, 408/429/5xx hoặc NVIDIA xếp hàng, kể cả chỉ bật một nhà
+  cung cấp. Lỗi tạm thời của cả chuỗi có cooldown theo model có thể thử sớm
+  nhất; lỗi key/quyền/model 401/403/404/410 được phân biệt khi cần dừng thay
+  vì lặp vô hạn. NVIDIA 202 cũng tôn trọng Retry-After.
+- Mỗi vòng vẫn có deadline cũ, giữa vòng dùng backoff 5/10/20/40/60 giây và
+  chờ lâu hơn theo cooldown/Retry-After. Khóa và thời gian nghỉ dùng chung
+  giữa các chat của cùng chuỗi trong một bot, kiểm tra trước khi tải ảnh/
+  tạo request. Tin mới không kéo dài hay rút ngắn cooldown hoặc tạo thêm
+  request khi nguồn chưa sẵn sàng. Nguồn đang tắt vẫn không được gọi.
+- Tuổi tin được lọc lúc nhận; lượt đã nhận có thể chờ vượt 120 giây. Không
+  thêm nháp lỗi vào lịch sử. Tin mới dùng ngữ cảnh mới nhất; bạn tự rep/yêu
+  cầu dừng hủy lượt chờ. Khi chờ quota tắt typing, thử thật mới bật lại.
+  Event giúp hủy chờ ngay khi đóng bot, không đợi hết timer quota hàng giờ.
+- Lỗi ngân sách AI cục bộ có kiểu riêng; giữ lượt tới nửa đêm giờ Việt Nam,
+  không phát sinh HTTP vượt cap. Giữ lượt khi đạt cap rep/chat/ngày tương
+  tự. Không tăng/reset ngân sách hay quota API. Sửa trường hợp tin mới đến
+  ngay sau nửa đêm làm kéo thời gian nghỉ sang thêm một ngày, và trường hợp
+  lỗi của bản nháp cũ làm mất tin mới vừa nhận trong lúc gọi AI.
+- Ảnh đã xử lý được tái sử dụng trong RAM, tải một lần qua các vòng thử;
+  không giữ semaphore trong lúc chờ. Không ghi ảnh/URL ký/khóa vào SQLite.
+  Lượt gửi Messenger chưa rõ thành công vẫn ghi unknown và nhường, không
+  gửi lại. Lượt chờ hiện không được lưu bền: dừng/restart xóa lượt chờ;
+  check-ai/check-vision/chat-ai vẫn thử hữu hạn. false giữ cơ chế bỏ lượt.
+- 446 kiểm thử offline đạt, gồm 20 ca mới cho thử quá số lần cũ và vượt
+  tuổi tin, cập nhật câu mới/không phình lịch sử, tôn trọng cooldown giữa
+  các chat, dừng/nhường/close, ảnh tái sử dụng, HTTP thật qua MockTransport
+  khi một provider có nhiều model hồi phục và không dùng nguồn tắt, chờ
+  reset quota cục bộ/giới hạn gửi, lỗi vĩnh viễn, gửi chưa rõ kết quả và
+  cấu hình tắt retry. Cập nhật kiểm tra copy AI để giữ cả cờ retry.
+- Ruff E4/E7/E9/F, git diff --check, cú pháp 35 khối Bash và một khối JSON
+  README đạt. Chưa gọi AI/Facebook thật hoặc triển khai trên VPS người dùng.
