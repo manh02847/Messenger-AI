@@ -378,9 +378,9 @@ class ReplyBot:
                                 images=[image_cache[key] for key in attachments],
                             )
                             self.log(f"Đã đọc ảnh bằng: {self.image_ai.last_used}.")
-                        except ImageError:
+                        except ImageError as error:
                             self.log(
-                                "Không tải/xử lý được ảnh; không gọi AI để đoán nội dung."
+                                f"Không tải/xử lý được ảnh: {error} Không gọi AI để đoán nội dung."
                             )
                             text = IMAGE_FAILURE
                 else:

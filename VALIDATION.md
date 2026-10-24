@@ -236,3 +236,32 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
   Chưa gọi AI thật, chưa đăng nhập/tải ảnh từ Messenger, chưa triển khai trên
   VPS người dùng hoặc đo chất lượng OCR/chi phí thực tế. Cần chạy check-vision
   bằng key trên VPS và thử gửi ảnh mới trước khi kết luận luồng thật hoạt động.
+
+## Tải ảnh E2EE thiếu metadata kích thước và chẩn đoán lỗi ảnh
+
+- Ảnh người dùng cung cấp cho thấy bot trả câu báo tải/xử lý thất bại, chưa
+  có log chỉ ra nguyên nhân cụ thể. Không kết luận ảnh sai định dạng hoặc
+  model không hỗ trợ ảnh từ câu báo cũ.
+- Bỏ yêu cầu metadata fileSize dương và so khớp tuyệt đối số byte đã tải.
+  Trong bridge 2.3.4 đang ghim, tham số fileSize chỉ đặt giới hạn file tạm;
+  truyền cố định 8 MiB để vẫn giới hạn cứng khi metadata vắng/sai số. Giữ
+  kiểm tra dung lượng thực tế và bổ sung SHA-256 plaintext sau khi SDK đã
+  kiểm tra hash/giải mã. Ảnh thiếu đường dẫn/khóa/hash vẫn bị từ chối.
+- Đối chiếu [DownloadE2EEMedia và boundedMediaFile](https://github.com/m008v/fbchat-v2/blob/aa7abd0386ef1d4cabf8ce592d0f2cf308d8f4f6/bridge-e2ee/bridge/media.go)
+  cùng [download-to-file.go của whatsmeow được ghim](https://github.com/tulir/whatsmeow/blob/0057a822e79a/download-to-file.go):
+  bridge dùng fileSize cho cap file tạm, tải qua DownloadMediaWithPathToFile
+  không truyền expected length; whatsmeow kiểm tra SHA-256 trên plaintext.
+- ImageError giữ mã và mô tả từ danh sách cố định: phân biệt metadata, phiên
+  E2EE, HTTP 403/404/410, timeout, decode, pixel/dung lượng và thiếu Pillow.
+  Lỗi đã phân loại không còn bị đổi thành một lỗi chung ở adapter. Ngoại lệ
+  máy chủ chỉ dùng để chọn mã, không in nguyên URL ký/khóa/nội dung lỗi.
+  Câu báo gửi qua Messenger không còn khuyên đổi JPG/PNG khi chưa rõ nguyên
+  nhân. README có lệnh lấy riêng dòng log bộ tải và bảng giải thích mã.
+- Toàn bộ 316 test offline đạt: bổ sung 23 ca cho metadata size 0/không khớp,
+  cap RPC/bytes thực tế, hash sai, HTTP/bridge exception được ẩn, thông tin
+  metadata thiếu và thiếu decoder; bỏ ca cũ coi size 0 là lỗi. Test worker
+  kiểm tra mã cụ thể xuất hiện trong log mà không gọi AI để đoán ảnh lỗi.
+- Ruff E4/E7/E9/F, cú pháp 40 khối lệnh README và git diff --check đạt. Không
+  gọi Facebook/AI thật, không sửa dữ liệu hoặc triển khai trên VPS. Chưa
+  xác nhận nguyên nhân thực tế của hai ảnh thất bại; nếu vẫn lỗi sau cập
+  nhật cần mã log mới từ VPS để tiếp tục chẩn đoán.

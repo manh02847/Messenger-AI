@@ -1,5 +1,6 @@
 import base64
 import io
+import hashlib
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -31,7 +32,7 @@ def encrypted_photo(data):
     return ImageAttachment(
         direct_path="/v/t62.7118-24/PRIVATE_PATH",
         media_key=key,
-        media_sha256=key,
+        media_sha256=base64.b64encode(hashlib.sha256(data).digest()).decode(),
         media_enc_sha256=key,
         mime_type="image/png",
         file_size=len(data),
@@ -96,7 +97,6 @@ def test_valid_media_reference_and_private_fields_not_printed():
 @pytest.mark.parametrize(
     "changes",
     [
-        {"file_size": 0},
         {"file_size": -1},
         {"file_size": MAX_IMAGE_BYTES + 1},
         {"media_key": "bad"},
@@ -182,7 +182,7 @@ async def test_e2ee_uses_pinned_bridge_action_download_and_decryption_metadata(
                 "mediaEncSha256": attachment.media_enc_sha256,
                 "mediaType": "image",
                 "mimeType": "image/png",
-                "fileSize": len(data),
+                "fileSize": MAX_IMAGE_BYTES,
             },
         )
     ]

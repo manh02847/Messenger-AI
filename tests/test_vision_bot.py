@@ -203,10 +203,10 @@ async def test_existing_filters_apply_before_any_image_download_or_ai_call(
 async def test_download_error_sends_honest_failure_and_does_not_guess_with_text_ai(
     tmp_path,
 ):
-    bot, state, text, vision, transport, _ = make_bot(tmp_path)
+    bot, state, text, vision, transport, logs = make_bot(tmp_path)
 
     async def fail(*args, **kwargs):
-        raise ImageError()
+        raise ImageError("E2EE_NOT_READY")
 
     transport.load_image = fail
     bot.receive(incoming())
@@ -214,6 +214,7 @@ async def test_download_error_sends_honest_failure_and_does_not_guess_with_text_
     assert transport.sent[0][1] == IMAGE_FAILURE
     assert not vision.calls and not text.calls
     assert state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == 0
+    assert any("E2EE_NOT_READY" in log for log in logs)
     await finish(bot, state)
 
 

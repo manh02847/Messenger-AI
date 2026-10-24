@@ -424,6 +424,7 @@ Lượt có ảnh gọi thẳng model thị giác để tạo câu trả lời, 
 - Tối đa **hai ảnh gần nhất** trong một lượt gom tin; mỗi ảnh tối đa **8 MiB**, **20 triệu pixel**. Hỗ trợ JPG/PNG/WebP tĩnh, thu nhỏ cạnh dài tối đa **1600 px**, chuyển JPEG và bỏ metadata trước khi gửi tới AI. Chữ quá nhỏ/mờ có thể đọc sai.
 - Ảnh chỉ được gửi tới nguồn thị giác bạn chọn. Khi lỗi tải/định dạng, bot báo chưa mở được ảnh; nếu API thị giác lỗi/hết quota thì bỏ lượt và ghi log, không chuyển sang model chữ để đoán.
 - Bộ tải chỉ lấy URL ảnh từ host Meta được phép; ảnh E2EE tải và giải mã qua bridge đang có. Bridge dùng file tạm riêng khi giải mã và tự dọn. Bot không lưu URL ký, khóa giải mã hoặc dữ liệu ảnh trong SQLite; chỉ lưu dấu có ảnh và phần trả lời bằng chữ làm ngữ cảnh.
+- Metadata kích thước ảnh E2EE có thể thiếu hoặc không chính xác. Bot dùng giới hạn tải cứng 8 MiB cho bridge và kiểm tra SHA-256 của dữ liệu nhận được, không bắt số byte phải bằng metadata. Khi tải/xử lý thất bại, log có mã lỗi cố định để phân biệt thiếu dữ liệu, lỗi HTTP, giải mã, timeout và thư viện ảnh; không in nguyên lỗi máy chủ chứa URL ký/khóa.
 - Sau khi trả lời, bot không giữ ảnh gốc cho các lượt tiếp theo. Nếu cần xem lại chi tiết, gửi lại ảnh kèm câu hỏi. Ảnh trích dẫn từ tin cũ, sticker/GIF động, video, file và ghi âm chưa được đọc.
 - Khi đọc ảnh đang tắt, tin chỉ có ảnh được bỏ qua; tin có chú thích vẫn xử lý phần chữ và đánh dấu ảnh chưa được cung cấp. `run --dry-run` có thể tải ảnh/gọi AI nếu đã bật, nhưng không gửi tin hay phát trạng thái đang nhập.
 
@@ -576,7 +577,7 @@ Biến chỉ đặt trong phiên SSH chưa chắc được truyền vào systemd
 | Có nhận tin nhưng không rep | Kiểm tra `--live`, phạm vi rep, thời gian nhường, tin có văn bản và còn quota. Bot chỉ xử lý tin mới |
 | `check-ai` thành công nhưng không phải nguồn muốn thử | Đọc nguồn/model in ra; lệnh có fallback. NVIDIA có `check-nvidia` để thử riêng |
 | Gửi ảnh mà bot không nhận | Bật `configure-vision`, chạy `check-vision`, khởi động lại đúng bot; ảnh chỉ có trước khi bật không được đọc bù |
-| Bot báo chưa mở được ảnh | Thử gửi lại JPG/PNG/WebP tĩnh trong giới hạn; xem kết nối/metadata ảnh trong log đã ẩn chi tiết |
+| Bot báo chưa đọc được ảnh | Xem mã lỗi của bộ tải trong log theo hướng dẫn dưới; chưa thể kết luận là lỗi định dạng hay model |
 | Nguồn chữ còn dùng được nhưng đọc ảnh lỗi | Kiểm tra riêng nguồn/model thị giác bằng `check-vision`; chuỗi fallback chữ không áp dụng cho ảnh |
 | NVIDIA HTTP 401/403 / `Authorization failed` | Kiểm tra key, tài khoản và quyền gọi model. Đọc được danh sách model chưa chứng minh có quyền inference |
 | Google HTTP 500/503 | Bot retry hữu hạn rồi chuyển theo thứ tự. Kiểm tra log và nguồn sau; không retry vô hạn |
@@ -587,6 +588,24 @@ Biến chỉ đặt trong phiên SSH chưa chắc được truyền vào systemd
 | Cookie/phiên Facebook hết hạn hoặc checkpoint | Đăng nhập Facebook bình thường, xử lý xác minh rồi nhập cookie mới bằng `configure` |
 | Bridge lỗi checksum/phiên bản | Dừng bot, chạy `doctor`; tải lại tài sản đã ghim qua `setup_bot.py`, không dùng binary không khớp checksum |
 | Git không cho pull vì có sửa cục bộ | Lưu lại và xử lý thay đổi của bạn trước; không reset xóa cấu hình/persona đang cần |
+
+Nếu đọc ảnh lỗi, gửi một ảnh mới rồi lấy riêng dòng log đã ẩn dữ liệu riêng tư (system service acc 1):
+
+```bash
+journalctl -u messenger-ai -n 80 --no-pager | grep -F 'Không tải/xử lý được ảnh:'
+```
+
+Acc 2 thay tên unit bằng `messenger-ai-2`; user service thêm `--user` vào `journalctl`.
+
+| Mã lỗi ảnh | Ý nghĩa / bước tiếp |
+|---|---|
+| `IMAGE_DECODER_MISSING` | Chạy lại `python3 setup_bot.py` trong đúng thư mục rồi restart |
+| `E2EE_PATH_MISSING`, `E2EE_KEY_INVALID`, `E2EE_HASH_INVALID` | Sự kiện bridge thiếu metadata cần tải/giải mã; giữ mã lỗi để kiểm tra bridge, chưa liên quan model |
+| `E2EE_NOT_READY`, `E2EE_SESSION_FAILED` | Kết nối/phiên tải media E2EE chưa sẵn sàng; thử kết nối lại đúng bot và gửi ảnh mới |
+| `MEDIA_HTTP_403`, `MEDIA_HTTP_404`, `MEDIA_HTTP_410` | Máy chủ từ chối/không còn ảnh; thử gửi ảnh mới, kiểm tra kết nối media nếu lặp lại |
+| `MEDIA_TIMEOUT`, `MEDIA_NETWORK_FAILED` | Kiểm tra kết nối VPS tới máy chủ ảnh |
+| `E2EE_HASH_MISMATCH`, `E2EE_DECRYPT_FAILED` | Không xác minh/giải mã được dữ liệu; bot không đưa ảnh đó cho AI |
+| `IMAGE_DECODE_FAILED`, `IMAGE_FORMAT_UNSUPPORTED`, `IMAGE_PIXEL_LIMIT`, `IMAGE_TOO_LARGE` | Kiểm tra dữ liệu/định dạng và giới hạn ảnh |
 
 Tìm tiến trình bot/discover còn chạy trên Linux:
 

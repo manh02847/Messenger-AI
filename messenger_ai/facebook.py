@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
+import hashlib
+import hmac
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,7 @@ from .images import (
     ImageAttachment,
     ImageError,
     ImageInput,
+    download_error,
     prepare_image,
     validate_attachment,
     validate_media_url,
@@ -171,13 +175,13 @@ class FacebookTransport:
         from fbchat_v2._messaging._bridge_actions import BridgeActions
 
         if self.listener is None or self.closing:
-            raise ImageError()
+            raise ImageError("MESSENGER_NOT_READY")
         validate_attachment(image, encrypted=encrypted)
         try:
             async with asyncio.timeout(MEDIA_TIMEOUT):
                 if encrypted:
                     if self.listener._bridge is None:
-                        raise ImageError()
+                        raise ImageError("E2EE_NOT_READY")
                     result = await BridgeActions(
                         self.listener._bridge
                     ).download_e2ee_media(
@@ -187,18 +191,39 @@ class FacebookTransport:
                         image.media_enc_sha256,
                         "image",
                         image.mime_type,
-                        image.file_size,
+                        # In this pinned bridge, fileSize caps its temporary file.
+                        # Do not rely on an absent/imprecise sender size for that cap.
+                        MAX_IMAGE_BYTES,
                     )
                     data = result.get("data")
-                    if not isinstance(data, bytes) or len(data) != image.file_size:
-                        raise ImageError()
+                    if not isinstance(data, bytes) or not data:
+                        raise ImageError("MEDIA_BAD_RESPONSE")
+                    if len(data) > MAX_IMAGE_BYTES:
+                        raise ImageError("IMAGE_TOO_LARGE")
+                    if not hmac.compare_digest(
+                        hashlib.sha256(data).digest(),
+                        base64.b64decode(image.media_sha256, validate=True),
+                    ):
+                        raise ImageError("E2EE_HASH_MISMATCH")
                 else:
                     data = await self._download_photo(image.url)
                 return await asyncio.to_thread(prepare_image, data)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            raise ImageError() from None
+        except ImageError:
+            raise
+        except (TimeoutError, httpx.TimeoutException):
+            raise ImageError("MEDIA_TIMEOUT") from None
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            code = (
+                f"MEDIA_HTTP_{status}"
+                if status in (403, 404, 410)
+                else "MEDIA_HTTP_ERROR"
+            )
+            raise ImageError(code) from None
+        except Exception as error:
+            raise download_error(error, encrypted=encrypted) from None
 
     async def _download_photo(self, url: str) -> bytes:
         if self.media_client is None:
@@ -219,11 +244,11 @@ class FacebookTransport:
                 response.raise_for_status()
                 length = response.headers.get("content-length")
                 if length is not None and int(length) > MAX_IMAGE_BYTES:
-                    raise ImageError()
+                    raise ImageError("IMAGE_TOO_LARGE")
                 data = bytearray()
                 async for chunk in response.aiter_bytes(65536):
                     if len(data) + len(chunk) > MAX_IMAGE_BYTES:
-                        raise ImageError()
+                        raise ImageError("IMAGE_TOO_LARGE")
                     data.extend(chunk)
                 return bytes(data)
-        raise ImageError()
+        raise ImageError("MEDIA_REDIRECT_LIMIT")
