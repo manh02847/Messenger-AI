@@ -301,3 +301,24 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
   README đạt; Python heredoc được kiểm tra AST, liên kết file cục bộ hợp lệ.
   Không gọi AI/Facebook thật, không triển khai hoặc sửa dữ liệu trên VPS.
   Cần chạy check-vision trên VPS và gửi ảnh mới để xác minh luồng thực tế.
+
+## Chỉ dùng Google cho chữ và ảnh — 25/10/2026
+
+- Thêm configure-google --only [--models ...]. Google có thể là nguồn chữ
+  chính, không bắt buộc Groq/Cloudflare ở cuối chuỗi và không gọi trùng model
+  Google đầu tiên. Lệnh tắt NVIDIA/dự phòng Groq/Cloudflare; ảnh đang bật
+  chỉ giữ model Google; có --models thì áp dụng cùng danh sách, ảnh đang
+  tắt được giữ tắt. Không có --models thì giữ thứ tự Google riêng từng chuỗi.
+  Key nguồn
+  khác vẫn được giữ để bật lại sau. Không thay cookie, persona, lịch sử
+  hoặc các giới hạn; xác minh key/cấu hình trước khi ghi.
+- Không cho tắt Google khi đó là nguồn chính mà chưa chọn nguồn khác.
+  Cập nhật cookie ở chế độ Google hỏi đúng key Google, không hỏi key Groq.
+  Cấu hình chế độ nguồn bổ sung cũ và các nguồn còn lại giữ cách hoạt động.
+- 385 kiểm thử offline đạt, thêm 15 ca cho đổi từ chuỗi ảnh/nguồn đơn/ảnh
+  tắt, thiếu key nguồn khác, bảo toàn dữ liệu và key, lỗi cấu hình không
+  ghi dở, đổi cookie, CLI và HTTP thực tế qua MockTransport cho cả chữ/ảnh.
+  Khi Google chính lỗi và model sau thành công hoặc cả hai đều lỗi, mọi
+  request đều chỉ tới generativelanguage.googleapis.com, không gọi nguồn khác.
+- Ruff E4/E7/E9/F, git diff --check, CLI help và cú pháp 44 khối Bash README
+  đạt. Không gọi API/Facebook thật, không triển khai hoặc đổi cấu hình VPS.

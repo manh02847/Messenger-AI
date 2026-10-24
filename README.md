@@ -95,6 +95,8 @@ Thứ tự chung:
 
 Ví dụ **NVIDIA → Google → Cloudflare → Groq** chỉ đúng khi đã bật NVIDIA/Google, chọn Cloudflare làm chính và bật dự phòng Groq. Nếu chọn Groq làm chính thì hai nguồn cuối đổi chỗ. Cài mới mặc định **chỉ có Groq**, các nguồn khác cần cấu hình thêm.
 
+Nếu đã chọn `configure-google --only`, nguồn chữ chính là Google và các nguồn NVIDIA/Groq/Cloudflare được tắt. Các lượt ảnh đang bật cũng chỉ dùng danh sách Google đã chọn; xem [chế độ chỉ Google](#chỉ-dùng-google-cho-chữ-và-ảnh).
+
 Với tin chữ, bot thử lần lượt đến khi có câu trả lời; không gọi nhiều model song song rồi ghép nội dung. Các nguồn được thử nhận cùng persona/ngữ cảnh trong giới hạn cấu hình. Lượt có ảnh dùng riêng danh sách model thị giác đã chọn; thứ tự ảnh độc lập với chuỗi nguồn chữ.
 
 ## 3. Cài đặt lần đầu
@@ -216,13 +218,28 @@ Mặc định thêm các model theo thứ tự:
 .venv/bin/python -m messenger_ai configure-google --models gemma-4-31b-it gemini-3.5-flash-lite
 ```
 
-Tắt Google, giữ key:
+Tắt nguồn Google bổ sung, giữ key (nếu đang chọn Google làm nguồn chính, chọn lại Groq/Cloudflare trước):
 
 ```bash
 .venv/bin/python -m messenger_ai configure-google --disable
 ```
 
 Google đứng sau NVIDIA và trước Groq/Cloudflare. `check-ai` có thể được nguồn khác trả lời; luôn đọc tên nguồn/model trong kết quả. Nhiều model Google có thể dùng chung quota, nên không cộng chúng thành số lượt được bảo đảm.
+
+### Chỉ dùng Google cho chữ và ảnh
+
+Trong đúng thư mục bot, chạy:
+
+```bash
+.venv/bin/python -m messenger_ai configure-google --only \
+  --models gemini-3.5-flash-lite gemini-3.1-flash-lite
+```
+
+Ở dòng API key, nhấn Enter để giữ key Google đang có. Bot dùng hai model theo thứ tự trên cho chữ và chuỗi đọc ảnh đã bật, tắt NVIDIA/Groq/Cloudflare. Nếu đọc ảnh đang tắt thì vẫn tắt. Các key nguồn khác được giữ để dùng lại sau; không cần key của chúng để chạy chế độ này.
+
+Nếu bỏ `--models`, lệnh giữ thứ tự model Google đang có của từng chuỗi chữ/ảnh, loại các nguồn khác. Khi chuỗi chữ chưa có danh sách Google thì dùng mẫu bốn model ở trên; ảnh đang bật mà chưa có model Google thì lấy theo chuỗi chữ. `--only` lưu `ai_provider: "google"`, xóa lựa chọn NVIDIA và tắt dự phòng Groq/Cloudflare. Khi tất cả model Google lỗi/hết quota, bot bỏ lượt và chờ tin mới. Khởi động lại đúng service sau khi cấu hình.
+
+Muốn dùng thêm nguồn khác sau này, chọn nguồn chính bằng `configure-ai groq` hoặc `configure-ai cloudflare`, rồi cấu hình nguồn/dự phòng cần dùng. Phần ảnh chọn lại bằng `configure-vision --chain` hoặc danh sách thủ công.
 
 ### Groq và Cloudflare: nguồn chính và dự phòng
 
@@ -559,8 +576,8 @@ Sửa `config.json`, đối chiếu [config.example.json](config.example.json). 
 | `vision_provider` | `""` | Nguồn đọc ảnh khi chọn một model; để rỗng khi dùng `vision_models` |
 | `vision_model` | `""` | Model ảnh của nguồn đơn, chọn bằng configure-vision |
 | `vision_models` | `[]` | Danh sách `nguồn:model` theo thứ tự; dùng configure-vision --chain. Cả danh sách và nguồn đơn rỗng là tắt |
-| `google_models` | `[]` | Danh sách model Google theo thứ tự; rỗng là tắt |
-| `ai_provider` | `"groq"` | Nguồn chính trong hai bên `groq` / `cloudflare` |
+| `google_models` | `[]` | Danh sách model Google theo thứ tự |
+| `ai_provider` | `"groq"` | Nguồn chính: `groq` / `cloudflare` hoặc `google` qua configure-google --only |
 | `model` | `"openai/gpt-oss-120b"` | Model của nguồn chính |
 | `ai_fallback` | `false` | Bật nguồn Groq/Cloudflare còn lại làm dự phòng |
 | `fallback_model` | `""` | Model nguồn dự phòng; rỗng dùng mặc định của nguồn đó |

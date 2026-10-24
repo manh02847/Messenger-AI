@@ -204,10 +204,16 @@ class Settings:
             raise ValueError("fallback_model phải là chuỗi.")
         if not isinstance(result.dry_run, bool):
             raise ValueError("dry_run phải là true hoặc false.")
-        if result.ai_provider not in ("groq", "cloudflare"):
-            raise ValueError("ai_provider phải là groq hoặc cloudflare.")
+        if result.ai_provider not in ("groq", "cloudflare", "google"):
+            raise ValueError("ai_provider phải là groq, cloudflare hoặc google.")
+        if result.ai_provider == "google" and result.ai_fallback:
+            raise ValueError(
+                "Nguồn chính Google không dùng ai_fallback Groq/Cloudflare."
+            )
         if not isinstance(result.model, str) or not result.model.strip():
             raise ValueError("model phải là chuỗi không rỗng.")
+        if result.ai_provider == "google" and result.model not in GOOGLE_MODELS:
+            raise ValueError("model Google chưa được hỗ trợ.")
         if not isinstance(result.reply_prefix, str) or len(result.reply_prefix) > 40:
             raise ValueError("reply_prefix dài tối đa 40 ký tự.")
         for name in (

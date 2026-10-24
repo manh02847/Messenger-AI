@@ -155,6 +155,11 @@ def configure(*, provider: str | None = None, copy_ai_from: Path | None = None) 
                 getpass.getpass("Workers AI API token (Enter để giữ cũ): ").strip()
                 or secrets["cloudflare_api_token"]
             )
+        elif selected == "google":
+            secrets["google_api_key"] = (
+                getpass.getpass("Google AI Studio API key (Enter để giữ cũ): ").strip()
+                or secrets["google_api_key"]
+            )
         else:
             secrets["groq_api_key"] = (
                 getpass.getpass("Groq API key (Enter để giữ giá trị cũ): ").strip()
@@ -234,11 +239,48 @@ def configure_ai(
     print("Chưa kiểm tra API thật. Chạy check-ai rồi khởi động lại bot.")
 
 
-def configure_google(models: list[str] | None = None, *, disable: bool = False) -> None:
+def configure_google(
+    models: list[str] | None = None, *, disable: bool = False, only: bool = False
+) -> None:
     path = ROOT / "config.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
-    Settings.from_dict(raw)
-    raw["google_models"] = [] if disable else list(models or GOOGLE_MODELS)
+    current = Settings.from_dict(raw)
+    if disable and only:
+        raise ValueError("Dùng riêng --only hoặc --disable.")
+    if disable and current.ai_provider == "google":
+        raise ValueError(
+            "Đang chọn Google làm nguồn chính; dùng configure-ai groq/cloudflare trước khi tắt Google."
+        )
+    selected = list(models or (current.google_models if only else ()) or GOOGLE_MODELS)
+    raw["google_models"] = [] if disable else selected
+    if only:
+        raw.update(
+            ai_provider="google",
+            model=selected[0],
+            nvidia_model="",
+            ai_fallback=False,
+            fallback_model="",
+        )
+        if current.vision_targets:
+            image_models = (
+                selected
+                if models
+                else (
+                    [
+                        model
+                        for provider, model in current.vision_targets
+                        if provider == "google"
+                    ]
+                    or selected
+                )
+            )
+            raw.update(
+                vision_provider="",
+                vision_model="",
+                vision_models=[f"google:{model}" for model in image_models],
+            )
+    elif current.ai_provider == "google":
+        raw["model"] = selected[0]
     settings = Settings.from_dict(raw)
     if not disable:
         from .ai import provider_configs
@@ -257,9 +299,19 @@ def configure_google(models: list[str] | None = None, *, disable: bool = False) 
         print("Đã tắt nguồn Google; giữ API key và các nguồn cũ.")
     else:
         print("Ưu tiên Google:", " → ".join(settings.google_models))
-        print(
-            "Khi các model Google chờ quota, dùng các nguồn Groq/Cloudflare đang cấu hình."
-        )
+        if settings.ai_provider == "google":
+            print(
+                "Nguồn chữ chính: Google; hết nguồn đang bật thì bỏ lượt, chờ tin mới."
+            )
+        else:
+            print(
+                "Khi các model Google chờ quota, dùng các nguồn Groq/Cloudflare đang cấu hình."
+            )
+        if only:
+            print(
+                "Đã tắt NVIDIA/Groq/Cloudflare cho tin chữ và chuỗi đọc ảnh đang bật."
+            )
+            print("Đọc ảnh:", " → ".join(settings.vision_models) or "TẮT")
         print(
             "Giữ nguyên ngân sách gọi AI cục bộ; quota Google có thể dùng chung giữa model."
         )
@@ -771,6 +823,11 @@ def main() -> None:
     google_options.add_argument(
         "--disable", action="store_true", help="Tắt Google, giữ các nguồn cũ."
     )
+    google_config.add_argument(
+        "--only",
+        action="store_true",
+        help="Chỉ dùng Google cho chữ và chuỗi ảnh đang bật; giữ key các nguồn khác.",
+    )
     nvidia_config = sub.add_parser(
         "configure-nvidia", help="Thêm NVIDIA NIM làm nguồn ưu tiên thử nghiệm."
     )
@@ -837,7 +894,7 @@ def main() -> None:
         elif args.command == "configure-ai":
             configure_ai(args.provider, args.daily_limit, args.fallback)
         elif args.command == "configure-google":
-            configure_google(args.models, disable=args.disable)
+            configure_google(args.models, disable=args.disable, only=args.only)
         elif args.command == "configure-nvidia":
             configure_nvidia(args.model, disable=args.disable)
         elif args.command == "check-nvidia":

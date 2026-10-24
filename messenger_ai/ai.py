@@ -497,7 +497,8 @@ def provider_configs(secrets: dict[str, str], settings: Settings):
         replace(settings, ai_provider="google", model=model)
         for model in settings.google_models
     )
-    configs.append(settings)
+    if settings.ai_provider != "google" or not settings.google_models:
+        configs.append(settings)
     if settings.ai_fallback:
         other = "groq" if settings.ai_provider == "cloudflare" else "cloudflare"
         configs.append(
