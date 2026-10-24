@@ -19,6 +19,19 @@ NVIDIA_DEFAULT_MODEL = "google/gemma-4-31b-it"
 NVIDIA_MODEL_PATTERN = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z"
 )
+VISION_PRESET = (
+    "google:gemini-3.5-flash-lite",
+    "google:gemini-3.1-flash-lite",
+    "nvidia:google/gemma-4-31b-it",
+    "groq:qwen/qwen3.8-27b",
+    "cloudflare:@cf/qwen/qwen3.8-27b",
+)
+PROVIDER_KEYS = {
+    "nvidia": "nvidia_api_key",
+    "google": "google_api_key",
+    "groq": "groq_api_key",
+    "cloudflare": "cloudflare_api_token",
+}
 
 
 def valid_nvidia_model(value: object) -> bool:
@@ -27,6 +40,25 @@ def valid_nvidia_model(value: object) -> bool:
         and len(value) <= 200
         and bool(NVIDIA_MODEL_PATTERN.fullmatch(value))
     )
+
+
+def vision_target(value: str) -> tuple[str, str]:
+    if not isinstance(value, str):
+        raise ValueError("vision_models phải chứa mã nguồn:model.")
+    provider, _, model = value.partition(":")
+    if (
+        provider not in PROVIDER_KEYS
+        or not model
+        or len(model) > 200
+        or not re.fullmatch(r"[@A-Za-z0-9][A-Za-z0-9@._/-]*", model)
+        or (provider == "nvidia" and not valid_nvidia_model(model))
+        or (provider == "google" and model not in GOOGLE_MODELS)
+        or (provider == "cloudflare" and not model.startswith("@cf/"))
+    ):
+        raise ValueError(
+            "Model đọc ảnh chưa hợp lệ; dùng nguồn:model trong configure-vision --chain."
+        )
+    return provider, model
 
 
 THREAD_PATTERN = re.compile(
@@ -72,6 +104,7 @@ class Settings:
     nvidia_model: str = ""
     vision_provider: str = ""
     vision_model: str = ""
+    vision_models: tuple[str, ...] = ()
     model: str = "openai/gpt-oss-120b"
     dry_run: bool = True
     reply_prefix: str = ""
@@ -89,6 +122,14 @@ class Settings:
     max_replies_per_thread_per_day: int = 1000
     minimum_ai_interval_seconds: float = 6
     retention_days: int = 7
+
+    @property
+    def vision_targets(self) -> tuple[tuple[str, str], ...]:
+        if self.vision_models:
+            return tuple(vision_target(value) for value in self.vision_models)
+        if self.vision_provider:
+            return ((self.vision_provider, self.vision_model),)
+        return ()
 
     @classmethod
     def from_dict(cls, raw: dict) -> "Settings":
@@ -124,6 +165,13 @@ class Settings:
                 "google_models phải là danh sách model Google được hỗ trợ, không trùng."
             )
         value["google_models"] = tuple(google_models)
+        vision_models = value.get("vision_models", [])
+        if not isinstance(vision_models, list) or len(vision_models) > 12:
+            raise ValueError("vision_models phải là danh sách tối đa 12 model đọc ảnh.")
+        targets = [vision_target(model) for model in vision_models]
+        if len(set(targets)) != len(targets):
+            raise ValueError("vision_models có model bị trùng.")
+        value["vision_models"] = tuple(vision_models)
         result = cls(**value)
         if (
             not isinstance(result.vision_provider, str)
@@ -131,27 +179,19 @@ class Settings:
             or result.vision_provider
             not in ("", "nvidia", "google", "groq", "cloudflare")
             or bool(result.vision_provider) != bool(result.vision_model)
+            or (result.vision_models and result.vision_provider)
         ):
             raise ValueError(
-                "vision_provider/vision_model phải cùng được chọn hoặc cùng rỗng."
+                "vision_provider/vision_model phải cùng được chọn hoặc cùng rỗng; "
+                "để rỗng khi dùng vision_models."
             )
         if result.vision_model:
-            model = result.vision_model
-            if (
-                len(model) > 200
-                or not re.fullmatch(r"[@A-Za-z0-9][A-Za-z0-9@._/-]*", model)
-                or (
-                    result.vision_provider == "nvidia" and not valid_nvidia_model(model)
-                )
-                or (result.vision_provider == "google" and model not in GOOGLE_MODELS)
-                or (
-                    result.vision_provider == "cloudflare"
-                    and not model.startswith("@cf/")
-                )
-            ):
+            try:
+                vision_target(f"{result.vision_provider}:{result.vision_model}")
+            except ValueError:
                 raise ValueError(
                     "vision_model chưa hợp lệ cho nguồn đã chọn; xem configure-vision."
-                )
+                ) from None
         if result.nvidia_model != "" and not valid_nvidia_model(result.nvidia_model):
             raise ValueError(
                 "nvidia_model phải là mã model dạng hãng/tên-model, hoặc chuỗi rỗng để tắt."

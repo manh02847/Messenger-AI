@@ -16,8 +16,10 @@ from pathlib import Path
 from .config import (
     GOOGLE_MODELS,
     NVIDIA_DEFAULT_MODEL,
+    PROVIDER_KEYS,
     ROOT,
     THREAD_PATTERN,
+    VISION_PRESET,
     Settings,
     load_persona,
     load_secrets,
@@ -33,6 +35,7 @@ AI_SETTINGS = (
     "nvidia_model",
     "vision_provider",
     "vision_model",
+    "vision_models",
     "max_completion_tokens",
     "max_ai_calls_per_day",
     "minimum_ai_interval_seconds",
@@ -297,26 +300,60 @@ def configure_nvidia(model: str | None = None, *, disable: bool = False) -> None
 
 
 def configure_vision(
-    provider: str | None, model: str | None, *, disable: bool = False
+    provider: str | None,
+    model: str | None,
+    *,
+    disable: bool = False,
+    chain: list[str] | None = None,
 ) -> None:
-    from .ai import validate_connection
+    from .ai import validate_connection, vision_configs
 
     path = ROOT / "config.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
     Settings.from_dict(raw)
     if disable:
-        if provider is not None or model is not None:
+        if provider is not None or model is not None or chain is not None:
             raise ValueError("Dùng riêng --disable để tắt đọc ảnh.")
         raw.update(vision_provider="", vision_model="")
+        raw.pop("vision_models", None)
         Settings.from_dict(raw)
         private_json(path, raw)
         print("Đã tắt đọc ảnh; giữ key và cấu hình nhắn chữ.")
         return
+    if chain is not None:
+        if provider is not None or model is not None:
+            raise ValueError(
+                "Dùng --chain riêng với danh sách nguồn:model theo thứ tự."
+            )
+        secrets = load_secrets(ROOT)
+        selected, missing = list(chain), []
+        if not selected:
+            for target in VISION_PRESET:
+                source = target.partition(":")[0]
+                if secrets.get(PROVIDER_KEYS[source], "").strip():
+                    selected.append(target)
+                elif source not in missing:
+                    missing.append(source)
+            if not selected:
+                raise ValueError("Chưa có key nguồn đọc ảnh; cấu hình API trước.")
+        raw.update(vision_provider="", vision_model="", vision_models=selected)
+        settings = Settings.from_dict(raw)
+        vision_configs(secrets, settings)
+        private_json(path, raw)
+        print("Thứ tự đọc ảnh:", " → ".join(settings.vision_models))
+        if missing:
+            print("Bỏ khỏi mẫu vì chưa có key:", ", ".join(missing))
+        print(
+            "Dùng key hiện có; mỗi model thử một lần khi nguồn trước lỗi. "
+            "Chạy check-vision --all để thử từng model rồi khởi động lại bot."
+        )
+        return
     if not provider or not model:
         raise ValueError(
-            "Chọn nguồn và --model hỗ trợ ảnh, ví dụ configure-vision nvidia --model google/gemma-4-31b-it."
+            "Chọn nguồn và --model hỗ trợ ảnh, hoặc configure-vision --chain."
         )
     raw.update(vision_provider=provider, vision_model=model)
+    raw.pop("vision_models", None)
     settings = Settings.from_dict(raw)
     secrets = load_secrets(ROOT)
     key = {
@@ -348,34 +385,59 @@ def configure_vision(
     )
 
 
-async def check_vision() -> None:
-    from .ai import create_vision_ai
+async def check_vision(*, all_models: bool = False) -> None:
+    from .ai import AIError, VisionFallbackAI, create_vision_ai
     from .images import test_image
     from .state import State
     from .core import VIETNAM
     from datetime import datetime
 
     settings = Settings.load()
-    if not settings.vision_provider:
+    if not settings.vision_targets:
         raise ValueError("Chưa bật đọc ảnh. Chạy configure-vision trước.")
     ai = create_vision_ai(load_secrets(), settings, load_persona(ROOT))
     state = None
     try:
         image = await asyncio.to_thread(test_image)
         state = State(ROOT / "data" / "ai-check.sqlite3")
-        started = time.monotonic()
-        text = await ai.generate(
-            [{"role": "user", "content": "Ảnh này có màu gì? Trả lời một câu ngắn."}],
-            lambda: state.reserve_ai(
-                datetime.now(VIETNAM).date().isoformat(), settings.max_ai_calls_per_day
-            ),
-            images=[image],
+        clients = (
+            ai.clients if all_models and isinstance(ai, VisionFallbackAI) else (ai,)
         )
-        print(f"{ai.last_used} đã trả lời: {text[: settings.output_char_limit]}")
-        print(f"Ảnh thử là ô màu đỏ. Thời gian: {time.monotonic() - started:.2f} giây.")
+        failures = 0
+        for candidate in clients:
+            started = time.monotonic()
+            try:
+                text = await candidate.generate(
+                    [
+                        {
+                            "role": "user",
+                            "content": "Ảnh này có màu gì? Trả lời một câu ngắn.",
+                        }
+                    ],
+                    lambda: state.reserve_ai(
+                        datetime.now(VIETNAM).date().isoformat(),
+                        settings.max_ai_calls_per_day,
+                    ),
+                    images=[image],
+                )
+                print(
+                    f"{candidate.last_used} đã trả lời: {text[: settings.output_char_limit]}"
+                )
+            except AIError as error:
+                if not all_models:
+                    raise
+                failures += 1
+                print(f"{candidate.description}: {error}")
+            print(
+                f"Ảnh thử là ô màu đỏ. Thời gian: {time.monotonic() - started:.2f} giây."
+            )
         print(
-            "Chỉ thử nguồn đọc ảnh; không fallback nguồn chữ, không kết nối/gửi Messenger."
+            "Chỉ thử chuỗi đọc ảnh, mỗi request tính một lượt thử; không kết nối/gửi Messenger."
         )
+        if failures:
+            raise AIError(
+                f"Có {failures}/{len(clients)} model đọc ảnh chưa qua kiểm tra."
+            )
     finally:
         await ai.close()
         if state is not None:
@@ -729,10 +791,20 @@ def main() -> None:
         "provider", nargs="?", choices=("nvidia", "google", "groq", "cloudflare")
     )
     vision.add_argument("--model", help="Mã model hỗ trợ ảnh, nhập thủ công.")
-    vision.add_argument("--disable", action="store_true")
-    sub.add_parser(
+    vision_options = vision.add_mutually_exclusive_group()
+    vision_options.add_argument("--disable", action="store_true")
+    vision_options.add_argument(
+        "--chain",
+        nargs="*",
+        metavar="NGUỒN:MODEL",
+        help="Xoay model theo thứ tự; bỏ danh sách để dùng mẫu với các key hiện có.",
+    )
+    vision_check = sub.add_parser(
         "check-vision",
-        help="Gửi ảnh thử màu đỏ tới riêng nguồn đọc ảnh, không gửi Messenger.",
+        help="Gửi ảnh thử màu đỏ qua chuỗi đọc ảnh, không gửi Messenger.",
+    )
+    vision_check.add_argument(
+        "--all", action="store_true", help="Thử riêng từng model đọc ảnh."
     )
     allow = sub.add_parser(
         "allow", help="Thêm mã cuộc trò chuyện đã xác minh vào danh sách tự rep."
@@ -771,9 +843,11 @@ def main() -> None:
         elif args.command == "check-nvidia":
             asyncio.run(check_ai(provider="nvidia"))
         elif args.command == "configure-vision":
-            configure_vision(args.provider, args.model, disable=args.disable)
+            configure_vision(
+                args.provider, args.model, disable=args.disable, chain=args.chain
+            )
         elif args.command == "check-vision":
-            asyncio.run(check_vision())
+            asyncio.run(check_vision(all_models=args.all))
         elif args.command == "doctor":
             doctor()
         elif args.command == "allow":

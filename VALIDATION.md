@@ -265,3 +265,39 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
   gọi Facebook/AI thật, không sửa dữ liệu hoặc triển khai trên VPS. Chưa
   xác nhận nguyên nhân thực tế của hai ảnh thất bại; nếu vẫn lỗi sau cập
   nhật cần mã log mới từ VPS để tiếp tục chẩn đoán.
+
+## Xoay nhiều model đọc ảnh — 25/10/2026
+
+- Thêm vision_models và configure-vision --chain. Mẫu gồm Gemini 3.5
+  Flash-Lite, Gemini 3.1 Flash-Lite, NVIDIA Gemma 4 31B, Qwen 3.8 qua Groq
+  và Cloudflare; chỉ thêm nguồn đã có key, in rõ nguồn thiếu key. Có thể
+  nhập danh sách nguồn:model thủ công để chọn thứ tự; kiểm tra toàn bộ cấu
+  hình/key trước khi ghi file, không gọi API hoặc sửa secrets khi bật chuỗi.
+- Cấu hình một nguồn cũ giữ nguyên; mặc định vẫn tắt. Chọn lại một nguồn
+  hoặc --disable gỡ chuỗi. configure --copy-ai-from sao chép đúng thứ tự
+  model ảnh và vẫn yêu cầu cookie riêng, không lấy persona/thiết bị/lịch sử.
+- Chuỗi ảnh tách khỏi chuỗi chữ. Từng model nhận cùng ảnh đã xử lý, persona
+  và ngữ cảnh; dừng khi có câu trả lời. Mỗi model thử một request; timeout,
+  mạng, quá tải/quota và model/quyền truy cập chưa sẵn sàng được chuyển tiếp.
+  Tạm nghỉ model lỗi và tôn trọng Retry-After/quota ngày Google. Khi nguồn
+  phục hồi, lại thử theo thứ tự ưu tiên. Lỗi nội dung/cấu hình 400, dữ liệu
+  phản hồi hỏng/bị cắt hoặc hết ngân sách cục bộ dừng lượt.
+- Với nhiều model, deadline 45 giây toàn chuỗi, 10 giây mỗi model, NVIDIA
+  6 giây. Request đang chờ được hủy khi hết thời gian; không polling hoặc
+  retry chạy nền. Mỗi request được tính vào cùng ngân sách AI live. Khi
+  tất cả nguồn lỗi/nghỉ, bỏ lượt và chờ tin mới. Lượt ảnh chỉ tải media một
+  lần dù chuyển nguồn nhiều lần, tối đa một tin trả lời.
+- check-vision mặc định thử chuỗi đến model đầu trả lời được; --all thử
+  từng model kể cả sau thành công/lỗi, in câu trả lời, thời gian và tổng
+  số lỗi. Dùng ảnh ô đỏ và bộ đếm ai-check.sqlite3; không đăng nhập/gửi
+  Messenger. Model trả sai màu cần người dùng đối chiếu kết quả.
+- 370 kiểm thử offline đạt, gồm 54 ca bổ sung cho payload ảnh/ngữ cảnh/
+  persona giữ nguyên qua cả năm model, HTTP/quota/cooldown/phục hồi, timeout
+  và hủy request, ngân sách cục bộ, dừng khi nội dung lỗi, cô lập chuỗi chữ,
+  CLI/cấu hình cũ/danh sách thủ công, thử tất cả model và đóng client.
+  Tích hợp worker với HTTP mô phỏng kiểm tra tải một lần, tính đủ hai lượt
+  gọi và chỉ gửi một hoặc không gửi phản hồi khi các nguồn đều thất bại.
+- Ruff E4/E7/E9/F, CLI help, git diff --check và cú pháp 43 khối Bash trong
+  README đạt; Python heredoc được kiểm tra AST, liên kết file cục bộ hợp lệ.
+  Không gọi AI/Facebook thật, không triển khai hoặc sửa dữ liệu trên VPS.
+  Cần chạy check-vision trên VPS và gửi ảnh mới để xác minh luồng thực tế.

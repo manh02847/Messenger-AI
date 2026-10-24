@@ -8,6 +8,7 @@
   "nvidia_model": "",
   "vision_provider": "",
   "vision_model": "",
+  "vision_models": [],
   "model": "openai/gpt-oss-120b",
   "dry_run": true,
   "reply_prefix": "",

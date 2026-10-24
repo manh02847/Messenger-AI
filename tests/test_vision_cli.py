@@ -5,10 +5,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from PIL import Image
+import httpx
 
 from messenger_ai import cli
 from messenger_ai.ai import AIError
-from messenger_ai.config import Settings
+from messenger_ai.config import VISION_PRESET, Settings
 
 
 @pytest.fixture
@@ -157,4 +158,157 @@ def test_vision_cli_dispatch(account, monkeypatch):
         ],
     )
     cli.main()
-    configure.assert_called_once_with("nvidia", "google/gemma-4-31b-it", disable=False)
+    configure.assert_called_once_with(
+        "nvidia", "google/gemma-4-31b-it", disable=False, chain=None
+    )
+
+
+def test_configure_chain_uses_existing_keys_without_prompting_or_changing_other_files(
+    account, monkeypatch, capsys
+):
+    root, raw = account
+    secret = root / "secrets.json"
+    secret.write_bytes(b"PRIVATE EXISTING FILE")
+    monkeypatch.setattr(
+        cli.getpass, "getpass", Mock(side_effect=AssertionError("No prompt"))
+    )
+    factory = Mock(side_effect=AssertionError("No HTTP client needed"))
+    monkeypatch.setattr("messenger_ai.ai.ChatAI", factory)
+    cli.configure_vision(None, None, chain=[])
+    assert json.loads((root / "config.json").read_text()) == dict(
+        raw, vision_provider="", vision_model="", vision_models=list(VISION_PRESET)
+    )
+    assert secret.read_bytes() == b"PRIVATE EXISTING FILE"
+    assert (root / "config.json").stat().st_mode & 0o777 == 0o600
+    assert (root / "persona.local.txt").read_text() == "PRIVATE PERSONA"
+    assert (root / "data" / "messenger-device.db").read_bytes() == b"PRIVATE DEVICE"
+    assert "PRIVATE" not in capsys.readouterr().out
+    factory.assert_not_called()
+
+
+def test_preset_omits_unconfigured_providers_and_reports_them(
+    account, monkeypatch, capsys
+):
+    root, _ = account
+    monkeypatch.setattr(cli, "load_secrets", lambda _: {"google_api_key": "PRIVATE"})
+    cli.configure_vision(None, None, chain=[])
+    settings = Settings.load(root)
+    assert settings.vision_models == VISION_PRESET[:2]
+    output = capsys.readouterr().out
+    assert "Bỏ khỏi mẫu vì chưa có key: nvidia, groq, cloudflare" in output
+    assert "PRIVATE" not in output
+
+
+def test_manual_chain_preserves_exact_model_priority(account):
+    root, _ = account
+    chosen = [VISION_PRESET[3], VISION_PRESET[0], "nvidia:owner/custom-image-model"]
+    cli.configure_vision(None, None, chain=chosen)
+    assert Settings.load(root).vision_models == tuple(chosen)
+
+
+@pytest.mark.parametrize(
+    "failure", ["no_keys", "missing_key", "bad_cf", "ambiguous", "duplicate"]
+)
+def test_invalid_chain_does_not_write_any_files(account, monkeypatch, failure):
+    root, _ = account
+    options = {"chain": list(VISION_PRESET)}
+    provider = None
+    if failure == "no_keys":
+        monkeypatch.setattr(cli, "load_secrets", lambda _: {})
+        options["chain"] = []
+    elif failure == "missing_key":
+        monkeypatch.setattr(
+            cli, "load_secrets", lambda _: {"google_api_key": "PRIVATE"}
+        )
+    elif failure == "bad_cf":
+        monkeypatch.setattr(
+            cli, "load_secrets", lambda _: {"cloudflare_api_token": "PRIVATE"}
+        )
+        options["chain"] = []
+    elif failure == "ambiguous":
+        provider = "nvidia"
+    else:
+        options["chain"] = [VISION_PRESET[0]] * 2
+    before = {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    with pytest.raises(ValueError):
+        cli.configure_vision(provider, None, **options)
+    assert {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("disable", [False, True])
+def test_switching_back_to_single_source_or_disabling_removes_the_chain(
+    account, disable
+):
+    root, raw = account
+    cli.configure_vision(None, None, chain=[])
+    cli.configure_vision(
+        None if disable else "nvidia",
+        None if disable else "google/gemma-4-31b-it",
+        disable=disable,
+    )
+    assert json.loads((root / "config.json").read_text()) == dict(
+        raw,
+        vision_provider="" if disable else "nvidia",
+        vision_model="" if disable else "google/gemma-4-31b-it",
+    )
+
+
+def test_chain_cli_dispatch_uses_empty_list_for_preset(account, monkeypatch):
+    configure = Mock()
+    monkeypatch.setattr(cli, "configure_vision", configure)
+    monkeypatch.setattr("sys.argv", ["messenger_ai", "configure-vision", "--chain"])
+    cli.main()
+    configure.assert_called_once_with(None, None, disable=False, chain=[])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("all_models", [False, True])
+async def test_check_vision_all_tests_later_models_even_after_an_earlier_success(
+    account, monkeypatch, capsys, all_models
+):
+    from messenger_ai.ai import ChatAI, VisionFallbackAI
+
+    root, _ = account
+    settings = Settings(vision_models=(VISION_PRESET[0], VISION_PRESET[3]))
+    monkeypatch.setattr(Settings, "load", lambda: settings)
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.host)
+        if len(calls) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "candidates": [
+                        {
+                            "finishReason": "STOP",
+                            "content": {"parts": [{"text": "Màu đỏ."}]},
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(503, text="PRIVATE RESPONSE")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        clients = [
+            ChatAI(
+                "PRIVATE_KEY",
+                Settings(ai_provider=p, model=m, minimum_ai_interval_seconds=0),
+                "PRIVATE PERSONA",
+                client=client,
+            )
+            for p, m in settings.vision_targets
+        ]
+        pool = VisionFallbackAI(*clients)
+        pool.close = AsyncMock(wraps=pool.close)
+        monkeypatch.setattr("messenger_ai.ai.create_vision_ai", lambda *_: pool)
+        if all_models:
+            with pytest.raises(AIError, match="1/2"):
+                await cli.check_vision(all_models=True)
+        else:
+            await cli.check_vision()
+        pool.close.assert_awaited_once()
+    assert len(calls) == (2 if all_models else 1)
+    output = capsys.readouterr().out
+    assert "Màu đỏ." in output and "PRIVATE" not in output
+    assert not (root / "data" / "state.sqlite3").exists()

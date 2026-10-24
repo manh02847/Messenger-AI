@@ -66,7 +66,7 @@ Hai lệnh trên **không kết nối hoặc gửi Messenger**, nhưng có gọi
 .venv/bin/python -m messenger_ai check-nvidia
 ```
 
-Để kiểm tra model đọc ảnh đã chọn, dùng `check-vision`; xem [bật đọc ảnh](#đọc-ảnh-trên-messenger). `check-ai` và `chat-ai` chỉ thử tin chữ, không chứng minh model đọc được ảnh.
+Để kiểm tra chuỗi đọc ảnh, dùng `check-vision`; thêm `--all` để thử riêng từng model. Xem [bật đọc ảnh](#đọc-ảnh-trên-messenger). `check-ai` và `chat-ai` chỉ thử tin chữ, không chứng minh model đọc được ảnh.
 
 ### Xem toàn bộ thứ tự nguồn/model đang bật
 
@@ -95,7 +95,7 @@ Thứ tự chung:
 
 Ví dụ **NVIDIA → Google → Cloudflare → Groq** chỉ đúng khi đã bật NVIDIA/Google, chọn Cloudflare làm chính và bật dự phòng Groq. Nếu chọn Groq làm chính thì hai nguồn cuối đổi chỗ. Cài mới mặc định **chỉ có Groq**, các nguồn khác cần cấu hình thêm.
 
-Với tin chữ, bot thử lần lượt đến khi có câu trả lời; không gọi nhiều model song song rồi ghép nội dung. Các nguồn được thử nhận cùng persona/ngữ cảnh trong giới hạn cấu hình. Lượt có ảnh dùng riêng nguồn/model thị giác được chọn; không tự chuyển ảnh qua chuỗi nguồn chữ.
+Với tin chữ, bot thử lần lượt đến khi có câu trả lời; không gọi nhiều model song song rồi ghép nội dung. Các nguồn được thử nhận cùng persona/ngữ cảnh trong giới hạn cấu hình. Lượt có ảnh dùng riêng danh sách model thị giác đã chọn; thứ tự ảnh độc lập với chuỗi nguồn chữ.
 
 ## 3. Cài đặt lần đầu
 
@@ -408,21 +408,58 @@ Mỗi bot có bộ đếm cục bộ riêng, nhưng nếu dùng chung API key th
 
 Mặc định **tắt**, cần chọn model có hỗ trợ ảnh. Nhận ảnh mới trong chat thường và E2EE; dùng chung persona đang chọn, ngữ cảnh, phạm vi được rep và cơ chế nhường khi bạn nhắn. Gửi ảnh rồi nhắn câu hỏi ngay sau trong thời gian gom tin sẽ được xử lý cùng lượt. Tin chỉ có ảnh cũng có thể được nhận xét ngắn.
 
-Cập nhật thư viện bằng `python3 setup_bot.py` khi đã dừng bot, rồi chọn nguồn và mã model **thủ công**. Ví dụ dùng NVIDIA Gemma 4 31B IT:
+Cập nhật thư viện bằng `python3 setup_bot.py` khi đã dừng bot. Nếu đã có key các nguồn và muốn **tự chuyển model khi quá tải/hết quota**, bật mẫu sau:
 
 ```bash
-.venv/bin/python -m messenger_ai configure-vision nvidia --model google/gemma-4-31b-it
+.venv/bin/python -m messenger_ai configure-vision --chain
 .venv/bin/python -m messenger_ai check-vision
 ```
 
-Ở dòng API key, nhấn Enter để dùng key hiện có của nguồn đó. `configure-vision` chỉ kiểm tra cấu hình, không gọi API hay tự đổi model nhắn chữ. `check-vision` gửi một ô màu đỏ tạo tại máy tới riêng model thị giác, in câu trả lời thực tế và thời gian; bạn kiểm tra model có nhận đúng màu không. Lệnh dùng bộ đếm thử `ai-check.sqlite3`, không đăng nhập hoặc gửi Messenger. Khởi động lại bot sau khi cấu hình xong.
+Mẫu ưu tiên theo thứ tự dưới, chỉ thêm nguồn đã có key và in rõ nguồn bị bỏ qua. Dùng key hiện có, không hỏi lại cookie/key. Model trong mẫu được đặt cố định; bot không tự lấy model từ catalog.
+
+| Thứ tự | Nguồn | Model |
+|---|---|---|
+| 1 | Google | `gemini-3.5-flash-lite` |
+| 2 | Google | `gemini-3.1-flash-lite` |
+| 3 | NVIDIA | `google/gemma-4-31b-it` |
+| 4 | Groq | `qwen/qwen3.8-27b` |
+| 5 | Cloudflare | `@cf/qwen/qwen3.8-27b` |
+
+Bot thử từ trên xuống, dừng ngay khi một model trả lời được. Lỗi mạng, timeout, HTTP 202/408/429/5xx hoặc model/quyền truy cập chưa sẵn sàng sẽ chuyển tiếp. Model lỗi được tạm nghỉ, tôn trọng `Retry-After`; hết thời gian nghỉ thì lại được thử theo thứ tự ưu tiên. Log ghi nguồn lỗi và model thực sự đã đọc ảnh.
+
+Với nhiều model, toàn chuỗi chờ tối đa **45 giây**, mỗi model tối đa **10 giây**, riêng NVIDIA **6 giây** để còn thời gian thử nguồn khác. Mỗi model thử một request/lượt, không retry liên tục. Nếu hết thời gian hoặc mọi nguồn đều lỗi/nghỉ, bỏ lượt và chờ tin mới. HTTP 400 do cấu hình, nội dung bị chặn, phản hồi hỏng/bị cắt hoặc hết ngân sách gọi AI cục bộ sẽ dừng lượt để xử lý lỗi.
+
+Muốn **tự chọn model/thứ tự**, ghi rõ danh sách (tối đa 12 mục, không trùng); ví dụ:
+
+```bash
+.venv/bin/python -m messenger_ai configure-vision --chain \
+  google:gemini-3.5-flash-lite \
+  groq:qwen/qwen3.8-27b \
+  nvidia:google/gemma-4-31b-it
+```
+
+Danh sách tự chọn yêu cầu đủ key tương ứng; thiếu key sẽ báo lỗi trước khi lưu. Chuyển về **một nguồn** bằng lệnh cũ; ví dụ NVIDIA:
+
+```bash
+.venv/bin/python -m messenger_ai configure-vision nvidia --model google/gemma-4-31b-it
+```
+
+Khi cấu hình một nguồn, ở dòng API key nhấn Enter để dùng key hiện có. Chế độ này giữ deadline **30 giây/lượt**. `configure-vision` chỉ kiểm tra cấu hình, không gọi API hay đổi model nhắn chữ. Cấu hình một nguồn trước đây vẫn chạy như cũ sau `git pull`, chỉ xoay nhiều model khi bạn bật `--chain`.
+
+`check-vision` gửi một ô màu đỏ tạo tại máy qua chuỗi, in model trả lời thực tế và thời gian; thành công chỉ chứng minh một model đã trả lời. Để thử **riêng tất cả model** dù model đầu đã chạy được:
+
+```bash
+.venv/bin/python -m messenger_ai check-vision --all
+```
+
+Mỗi model trong `--all` dùng một lượt gọi thử, có thể chờ đến 30 giây/model. Nếu có model lỗi, lệnh vẫn thử các model còn lại rồi báo tổng số lỗi; model nhận sai màu cần bạn tự đối chiếu. Hai chế độ dùng bộ đếm thử `ai-check.sqlite3`, không đăng nhập/gửi Messenger. Khởi động lại bot sau khi cấu hình xong.
 
 Có thể thay `nvidia` bằng `google`, `groq` hoặc `cloudflare` và nhập mã model thị giác tương ứng. Google dùng model trong danh sách `GOOGLE_MODELS`; NVIDIA cho nhập dạng `hãng/model`. Tên đúng định dạng chưa chứng minh model hỗ trợ ảnh hoặc key có quyền truy cập, nên luôn chạy `check-vision`. Nếu cần, xem [NVIDIA Gemma 4](https://docs.api.nvidia.com/nim/reference/google-gemma-4-31b-it-infer), [Google đọc ảnh](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding), [Groq Vision](https://console.groq.com/docs/vision) và [Cloudflare OpenAI-compatible API](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/).
 
-Lượt có ảnh gọi thẳng model thị giác để tạo câu trả lời, không gọi thêm model chữ để viết lại. Mỗi lượt thử một request, dùng chung ngân sách live với tin chữ; có tin mới làm bỏ bản nháp rồi tạo lại thì vẫn tốn lượt cho request đã gọi. Ảnh dùng thêm token đầu vào theo nhà cung cấp, không nằm trong 3500 ký tự lịch sử chữ.
+Lượt có ảnh gọi thẳng model thị giác để tạo câu trả lời, không gọi thêm model chữ để viết lại. **Mỗi request khi chuyển model đều tính một lượt gọi AI**, dùng chung ngân sách live với tin chữ; có tin mới làm bỏ bản nháp rồi tạo lại thì vẫn tốn lượt cho request đã gọi. Các model được thử nhận cùng ảnh đã xử lý, persona và ngữ cảnh. Ảnh dùng thêm token đầu vào theo nhà cung cấp, không nằm trong 3500 ký tự lịch sử chữ.
 
 - Tối đa **hai ảnh gần nhất** trong một lượt gom tin; mỗi ảnh tối đa **8 MiB**, **20 triệu pixel**. Hỗ trợ JPG/PNG/WebP tĩnh, thu nhỏ cạnh dài tối đa **1600 px**, chuyển JPEG và bỏ metadata trước khi gửi tới AI. Chữ quá nhỏ/mờ có thể đọc sai.
-- Ảnh chỉ được gửi tới nguồn thị giác bạn chọn. Khi lỗi tải/định dạng, bot báo chưa mở được ảnh; nếu API thị giác lỗi/hết quota thì bỏ lượt và ghi log, không chuyển sang model chữ để đoán.
+- Ảnh được gửi tới các nguồn thị giác trong danh sách đã chọn theo thứ tự cần thử. Khi lỗi tải/định dạng, bot báo chưa đọc được ảnh; lỗi API khả dụng thì thử model ảnh tiếp theo. Nếu tất cả lỗi thì bỏ lượt và ghi log.
 - Bộ tải chỉ lấy URL ảnh từ host Meta được phép; ảnh E2EE tải và giải mã qua bridge đang có. Bridge dùng file tạm riêng khi giải mã và tự dọn. Bot không lưu URL ký, khóa giải mã hoặc dữ liệu ảnh trong SQLite; chỉ lưu dấu có ảnh và phần trả lời bằng chữ làm ngữ cảnh.
 - Metadata kích thước ảnh E2EE có thể thiếu hoặc không chính xác. Bot dùng giới hạn tải cứng 8 MiB cho bridge và kiểm tra SHA-256 của dữ liệu nhận được, không bắt số byte phải bằng metadata. Khi tải/xử lý thất bại, log có mã lỗi cố định để phân biệt thiếu dữ liệu, lỗi HTTP, giải mã, timeout và thư viện ảnh; không in nguyên lỗi máy chủ chứa URL ký/khóa.
 - Sau khi trả lời, bot không giữ ảnh gốc cho các lượt tiếp theo. Nếu cần xem lại chi tiết, gửi lại ảnh kèm câu hỏi. Ảnh trích dẫn từ tin cũ, sticker/GIF động, video, file và ghi âm chưa được đọc.
@@ -519,8 +556,9 @@ Sửa `config.json`, đối chiếu [config.example.json](config.example.json). 
 | `allowed_threads` | `[]` | Mã cuộc trò chuyện đã xác minh bằng `discover` |
 | `dry_run` | `true` | Xem trước nếu không có cờ `--live` |
 | `nvidia_model` | `""` | Model NVIDIA tự chọn; rỗng là tắt |
-| `vision_provider` | `""` | Nguồn đọc ảnh riêng: nvidia/google/groq/cloudflare; rỗng là tắt |
-| `vision_model` | `""` | Model có khả năng đọc ảnh, chọn bằng configure-vision |
+| `vision_provider` | `""` | Nguồn đọc ảnh khi chọn một model; để rỗng khi dùng `vision_models` |
+| `vision_model` | `""` | Model ảnh của nguồn đơn, chọn bằng configure-vision |
+| `vision_models` | `[]` | Danh sách `nguồn:model` theo thứ tự; dùng configure-vision --chain. Cả danh sách và nguồn đơn rỗng là tắt |
 | `google_models` | `[]` | Danh sách model Google theo thứ tự; rỗng là tắt |
 | `ai_provider` | `"groq"` | Nguồn chính trong hai bên `groq` / `cloudflare` |
 | `model` | `"openai/gpt-oss-120b"` | Model của nguồn chính |
@@ -578,7 +616,7 @@ Biến chỉ đặt trong phiên SSH chưa chắc được truyền vào systemd
 | `check-ai` thành công nhưng không phải nguồn muốn thử | Đọc nguồn/model in ra; lệnh có fallback. NVIDIA có `check-nvidia` để thử riêng |
 | Gửi ảnh mà bot không nhận | Bật `configure-vision`, chạy `check-vision`, khởi động lại đúng bot; ảnh chỉ có trước khi bật không được đọc bù |
 | Bot báo chưa đọc được ảnh | Xem mã lỗi của bộ tải trong log theo hướng dẫn dưới; chưa thể kết luận là lỗi định dạng hay model |
-| Nguồn chữ còn dùng được nhưng đọc ảnh lỗi | Kiểm tra riêng nguồn/model thị giác bằng `check-vision`; chuỗi fallback chữ không áp dụng cho ảnh |
+| Nguồn chữ còn dùng được nhưng đọc ảnh lỗi | Thử `check-vision --all` để tìm model ảnh lỗi; bật `configure-vision --chain` để dự phòng nhiều nguồn |
 | NVIDIA HTTP 401/403 / `Authorization failed` | Kiểm tra key, tài khoản và quyền gọi model. Đọc được danh sách model chưa chứng minh có quyền inference |
 | Google HTTP 500/503 | Bot retry hữu hạn rồi chuyển theo thứ tự. Kiểm tra log và nguồn sau; không retry vô hạn |
 | HTTP 429 | Chạm giới hạn API hoặc tần suất. Xem quota/dashboard và thời gian chờ; restart không cấp thêm quota |

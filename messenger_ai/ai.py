@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from .config import GOOGLE_MODELS, Settings, valid_nvidia_model
+from .config import GOOGLE_MODELS, PROVIDER_KEYS, Settings, valid_nvidia_model
 from .context import system_prompt
 from .images import ImageInput, MAX_IMAGES
 
@@ -23,6 +23,9 @@ GOOGLE_POOL_TIMEOUT = 20
 GOOGLE_GEMMA_TIMEOUT = 10
 NVIDIA_MODEL_TIMEOUT = 12
 VISION_TIMEOUT = 30
+VISION_POOL_TIMEOUT = 45
+VISION_MODEL_TIMEOUT = 10
+VISION_NVIDIA_TIMEOUT = 6
 
 
 class AIError(RuntimeError):
@@ -360,6 +363,12 @@ class ChatAI:
                     ) from None
                 await asyncio.sleep(2**attempt)
                 continue
+            if vision and response.status_code in (401, 403, 404, 410):
+                raise ProviderUnavailable(
+                    f"{self.label} từ chối quyền truy cập hoặc model đọc ảnh chưa sẵn sàng "
+                    f"(HTTP {response.status_code}); kiểm tra key/model.",
+                    600 if response.status_code in (401, 403) else 3600,
+                )
             if nvidia:
                 if response.status_code in (202, 404, 410):
                     raise ProviderUnavailable(
@@ -445,9 +454,9 @@ class ChatAI:
                         "đây không phải thông báo hết quota API. "
                         "Chạy tune-chat nếu đang dùng mức 768 cũ."
                     )
-                if nvidia and choice.get("finish_reason") != "stop":
+                if (nvidia or vision) and choice.get("finish_reason") != "stop":
                     raise AIError(
-                        "NVIDIA chưa trả câu trả lời hoàn chỉnh; không gửi nội dung này."
+                        f"{self.label} chưa trả câu trả lời hoàn chỉnh; không gửi nội dung này."
                     )
                 answer = final_text(choice["message"]["content"])
                 self.last_used = self.description
@@ -606,6 +615,57 @@ class FallbackAI:
                 raise result
 
 
+class VisionFallbackAI(FallbackAI):
+    async def generate(self, history, reserve, *, images=None):
+        if (
+            not images
+            or len(images) > MAX_IMAGES
+            or not history
+            or history[-1]["role"] != "user"
+        ):
+            raise AIError(
+                "Chuỗi đọc ảnh cần tin người nhắn cuối cùng và một hoặc hai ảnh."
+            )
+        async with self._lock:
+            self.last_used = ""
+            try:
+                async with asyncio.timeout(VISION_POOL_TIMEOUT):
+                    return await self._generate_images(history, reserve, images)
+            except TimeoutError:
+                raise AIError(
+                    "Các nguồn đọc ảnh đã hết thời gian chờ; bỏ lượt này, chờ tin mới."
+                ) from None
+
+    async def _generate_images(self, history, reserve, images):
+        for index, ai in enumerate(self.clients):
+            if self.clock() < self.blocked_until[index]:
+                continue
+            try:
+                timeout = (
+                    VISION_NVIDIA_TIMEOUT
+                    if ai.provider == "nvidia"
+                    else VISION_MODEL_TIMEOUT
+                )
+                try:
+                    async with asyncio.timeout(timeout):
+                        answer = await ai.generate(history, reserve, images=images)
+                except TimeoutError:
+                    raise ProviderUnavailable(
+                        "Nguồn đọc ảnh phản hồi quá chậm; chuyển model tiếp theo.", 60
+                    ) from None
+            except ProviderUnavailable as error:
+                self.blocked_until[index] = self.clock() + error.cooldown
+                self.log(
+                    f"Đọc ảnh {ai.description}: {error} Nghỉ {error.cooldown:.0f} giây."
+                )
+                continue
+            self.last_used = ai.description
+            return answer
+        raise AIError(
+            "Các nguồn đọc ảnh đang lỗi hoặc chờ phục hồi; bỏ lượt này, chờ tin mới."
+        )
+
+
 def create_ai(secrets: dict[str, str], settings: Settings, persona: str):
     configs = provider_configs(secrets, settings)
     clients = [
@@ -621,22 +681,23 @@ def create_ai(secrets: dict[str, str], settings: Settings, persona: str):
     return FallbackAI(*clients) if len(clients) > 1 else clients[0]
 
 
+def vision_configs(secrets: dict[str, str], settings: Settings):
+    configs = []
+    for provider, model in settings.vision_targets:
+        config = replace(settings, ai_provider=provider, model=model)
+        token = secrets.get(PROVIDER_KEYS[provider], "")
+        account_id = secrets.get("cloudflare_account_id", "")
+        validate_connection(token, config, account_id)
+        configs.append((token, config, account_id))
+    return configs
+
+
 def create_vision_ai(secrets: dict[str, str], settings: Settings, persona: str):
-    if not settings.vision_provider:
-        return None
-    config = replace(
-        settings, ai_provider=settings.vision_provider, model=settings.vision_model
-    )
-    key = {
-        "nvidia": "nvidia_api_key",
-        "google": "google_api_key",
-        "groq": "groq_api_key",
-        "cloudflare": "cloudflare_api_token",
-    }[config.ai_provider]
-    return ChatAI(
-        secrets.get(key, ""),
-        config,
-        persona,
-        account_id=secrets.get("cloudflare_account_id", ""),
-        fail_fast=True,
-    )
+    configs = vision_configs(secrets, settings)
+    clients = [
+        ChatAI(token, config, persona, account_id=account_id, fail_fast=True)
+        for token, config, account_id in configs
+    ]
+    if len(clients) > 1:
+        return VisionFallbackAI(*clients)
+    return clients[0] if clients else None

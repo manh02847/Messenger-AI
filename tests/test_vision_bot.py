@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import replace
 
 import pytest
+import httpx
 
 from messenger_ai.config import Settings
 from messenger_ai.core import Message, ReplyBot
@@ -117,6 +118,57 @@ async def test_photo_only_uses_vision_once_and_never_stores_image_bytes_or_keys(
     assert "PRIVATE_CDN_TOKEN" not in " ".join(logs)
     assert not bot.pending_images
     await finish(bot, state)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("all_failed", [False, True])
+async def test_real_vision_fallback_downloads_once_counts_both_attempts_and_sends_at_most_one_reply(
+    tmp_path, all_failed
+):
+    from messenger_ai.ai import ChatAI, VisionFallbackAI
+
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if len(requests) == 1 or all_failed:
+            return httpx.Response(503)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": "Image reply"}}
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        clients = [
+            ChatAI(
+                "PRIVATE_KEY",
+                Settings(ai_provider=p, model=m, minimum_ai_interval_seconds=0),
+                "PRIVATE PERSONA",
+                client=client,
+            )
+            for p, m in (
+                ("google", "gemini-3.5-flash-lite"),
+                ("groq", "qwen/qwen3.8-27b"),
+            )
+        ]
+        vision = VisionFallbackAI(*clients, log=lambda _: None)
+        bot, state, text, _, transport, logs = make_bot(tmp_path, vision=vision)
+        bot.receive(incoming(text="Ảnh gì đây?"))
+        await asyncio.gather(*bot.tasks.values())
+        assert len(requests) == 2 and len(transport.downloads) == 1
+        assert len(transport.sent) == (0 if all_failed else 1)
+        assert not text.calls and not bot.pending_images
+        assert state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == 2
+        assert "PRIVATE" not in " ".join(logs)
+        if not all_failed:
+            assert transport.sent[0][1] == "Image reply"
+            assert any("Groq / qwen/qwen3.8-27b" in line for line in logs)
+        await finish(bot, state)
+        await vision.close()
 
 
 @pytest.mark.asyncio

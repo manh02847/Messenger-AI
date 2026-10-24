@@ -219,6 +219,24 @@ def test_copy_ai_preserves_existing_destination_scope_history_and_persona(
     assert persona.read_bytes() == b"destination persona"
 
 
+def test_copy_ai_keeps_the_vision_chain_in_the_same_order(
+    destination, tmp_path, monkeypatch
+):
+    source, raw, _ = source_bot(tmp_path)
+    raw.update(
+        vision_provider="",
+        vision_model="",
+        vision_models=["groq:qwen/qwen3.8-27b", "google:gemini-3.5-flash-lite"],
+    )
+    (source / "config.json").write_text(json.dumps(raw))
+    monkeypatch.setattr(cli.getpass, "getpass", lambda _: NEW_COOKIE)
+    cli.configure(copy_ai_from=source)
+    assert saved(destination, "config.json")["vision_models"] == raw["vision_models"]
+    assert saved(destination, "secrets.json")["facebook_cookie"] == NEW_COOKIE
+    assert not (destination / "data").exists()
+    assert not (destination / "persona.local.txt").exists()
+
+
 def test_copy_ai_requires_entering_cookie_even_when_destination_has_one(
     destination, tmp_path, monkeypatch
 ):
