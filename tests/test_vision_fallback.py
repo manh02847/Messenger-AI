@@ -393,4 +393,4 @@ def test_legacy_single_vision_source_is_preserved_without_implicitly_enabling_mo
     )
     assert legacy.vision_targets == (("nvidia", "google/gemma-4-31b-it"),)
     explicit = Settings.from_dict({"vision_models": list(VISION_PRESET)})
-    assert explicit.vision_targets[0] == ("google", "gemini-4-argon")
+    assert explicit.vision_targets[0] == ("google", "gemini-3.8-flash")

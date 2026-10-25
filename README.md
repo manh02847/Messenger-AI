@@ -177,7 +177,7 @@ Có thể tắt toàn bộ nguồn: bot tiếp tục nhận tin nhưng không g�
 `configure-ai` dùng được cho Google, NVIDIA, Groq và Cloudflare. Có thể truyền một hoặc nhiều model của cùng nguồn; ví dụ dưới đây là các lựa chọn độc lập, chỉ chạy dòng của nguồn muốn cấu hình:
 
 ```bash
-.venv/bin/python -m messenger_ai configure-ai google --models gemini-4-argon gemini-3.8-flash gemini-3.6-flash
+.venv/bin/python -m messenger_ai configure-ai google --models gemini-3.8-flash gemini-3.6-flash gemini-3.5-flash-lite gemini-3.1-flash-lite
 .venv/bin/python -m messenger_ai configure-ai nvidia --model google/gemma-4-31b-it
 .venv/bin/python -m messenger_ai configure-ai groq --model openai/gpt-oss-120b
 .venv/bin/python -m messenger_ai configure-ai cloudflare --model @cf/qwen/qwen3.8-27b
@@ -185,7 +185,7 @@ Có thể tắt toàn bộ nguồn: bot tiếp tục nhận tin nhưng không g�
 
 Lệnh lưu model/key và bật nguồn được chọn, dùng cùng bộ xử lý cấu hình cho cả bốn bên. Ở dòng key, Enter giữ key cũ. Thêm `--keep-key` để dùng key hiện có mà không hỏi/ghi lại key. Nếu không truyền `--models`, lệnh hỏi để bạn nhập mã trực tiếp; Enter giữ danh sách đang hiển thị. Nguồn chưa có model hiển thị mẫu của chương trình. Thứ tự thực tế được in ra sau khi lưu.
 
-Key và mã model lấy tại [NVIDIA API Catalog](https://build.nvidia.com/), [Google AI Studio](https://aistudio.google.com/apikey), [Groq Console](https://console.groq.com/) hoặc [Cloudflare REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). Cloudflare cần thêm Account ID. NVIDIA nhận mã `hãng/tên-model`, không nhập URL. Google nhận **mã API tự chọn**, kể cả model mới chưa có trong mẫu; không bị khóa vào danh sách cố định. Nhập `gemini-4-argon`, không nhập tên hiển thị `Gemini 4 Argon`, tiền tố `models/` hoặc URL.
+Key và mã model lấy tại [NVIDIA API Catalog](https://build.nvidia.com/), [Google AI Studio](https://aistudio.google.com/apikey), [Groq Console](https://console.groq.com/) hoặc [Cloudflare REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). Cloudflare cần thêm Account ID. NVIDIA nhận mã `hãng/tên-model`, không nhập URL. Google nhận **mã API tự chọn**, kể cả model mới chưa có trong mẫu; không bị khóa vào danh sách cố định. Nhập `gemini-3.8-flash`, không nhập tên hiển thị `Gemini 3.8 Flash`, tiền tố `models/` hoặc URL.
 
 ### Tự đổi model Google
 
@@ -195,7 +195,7 @@ Key và mã model lấy tại [NVIDIA API Catalog](https://build.nvidia.com/), [
 .venv/bin/python -m messenger_ai configure-ai google
 ```
 
-Nhập một mã như `gemini-4-argon`, hoặc nhiều mã như `gemini-4-argon gemini-3.8-flash gemini-3.6-flash`. Có thể dùng dấu phẩy thay dấu cách; thứ tự nhập là thứ tự thử. Nhấn Enter không nhập gì để giữ danh sách hiện tại. Chế độ này tự dùng key đã lưu nếu có, không hỏi lại cookie. Muốn nhập lại key thì thêm `--edit-key`; chưa có key sẽ được hỏi để nhập.
+Nhập một mã như `gemini-3.8-flash`, hoặc nhiều mã như `gemini-3.8-flash gemini-3.6-flash gemini-3.5-flash-lite gemini-3.1-flash-lite`. Có thể dùng dấu phẩy thay dấu cách; thứ tự nhập là thứ tự thử. Nhấn Enter không nhập gì để giữ danh sách hiện tại. Chế độ này tự dùng key đã lưu nếu có, không hỏi lại cookie. Muốn nhập lại key thì thêm `--edit-key`; chưa có key sẽ được hỏi để nhập.
 
 Đổi chuỗi ảnh cũng theo cách nhập trực tiếp, dùng key đã cấu hình:
 
@@ -216,21 +216,31 @@ Lệnh chỉ đọc [Google Models API](https://ai.google.dev/api/models), lấy
 Đổi model chữ theo thứ tự bạn muốn, dùng lại key cũ:
 
 ```bash
-.venv/bin/python -m messenger_ai configure-ai google --keep-key --models gemini-4-argon gemini-3.8-flash gemini-3.6-flash
+.venv/bin/python -m messenger_ai configure-ai google --keep-key --models gemini-3.8-flash gemini-3.6-flash gemini-3.5-flash-lite gemini-3.1-flash-lite
 .venv/bin/python -m messenger_ai providers only google
 ```
 
 Đổi riêng chuỗi đọc ảnh, cũng nhập thủ công theo thứ tự:
 
 ```bash
-.venv/bin/python -m messenger_ai configure-vision --chain google:gemini-4-argon google:gemini-3.8-flash google:gemini-3.6-flash
+.venv/bin/python -m messenger_ai configure-vision --chain google:gemini-3.8-flash google:gemini-3.6-flash
 ```
 
 Để dùng một model, giữ đúng một mã sau `--models` hoặc `--chain`. Có thể đổi sang mã khác từ `list-models` bất cứ lúc nào, không phải sửa code. Sau khi lưu, chạy `check-ai`, `check-vision --all` nếu có dùng ảnh, rồi restart service đúng acc. Chỉ bật Google thì retry/fallback cũng chỉ dùng các model Google đã chọn.
 
-Mẫu Google mới ưu tiên **Gemini 4 Argon → Gemini 3.8 Flash → Gemini 3.6 Flash** cho chữ; mẫu ảnh dùng Argon → 3.8 Flash trước các nguồn khác. Đây là mẫu khi cấu hình nguồn chưa có model hoặc gọi `configure-vision --chain` không kèm danh sách. **`git pull` không ghi đè model đã lưu**; muốn thay cấu hình hiện có thì chạy các lệnh trên. Bot không tự theo dõi catalog để đổi model.
+Mẫu Google ưu tiên **Gemini 3.8 Flash → Gemini 3.6 Flash → Gemini 3.5 Flash-Lite → Gemini 3.1 Flash-Lite** cho chữ; mẫu ảnh dùng 3.8 Flash → 3.6 Flash trước các nguồn khác. Các model Google trong mẫu có Free Tier cho đầu vào/đầu ra theo bảng giá Google ngày 25/10/2026; không đưa Argon vào mẫu vì model đó chỉ có trả phí. Đây là mẫu khi cấu hình nguồn chưa có model hoặc gọi `configure-vision --chain` không kèm danh sách. **`git pull` không ghi đè model đã lưu**; muốn thay cấu hình hiện có thì chạy các lệnh trên. Bot không tự theo dõi catalog để đổi model.
 
-Nếu AI Studio báo **Prepay credits depleted / No credits**, cần kiểm tra billing/số dư của project trước. Hạn mức hiển thị trên trang không phải số lượt miễn phí được cấp; đổi model hoặc retry không bổ sung số dư. Xem [Google Billing](https://ai.google.dev/gemini-api/docs/billing).
+**Có Free Tier cho model chưa đủ để bảo đảm tài khoản không bị tính phí.** Phải dùng key thuộc project đang hiển thị **Free Tier**; key thuộc project Paid Tier/Tier 1 áp dụng bảng giá Paid Tier, kể cả gọi Flash có cột Free Tier. Bot không kiểm tra được tier/số dư của project từ key hoặc từ `list-models`. Xem [Google Pricing](https://ai.google.dev/gemini-api/docs/pricing) và [Google Billing](https://ai.google.dev/gemini-api/docs/billing).
+
+Với nhu cầu dùng miễn phí, giữ suy luận tự động và tắt Search cho chuỗi Gemini 3 ở trên:
+
+```bash
+.venv/bin/python -m messenger_ai features --reasoning auto --search off
+```
+
+Google Search trên các Gemini 3 này yêu cầu Paid Tier theo bảng giá hiện tại. Quota Search miễn phí nằm trong Paid Tier không làm token đầu vào/đầu ra thành miễn phí. Nếu đã có `model_features`, kiểm tra `features --show` và đặt tra cứu `off` ở từng model đang dùng; lựa chọn riêng vẫn ưu tiên hơn lệnh chung. Nếu cần tra cứu với Free Tier, Gemini 2.5 Flash có hạn mức grounding miễn phí riêng; phải tự chọn model đó và kiểm tra quota hiện có. Không bật billing/chuyển tier chỉ để dùng mẫu này.
+
+Nếu AI Studio báo **Prepay credits depleted / No credits**, cần kiểm tra billing/số dư của project trước. Đổi model hoặc retry không bổ sung số dư và không đưa project trả phí về Free Tier. Muốn đổi key sau khi chọn đúng project, dùng `configure-ai google --edit-key`; không dán key vào chat/GitHub.
 
 Lệnh cũ `configure-google`, `configure-nvidia`, `configure-google --only` và `--disable` vẫn được chuyển vào cùng bộ xử lý. `--fallback` / `--no-fallback` của Groq/Cloudflare chỉ bật/tắt cờ nguồn còn lại; nên dùng `providers` để quản lý thống nhất.
 
@@ -252,19 +262,19 @@ Chạy lệnh ngắn, rồi nhập **on**, **off** hoặc **auto** ở hai câu 
 
 Hai lựa chọn áp dụng cho cả chữ và ảnh, **theo đúng nguồn/model của từng lần thử**. Không có lượt gọi AI riêng để phân loại câu hỏi. Cấu hình cũ không có hai trường mới mặc định `off`/`off`, chưa tự bật Search. Lưu bằng `features` không gọi API, không đổi model, cờ nguồn, key/cookie, persona, lịch sử hoặc bộ đếm.
 
-Đặt nhanh cả hai thành tự động, hoặc chỉ xem trạng thái mà không lưu:
+Đặt nhanh suy luận tự động và tắt Search cho nhu cầu chat miễn phí, hoặc chỉ xem trạng thái mà không lưu:
 
 ```bash
-.venv/bin/python -m messenger_ai features --reasoning auto --search auto
+.venv/bin/python -m messenger_ai features --reasoning auto --search off
 .venv/bin/python -m messenger_ai features --show
 ```
 
 Có thể chỉnh riêng từng **nguồn:model**, hoặc bỏ lựa chọn riêng để dùng lại mặc định chung:
 
 ```bash
-.venv/bin/python -m messenger_ai features --model google:gemini-4-argon
-.venv/bin/python -m messenger_ai features --model google:gemini-4-argon --reasoning off --search auto
-.venv/bin/python -m messenger_ai features --model google:gemini-4-argon --reset
+.venv/bin/python -m messenger_ai features --model google:gemini-3.8-flash
+.venv/bin/python -m messenger_ai features --model google:gemini-3.8-flash --reasoning off --search off
+.venv/bin/python -m messenger_ai features --model google:gemini-3.8-flash --reset
 ```
 
 Lựa chọn riêng lưu trong `model_features`; đổi chế độ chung không xóa chúng. `--show --model nguồn:model` xem khả năng/mức có hiệu lực, kể cả model chưa được chọn. Chỉ đặt lựa chọn không bật thêm nguồn; cờ `provider_enabled` vẫn quyết định nguồn có được gọi hay không. Cấu hình AI sao chép sang acc khác bao gồm cả hai chế độ và lựa chọn riêng.
@@ -273,7 +283,7 @@ Khả năng đã được đối chiếu cho các model đang dùng:
 
 | Nguồn/model | Điều khiển suy luận | Tra cứu đã tích hợp |
 |---|---|---|
-| Google Gemini 4 Argon, 3.8 Flash, 3.6 Flash và các Gemini 3 được nhận diện | `thinkingLevel`; `auto` dùng mức cân bằng và cơ chế suy nghĩ động của model | Google Search ở các model đã xác minh hỗ trợ |
+| Google Gemini 3.8 Flash, 3.6 Flash và các Gemini 3 được nhận diện; Argon cho người tự chọn trả phí | `thinkingLevel`; `auto` dùng mức cân bằng và cơ chế suy nghĩ động của model | Google Search ở các model đã xác minh hỗ trợ |
 | Google Gemini 2.5 Pro/Flash/Flash-Lite | `thinkingBudget`; `auto` dùng ngân sách động; Pro không tắt hẳn | Google Search |
 | Google Gemma 4 31B/26B | `high` hoặc `minimal`; auto chọn theo câu hỏi | Chưa tích hợp |
 | NVIDIA Google Gemma 4 31B/26B | `enable_thinking`; auto chọn theo câu hỏi | Chưa tích hợp |
@@ -305,11 +315,11 @@ Ví dụ phần nguồn, với Google đang bật và NVIDIA đang tắt:
   },
   "text_models": [
     "nvidia:google/gemma-4-31b-it",
-    "google:gemini-4-argon",
-    "google:gemini-3.8-flash"
+    "google:gemini-3.8-flash",
+    "google:gemini-3.6-flash"
   ],
   "vision_models": [
-    "google:gemini-4-argon",
+    "google:gemini-3.8-flash",
     "nvidia:google/gemma-4-31b-it"
   ]
 }
@@ -485,8 +495,8 @@ Mẫu ưu tiên theo thứ tự dưới, chỉ thêm nguồn **đang bật và �
 
 | Thứ tự | Nguồn | Model |
 |---|---|---|
-| 1 | Google | `gemini-4-argon` |
-| 2 | Google | `gemini-3.8-flash` |
+| 1 | Google | `gemini-3.8-flash` |
+| 2 | Google | `gemini-3.6-flash` |
 | 3 | NVIDIA | `google/gemma-4-31b-it` |
 | 4 | Groq | `qwen/qwen3.8-27b` |
 | 5 | Cloudflare | `@cf/qwen/qwen3.8-27b` |
@@ -499,7 +509,7 @@ Muốn **tự chọn model/thứ tự**, ghi rõ danh sách (tối đa 12 mục,
 
 ```bash
 .venv/bin/python -m messenger_ai configure-vision --chain \
-  google:gemini-4-argon \
+  google:gemini-3.8-flash \
   groq:qwen/qwen3.8-27b \
   nvidia:google/gemma-4-31b-it
 ```

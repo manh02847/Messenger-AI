@@ -50,9 +50,7 @@ async def test_google_native_request_preserves_context_and_hides_thoughts(model)
         ]
         assert payload["generationConfig"]["maxOutputTokens"] == 4096
         assert payload["generationConfig"]["thinkingConfig"] == {
-            "thinkingLevel": "minimal"
-            if model.startswith("gemma-") or model == "gemini-3.6-flash"
-            else "low",
+            "thinkingLevel": "low" if model == "gemini-3.8-flash" else "minimal",
             "includeThoughts": False,
         }
         assert "reasoning_effort" not in payload

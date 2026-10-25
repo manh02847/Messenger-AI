@@ -78,9 +78,10 @@ def test_manual_models_keep_key_cookie_persona_history_and_other_model_lists(acc
 def test_new_presets_never_replace_an_existing_selection_implicitly(account):
     root, raw, _ = account
     assert GOOGLE_DEFAULT_MODELS == (
-        "gemini-4-argon",
         "gemini-3.8-flash",
         "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
     )
     cli.configure_ai("google", keep_key=True)
     assert json.loads((root / "config.json").read_text()) == raw
@@ -186,7 +187,7 @@ async def test_custom_models_use_native_google_payload_context_and_selected_mode
         generation = payload["generationConfig"]
         if model in GOOGLE_DEFAULT_MODELS:
             assert generation["thinkingConfig"] == {
-                "thinkingLevel": "minimal" if model == "gemini-3.6-flash" else "low",
+                "thinkingLevel": "low" if model == "gemini-3.8-flash" else "minimal",
                 "includeThoughts": False,
             }
         elif model == "gemini-2.5-flash":
