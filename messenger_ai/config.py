@@ -5,7 +5,7 @@ import math
 import os
 import re
 import tempfile
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -146,6 +146,9 @@ class Settings:
     max_completion_tokens: int = 4096
     max_ai_calls_per_day: int = 150
     ai_retry_enabled: bool = True
+    reasoning_mode: str = "off"
+    search_mode: str = "off"
+    model_features: dict[str, dict[str, str]] = field(default_factory=dict)
     max_replies_per_thread_per_day: int = 1000
     minimum_ai_interval_seconds: float = 6
     retention_days: int = 7
@@ -285,6 +288,24 @@ class Settings:
             raise ValueError("dry_run phải là true hoặc false.")
         if not isinstance(result.ai_retry_enabled, bool):
             raise ValueError("ai_retry_enabled phải là true hoặc false.")
+        for name in ("reasoning_mode", "search_mode"):
+            if getattr(result, name) not in ("on", "off", "auto"):
+                raise ValueError(f"{name} phải là on, off hoặc auto.")
+        if (
+            not isinstance(result.model_features, dict)
+            or len(result.model_features) > 64
+        ):
+            raise ValueError("model_features cần một đối tượng, tối đa 64 model.")
+        for target, options in result.model_features.items():
+            model_target(target)
+            if (
+                not isinstance(options, dict)
+                or set(options) - {"reasoning", "search"}
+                or any(mode not in ("on", "off", "auto") for mode in options.values())
+            ):
+                raise ValueError(
+                    "model_features chỉ nhận reasoning/search: on, off hoặc auto."
+                )
         if result.ai_provider not in ("groq", "cloudflare", "google"):
             raise ValueError("ai_provider phải là groq, cloudflare hoặc google.")
         if result.ai_provider == "google" and result.ai_fallback:

@@ -236,6 +236,61 @@ Lệnh cũ `configure-google`, `configure-nvidia`, `configure-google --only` và
 
 `upgrade-chat` đổi các model chữ Groq/Cloudflare đã cấu hình sang Qwen3.8, giữ model nguồn khác và cờ bật/tắt. Lệnh nâng ngân sách cục bộ lên ít nhất 1000 lần gọi/ngày và 1000 lượt rep/chat/ngày, không cấp thêm quota API.
 
+### Bật, tắt hoặc tự động suy luận và tra cứu
+
+Chạy lệnh ngắn, rồi nhập **on**, **off** hoặc **auto** ở hai câu hỏi. Có thể nhập `bật`/`tắt`/`tự động`; Enter giữ lựa chọn hiện tại:
+
+```bash
+.venv/bin/python -m messenger_ai features
+```
+
+| Chế độ | Suy luận | Tra cứu web |
+|---|---|---|
+| `off` | Tắt nếu model cho phép; model luôn suy luận dùng mức thấp nhất | Không gắn công cụ tìm kiếm |
+| `on` | Bật suy luận sâu theo API của model | Yêu cầu model dùng Google Search xác minh thông tin thực tế |
+| `auto` | Gemini tự phân bổ suy nghĩ trong ngân sách phù hợp; API chỉ có công tắc/mức cố định dùng quy tắc tại bot để chọn theo câu hỏi | Bật công cụ cho model tự quyết định khi cần thông tin mới/kiểm chứng; không cần tìm cho lời chào và chat cá nhân |
+
+Hai lựa chọn áp dụng cho cả chữ và ảnh, **theo đúng nguồn/model của từng lần thử**. Không có lượt gọi AI riêng để phân loại câu hỏi. Cấu hình cũ không có hai trường mới mặc định `off`/`off`, chưa tự bật Search. Lưu bằng `features` không gọi API, không đổi model, cờ nguồn, key/cookie, persona, lịch sử hoặc bộ đếm.
+
+Đặt nhanh cả hai thành tự động, hoặc chỉ xem trạng thái mà không lưu:
+
+```bash
+.venv/bin/python -m messenger_ai features --reasoning auto --search auto
+.venv/bin/python -m messenger_ai features --show
+```
+
+Có thể chỉnh riêng từng **nguồn:model**, hoặc bỏ lựa chọn riêng để dùng lại mặc định chung:
+
+```bash
+.venv/bin/python -m messenger_ai features --model google:gemini-4-argon
+.venv/bin/python -m messenger_ai features --model google:gemini-4-argon --reasoning off --search auto
+.venv/bin/python -m messenger_ai features --model google:gemini-4-argon --reset
+```
+
+Lựa chọn riêng lưu trong `model_features`; đổi chế độ chung không xóa chúng. `--show --model nguồn:model` xem khả năng/mức có hiệu lực, kể cả model chưa được chọn. Chỉ đặt lựa chọn không bật thêm nguồn; cờ `provider_enabled` vẫn quyết định nguồn có được gọi hay không. Cấu hình AI sao chép sang acc khác bao gồm cả hai chế độ và lựa chọn riêng.
+
+Khả năng đã được đối chiếu cho các model đang dùng:
+
+| Nguồn/model | Điều khiển suy luận | Tra cứu đã tích hợp |
+|---|---|---|
+| Google Gemini 4 Argon, 3.8 Flash, 3.6 Flash và các Gemini 3 được nhận diện | `thinkingLevel`; `auto` dùng mức cân bằng và cơ chế suy nghĩ động của model | Google Search ở các model đã xác minh hỗ trợ |
+| Google Gemini 2.5 Pro/Flash/Flash-Lite | `thinkingBudget`; `auto` dùng ngân sách động; Pro không tắt hẳn | Google Search |
+| Google Gemma 4 31B/26B | `high` hoặc `minimal`; auto chọn theo câu hỏi | Chưa tích hợp |
+| NVIDIA Google Gemma 4 31B/26B | `enable_thinking`; auto chọn theo câu hỏi | Chưa tích hợp |
+| Groq GPT-OSS 20B/120B, Qwen 3.8 27B | Mức được API hỗ trợ; GPT-OSS không tắt hẳn | Chưa tích hợp |
+| Cloudflare Qwen 3.8 27B | `low`/`medium`/`xhigh`; không có mức tắt hẳn được xác minh | Chưa tích hợp |
+| Cloudflare Qwen3-30B-A3B cũ | Công tắc mềm `/think` và `/no_think`; hiệu lực còn tùy template của nguồn | Chưa tích hợp |
+
+Tên tự nhập chưa được nhận diện vẫn dùng mặc định của API, không đoán/gửi tham số reasoning hoặc công cụ không hỗ trợ; `features --show` ghi rõ giới hạn đó. Khi chuyển sang nguồn/model chưa hỗ trợ tra cứu, lượt đó trả lời với quy tắc không tự nhận đã tìm trên mạng. Không tự gọi nhà cung cấp khác ngoài danh sách đang bật để tra cứu.
+
+Google quyết định việc thực thi Search: **bật/auto không có nghĩa mọi lượt đều phát sinh tìm kiếm**. Khi có dữ liệu grounding, bot thêm các nguồn web thật và gợi ý tìm kiếm Google bằng chữ/link trong tin trả lời. Log ghi `tra cứu thực tế=có/không` và số nguồn, không in câu tìm kiếm, HTML, API key hoặc nội dung chat. Lỗi quyền/billing/cấu hình Search được báo rõ và không âm thầm thử lại cùng request với công cụ bị gỡ bỏ.
+
+Suy luận/tra cứu cần thêm thời gian: lượt thực sự dùng chế độ này có deadline **45 giây/model**, cả chuỗi **90 giây**, nhóm Google chữ tối đa **60 giây** (Gemma tối đa 30 giây khi có Gemini dự phòng). Lượt cơ bản giữ giới hạn cũ. Quá tải/timeout vẫn đi theo cơ chế giữ câu chờ; không bỏ giới hạn thời gian để retry liên tục trong một request.
+
+Ngân sách sinh vẫn là `max_completion_tokens` đang cấu hình, gồm cả suy luận; câu quá khó có thể hết ngân sách và bot không gửi bản bị cắt. Không tự tăng token hoặc quota. Một request vẫn tính một lượt ở bộ đếm cục bộ, nhưng **token suy luận và truy vấn Google Search có cách tính quota/phí riêng của nhà cung cấp**. Xem [Google thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking), [Google Search](https://ai.google.dev/gemini-api/docs/generate-content/google-search), [Groq reasoning](https://console.groq.com/docs/reasoning) và [Cloudflare Qwen](https://developers.cloudflare.com/workers-ai/models/qwen3.8-27b/).
+
+Chạy `chat-ai`, hỏi một câu cần thông tin hiện tại để kiểm tra nguồn/link trả về, rồi restart service đúng acc. `check-ai` chỉ hỏi chào nên `auto` có thể không tìm kiếm; các lệnh thử không gửi Messenger.
+
 ### Ba trường quản lý nguồn trong config.json
 
 Ví dụ phần nguồn, với Google đang bật và NVIDIA đang tắt:

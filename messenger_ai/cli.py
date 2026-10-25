@@ -45,6 +45,9 @@ AI_SETTINGS = (
     "max_completion_tokens",
     "max_ai_calls_per_day",
     "ai_retry_enabled",
+    "reasoning_mode",
+    "search_mode",
+    "model_features",
     "minimum_ai_interval_seconds",
     "input_char_limit",
     "output_char_limit",
@@ -232,6 +235,92 @@ def providers(action: str | None = None, names: list[str] | None = None) -> None
     describe_routes(raw)
     if action is not None:
         print("Đã lưu cờ bật/tắt; giữ model và key. Khởi động lại bot để áp dụng.")
+
+
+def _ask_feature_mode(label: str, current: str) -> str:
+    aliases = {
+        "on": "on",
+        "bật": "on",
+        "bat": "on",
+        "1": "on",
+        "off": "off",
+        "tắt": "off",
+        "tat": "off",
+        "2": "off",
+        "auto": "auto",
+        "tự động": "auto",
+        "tu dong": "auto",
+        "3": "auto",
+    }
+    try:
+        value = (
+            input(f"{label}: on=bật, off=tắt, auto=tự động (Enter giữ {current}): ")
+            .strip()
+            .casefold()
+        )
+    except EOFError:
+        raise ValueError(
+            "Chưa chọn tính năng; dùng --reasoning/--search khi chạy không tương tác."
+        ) from None
+    if not value:
+        return current
+    if value not in aliases:
+        raise ValueError("Chọn on, off hoặc auto.")
+    return aliases[value]
+
+
+def configure_features(
+    reasoning: str | None = None,
+    search: str | None = None,
+    *,
+    model: str | None = None,
+    show: bool = False,
+    reset: bool = False,
+) -> None:
+    from .features import describe, modes
+
+    raw = read_config(ROOT)
+    settings = Settings.from_dict(raw)
+    target = model_target(model) if model is not None else None
+    if show and (reset or reasoning is not None or search is not None):
+        raise ValueError("Dùng --show riêng để chỉ xem tính năng.")
+    if show:
+        describe(settings, targets=[target] if target else None)
+        return
+    if reset:
+        if target is None or reasoning is not None or search is not None:
+            raise ValueError("Dùng --model NGUỒN:MODEL --reset để bỏ cấu hình riêng.")
+        overrides = {
+            key: dict(options) for key, options in settings.model_features.items()
+        }
+        overrides.pop(model, None)
+        raw["model_features"] = overrides
+    else:
+        current = (
+            modes(settings, *target)
+            if target
+            else (settings.reasoning_mode, settings.search_mode)
+        )
+        if reasoning is None and search is None:
+            reasoning = _ask_feature_mode("Suy luận", current[0])
+            search = _ask_feature_mode("Tra cứu web", current[1])
+        options = {
+            name: value
+            for name, value in (("reasoning", reasoning), ("search", search))
+            if value is not None
+        }
+        if target:
+            overrides = {
+                key: dict(value) for key, value in settings.model_features.items()
+            }
+            overrides[model] = {**overrides.get(model, {}), **options}
+            raw["model_features"] = overrides
+        else:
+            raw.update({f"{name}_mode": value for name, value in options.items()})
+    settings = Settings.from_dict(raw)
+    save_config(ROOT, raw)
+    describe(settings, targets=[target] if target else None)
+    print("Đã lưu lựa chọn. Chạy chat-ai để thử; khởi động lại bot để áp dụng.")
 
 
 def configure_ai(
@@ -679,6 +768,9 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                     settings, state, ai, transport, transport.own_id, image_ai=image_ai
                 )
                 print(f"AI: {ai.description}")
+                from .features import describe
+
+                describe(settings)
                 print(
                     "Giữ lượt chờ khi AI lỗi tạm thời:",
                     "BẬT" if settings.ai_retry_enabled else "TẮT",
@@ -783,6 +875,20 @@ def main() -> None:
         "list-models", help="Lấy mã model Google từ API, không đổi cấu hình."
     )
     model_list.add_argument("provider", choices=("google",))
+    feature_config = sub.add_parser(
+        "features",
+        help="Chọn bật/tắt/auto suy luận và tra cứu, chung hoặc riêng từng model.",
+    )
+    feature_config.add_argument("--reasoning", choices=("on", "off", "auto"))
+    feature_config.add_argument("--search", choices=("on", "off", "auto"))
+    feature_config.add_argument("--model", metavar="NGUỒN:MODEL")
+    feature_view = feature_config.add_mutually_exclusive_group()
+    feature_view.add_argument(
+        "--show", action="store_true", help="Chỉ xem, không hỏi/lưu."
+    )
+    feature_view.add_argument(
+        "--reset", action="store_true", help="Bỏ lựa chọn riêng của --model."
+    )
     provider_command = sub.add_parser(
         "providers", help="Xem hoặc bật/tắt nguồn chung cho chữ và ảnh."
     )
@@ -905,6 +1011,14 @@ def main() -> None:
             )
         elif args.command == "list-models":
             asyncio.run(list_models(args.provider))
+        elif args.command == "features":
+            configure_features(
+                args.reasoning,
+                args.search,
+                model=args.model,
+                show=args.show,
+                reset=args.reset,
+            )
         elif args.command == "providers":
             providers(args.action, args.names)
         elif args.command == "configure-google":

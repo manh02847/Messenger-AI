@@ -520,7 +520,7 @@ async def test_qwen38_request_contract(provider, model):
     def handler(request):
         payload = json.loads(request.content)
         assert payload["model"] == model
-        assert payload["reasoning_effort"] == "low"
+        assert payload["reasoning_effort"] == ("none" if provider == "groq" else "low")
         assert payload["max_completion_tokens"] == 4096
         assert "max_tokens" not in payload
         assert "include_reasoning" not in payload

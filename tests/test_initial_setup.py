@@ -48,6 +48,11 @@ def source_bot(tmp_path):
         "google_models": ["gemini-3.5-flash-lite", "gemma-4-31b-it"],
         "max_ai_calls_per_day": 1000,
         "ai_retry_enabled": False,
+        "reasoning_mode": "auto",
+        "search_mode": "auto",
+        "model_features": {
+            "google:gemma-4-31b-it": {"reasoning": "off", "search": "off"}
+        },
         "history_char_limit": 4000,
         "history_idle_seconds": 1800,
         "max_completion_tokens": 3000,
@@ -172,6 +177,9 @@ def test_copy_ai_creates_separate_account_without_copying_identity_or_device(
         "vision_models",
         "max_ai_calls_per_day",
         "ai_retry_enabled",
+        "reasoning_mode",
+        "search_mode",
+        "model_features",
         "history_char_limit",
         "history_idle_seconds",
     ):

@@ -20,6 +20,8 @@ from .config import (
     valid_nvidia_model,
 )
 from .context import system_prompt
+from .features import FeaturePlan, plan
+from .grounding import with_sources
 from .images import ImageInput, MAX_IMAGES
 
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -32,6 +34,15 @@ VISION_TIMEOUT = 30
 VISION_POOL_TIMEOUT = 45
 VISION_MODEL_TIMEOUT = 10
 VISION_NVIDIA_TIMEOUT = 6
+ENHANCED_MODEL_TIMEOUT = 45
+ENHANCED_REQUEST_TIMEOUT = 40
+ENHANCED_POOL_TIMEOUT = 90
+ENHANCED_GOOGLE_POOL_TIMEOUT = 60
+
+
+def extended_client(ai, history) -> bool:
+    settings = getattr(ai, "settings", None)
+    return isinstance(settings, Settings) and plan(settings, history).extended
 
 
 class AIError(RuntimeError):
@@ -113,9 +124,14 @@ def google_payload(
     persona: str,
     history: list[dict[str, str]],
     images: list[ImageInput] | None = None,
+    *,
+    features: FeaturePlan | None = None,
 ) -> dict:
+    features = features or plan(settings, history)
     payload = {
-        "systemInstruction": {"parts": [{"text": system_prompt(persona)}]},
+        "systemInstruction": {
+            "parts": [{"text": system_prompt(persona) + features.prompt}]
+        },
         "contents": [
             {
                 "role": "model" if item["role"] == "assistant" else "user",
@@ -128,13 +144,12 @@ def google_payload(
             "maxOutputTokens": settings.max_completion_tokens,
         },
     }
-    if settings.model.startswith(("gemma-4-", "gemini-3", "gemini-4")):
-        payload["generationConfig"]["thinkingConfig"] = {
-            "thinkingLevel": "minimal"
-            if settings.model.startswith("gemma-")
-            else "low",
-            "includeThoughts": False,
-        }
+    if features.thinking is not None:
+        payload["generationConfig"]["thinkingConfig"] = features.thinking
+    if settings.model in ("gemini-4-argon",) or settings.model.startswith("gemini-3"):
+        payload["generationConfig"]["temperature"] = 1.0
+    if features.search:
+        payload["tools"] = [{"googleSearch": {}}]
     if images:
         payload["contents"][-1]["parts"].extend(
             {"inlineData": {"mimeType": image.mime_type, "data": image.data}}
@@ -226,6 +241,7 @@ class ChatAI:
         self.settings = settings
         self.description = f"{self.label} / {settings.model}"
         self.last_used = ""
+        self.last_search_used = False
         self.persona = persona
         self.client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(25, connect=10), follow_redirects=False
@@ -247,18 +263,16 @@ class ChatAI:
             raise AIError(
                 "Lượt đọc ảnh cần tin người nhắn cuối cùng và tối đa hai ảnh."
             )
-        persona = system_prompt(self.persona)
+        features = plan(self.settings, history)
+        persona = system_prompt(self.persona) + features.prompt
         if images:
             persona += (
                 f"\nLượt này cung cấp {len(images)} ảnh gần nhất. Trả lời theo câu hỏi và persona; "
                 "nếu chỉ gửi ảnh thì nhận xét ngắn tự nhiên. Không đoán chữ hoặc chi tiết mờ, "
                 "không khẳng định đã xem các ảnh khác không có trong request."
             )
-        if (
-            self.provider == "cloudflare"
-            and self.settings.model == "@cf/qwen/qwen3-30b-a3b-fp8"
-        ):
-            persona += "\n/no_think"
+        if features.suffix:
+            persona += "\n" + features.suffix
         payload = {
             "model": self.settings.model,
             "messages": [{"role": "system", "content": persona}, *history],
@@ -286,30 +300,34 @@ class ChatAI:
             else "max_completion_tokens"
         )
         payload[token_field] = self.settings.max_completion_tokens
-        if self.provider == "groq" and self.settings.model.startswith(
-            "openai/gpt-oss-"
-        ):
-            payload.update(reasoning_effort="low", include_reasoning=False)
-        elif self.provider == "groq" and self.settings.model == "qwen/qwen3.8-27b":
-            payload.update(reasoning_effort="low", reasoning_format="hidden")
-        elif (
-            self.provider == "cloudflare"
-            and self.settings.model == "@cf/qwen/qwen3.8-27b"
-        ):
-            payload.update(reasoning_effort="low")
-        if self.provider == "nvidia" and self.settings.model.startswith(
-            "google/gemma-4-"
-        ):
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        payload.update(features.fields)
         headers = {"Authorization": f"Bearer {self.api_key}"}
         if self.provider == "nvidia":
             headers["Accept"] = "application/json"
         if self.provider == "google":
-            payload = google_payload(self.settings, self.persona, history, images)
+            payload = google_payload(
+                self.settings, self.persona, history, images, features=features
+            )
             if images:
                 payload["systemInstruction"]["parts"][0]["text"] = persona
             headers = {"x-goog-api-key": self.api_key}
         async with self._lock:
+            self.last_search_used = False
+            if features.extended:
+                try:
+                    async with asyncio.timeout(ENHANCED_MODEL_TIMEOUT):
+                        return await self._request(
+                            payload,
+                            headers,
+                            reserve,
+                            vision=bool(images),
+                            enhanced=True,
+                        )
+                except TimeoutError:
+                    raise ProviderUnavailable(
+                        "Nguồn suy luận/tra cứu phản hồi quá chậm; có thể thử lại sau.",
+                        30,
+                    ) from None
             if images:
                 try:
                     async with asyncio.timeout(VISION_TIMEOUT):
@@ -339,7 +357,9 @@ class ChatAI:
                     ) from None
             return await self._request(payload, headers, reserve)
 
-    async def _request(self, payload, headers, reserve, *, vision=False):
+    async def _request(
+        self, payload, headers, reserve, *, vision=False, enhanced=False
+    ):
         google = self.provider == "google"
         nvidia = self.provider == "nvidia"
         attempts = (
@@ -355,7 +375,9 @@ class ChatAI:
                 raise AIBudgetExceeded()
             self._last_attempt = time.monotonic()
             request_options = (
-                {"timeout": httpx.Timeout(25, connect=4)}
+                {"timeout": httpx.Timeout(ENHANCED_REQUEST_TIMEOUT, connect=4)}
+                if enhanced
+                else {"timeout": httpx.Timeout(25, connect=4)}
                 if vision
                 else {"timeout": httpx.Timeout(GOOGLE_REQUEST_TIMEOUT, connect=4)}
                 if google
@@ -378,6 +400,17 @@ class ChatAI:
                     ) from None
                 await asyncio.sleep(2**attempt)
                 continue
+            if (
+                google
+                and payload.get("tools")
+                and response.status_code in (400, 402, 403)
+            ):
+                raise ProviderUnavailable(
+                    f"Google không chấp nhận tra cứu (HTTP {response.status_code}); "
+                    "kiểm tra model, quyền Search và billing, hoặc tắt tra cứu bằng features.",
+                    600,
+                    retryable=False,
+                )
             if vision and response.status_code in (401, 403, 404, 410):
                 raise ProviderUnavailable(
                     f"{self.label} từ chối quyền truy cập hoặc model đọc ảnh chưa sẵn sàng "
@@ -473,6 +506,14 @@ class ChatAI:
                 data = response.json()
                 if self.provider == "google":
                     answer = google_text(data)
+                    answer, used_search, source_count = with_sources(
+                        data, answer, self.settings.output_char_limit
+                    )
+                    self.last_search_used = used_search
+                    if payload.get("tools"):
+                        print(
+                            f"{self.description}: tra cứu thực tế={'có' if used_search else 'không'}; nguồn={source_count}."
+                        )
                     self.last_used = self.description
                     return answer
                 choice = data["choices"][0]
@@ -566,7 +607,12 @@ class FallbackAI:
     async def generate(self, history, reserve):
         async with self._lock:
             try:
-                async with asyncio.timeout(60):
+                timeout = (
+                    ENHANCED_POOL_TIMEOUT
+                    if any(extended_client(ai, history) for ai in self.clients)
+                    else 60
+                )
+                async with asyncio.timeout(timeout):
                     return await self._generate(history, reserve)
             except TimeoutError:
                 raise ProviderUnavailable(
@@ -574,8 +620,15 @@ class FallbackAI:
                 ) from None
 
     async def _generate(self, history, reserve):
-        google_remaining = GOOGLE_POOL_TIMEOUT
-        gemma_remaining = GOOGLE_GEMMA_TIMEOUT
+        extended_google = any(
+            getattr(ai, "provider", None) == "google" and extended_client(ai, history)
+            for ai in self.clients
+        )
+        google_remaining = (
+            ENHANCED_GOOGLE_POOL_TIMEOUT if extended_google else GOOGLE_POOL_TIMEOUT
+        )
+        gemma_limit = 30 if extended_google else GOOGLE_GEMMA_TIMEOUT
+        gemma_remaining = gemma_limit
         has_flash = any(
             getattr(ai, "provider", None) == "google"
             and getattr(getattr(ai, "settings", None), "model", "").startswith(
@@ -609,7 +662,7 @@ class FallbackAI:
                         if gemma_deadline:
                             gemma_remaining = 0
                             self.log(
-                                "Gemma đã hết 10 giây chờ của lượt này; thử Flash tiếp theo."
+                                f"Gemma đã hết {gemma_limit:g} giây chờ của lượt này; thử Flash tiếp theo."
                             )
                         else:
                             self.log(
@@ -661,7 +714,12 @@ class VisionFallbackAI(FallbackAI):
         async with self._lock:
             self.last_used = ""
             try:
-                async with asyncio.timeout(VISION_POOL_TIMEOUT):
+                timeout = (
+                    ENHANCED_POOL_TIMEOUT
+                    if any(extended_client(ai, history) for ai in self.clients)
+                    else VISION_POOL_TIMEOUT
+                )
+                async with asyncio.timeout(timeout):
                     return await self._generate_images(history, reserve, images)
             except TimeoutError:
                 raise ProviderUnavailable(
@@ -674,7 +732,9 @@ class VisionFallbackAI(FallbackAI):
                 continue
             try:
                 timeout = (
-                    VISION_NVIDIA_TIMEOUT
+                    ENHANCED_MODEL_TIMEOUT
+                    if extended_client(ai, history)
+                    else VISION_NVIDIA_TIMEOUT
                     if ai.provider == "nvidia"
                     else VISION_MODEL_TIMEOUT
                 )

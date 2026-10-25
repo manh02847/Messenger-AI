@@ -186,7 +186,12 @@ async def test_custom_models_use_native_google_payload_context_and_selected_mode
         generation = payload["generationConfig"]
         if model in GOOGLE_DEFAULT_MODELS:
             assert generation["thinkingConfig"] == {
-                "thinkingLevel": "low",
+                "thinkingLevel": "minimal" if model == "gemini-3.6-flash" else "low",
+                "includeThoughts": False,
+            }
+        elif model == "gemini-2.5-flash":
+            assert generation["thinkingConfig"] == {
+                "thinkingBudget": 0,
                 "includeThoughts": False,
             }
         else:
