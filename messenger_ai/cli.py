@@ -14,7 +14,6 @@ from dataclasses import replace
 from pathlib import Path
 
 from .config import (
-    GOOGLE_MODELS,
     NVIDIA_DEFAULT_MODEL,
     PROVIDER_KEYS,
     ROOT,
@@ -218,6 +217,7 @@ def configure_ai(
     models: list[str] | None = None,
     disable: bool = False,
     only: bool = False,
+    keep_key: bool = False,
 ) -> None:
     if provider not in PROVIDER_KEYS:
         raise ValueError("Nguồn phải là google/nvidia/groq/cloudflare.")
@@ -227,10 +227,10 @@ def configure_ai(
         providers("disable", [provider])
         return
     raw = read_config(ROOT)
-    selected = list(
-        models or models_for(raw, provider) or DEFAULT_TEXT_MODELS[provider]
-    )
-    set_models(raw, provider, selected, primary=True)
+    previous = models_for(raw, provider)
+    selected = list(models or previous or DEFAULT_TEXT_MODELS[provider])
+    if models is not None or not previous:
+        set_models(raw, provider, selected, primary=not previous)
     switch_providers(raw, "only" if only else "enable", [provider])
     if fallback is not None:
         if provider not in ("groq", "cloudflare"):
@@ -245,13 +245,31 @@ def configure_ai(
         raw["max_ai_calls_per_day"] = daily_limit
     Settings.from_dict(raw)
     secrets = load_secrets(ROOT)
-    _ask_ai_key(secrets, provider)
+    if not keep_key:
+        _ask_ai_key(secrets, provider)
     validate_routes(raw, secrets)
-    private_json(ROOT / "secrets.json", secrets)
+    if not keep_key:
+        private_json(ROOT / "secrets.json", secrets)
     save_config(ROOT, raw)
     describe_routes(raw)
     print(
         "Đã lưu model/key và cờ nguồn; chưa gọi API thật. Khởi động lại bot để áp dụng."
+    )
+
+
+async def list_models(provider: str) -> None:
+    from .model_catalog import list_google_models
+
+    if provider != "google":
+        raise ValueError("Lệnh list-models hiện hỗ trợ Google.")
+    models = await list_google_models(load_secrets(ROOT).get("google_api_key", ""))
+    print("Google: mã model có generateContent do API trả về:")
+    for model in models:
+        print(model)
+    print(
+        "Danh sách này không xác nhận quota/billing hoặc khả năng đọc ảnh. "
+        "Chọn bằng configure-ai google --keep-key --models MÃ_MODEL; "
+        "không tự đổi cấu hình."
     )
 
 
@@ -725,8 +743,17 @@ def main() -> None:
         "--models",
         dest="models",
         nargs="+",
-        help="Model tự chọn của nguồn này.",
+        help="Mã API tự chọn theo thứ tự; Google cũng cho nhập model mới.",
     )
+    ai_config.add_argument(
+        "--keep-key",
+        action="store_true",
+        help="Dùng key hiện có, không hỏi hoặc ghi lại key.",
+    )
+    model_list = sub.add_parser(
+        "list-models", help="Lấy mã model Google từ API, không đổi cấu hình."
+    )
+    model_list.add_argument("provider", choices=("google",))
     provider_command = sub.add_parser(
         "providers", help="Xem hoặc bật/tắt nguồn chung cho chữ và ảnh."
     )
@@ -750,8 +777,7 @@ def main() -> None:
     google_options.add_argument(
         "--models",
         nargs="+",
-        choices=GOOGLE_MODELS,
-        help="Model Google theo thứ tự ưu tiên.",
+        help="Mã API Google tự chọn theo thứ tự ưu tiên.",
     )
     google_options.add_argument(
         "--disable", action="store_true", help="Tắt Google, giữ các nguồn cũ."
@@ -826,8 +852,14 @@ def main() -> None:
             configure(provider=args.provider, copy_ai_from=args.copy_ai_from)
         elif args.command == "configure-ai":
             configure_ai(
-                args.provider, args.daily_limit, args.fallback, models=args.models
+                args.provider,
+                args.daily_limit,
+                args.fallback,
+                models=args.models,
+                keep_key=args.keep_key,
             )
+        elif args.command == "list-models":
+            asyncio.run(list_models(args.provider))
         elif args.command == "providers":
             providers(args.action, args.names)
         elif args.command == "configure-google":

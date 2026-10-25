@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from messenger_ai.ai import AIError, ChatAI, FallbackAI, google_cooldown, google_text
-from messenger_ai.config import GOOGLE_MODELS, Settings
+from messenger_ai.config import GOOGLE_DEFAULT_MODELS, Settings
 
 
 def response(text="Chào bạn"):
@@ -26,7 +26,7 @@ def response(text="Chào bạn"):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", GOOGLE_MODELS)
+@pytest.mark.parametrize("model", (*GOOGLE_DEFAULT_MODELS, "gemma-4-31b-it"))
 async def test_google_native_request_preserves_context_and_hides_thoughts(model):
     history = [
         {"role": "user", "content": "Hôm qua đi đâu?"},
@@ -115,7 +115,9 @@ async def test_google_pool_falls_back_in_priority_order_and_shares_budget(monkey
         )
         ai = module.create_ai(
             {"google_api_key": "google", "groq_api_key": "groq"},
-            Settings(google_models=GOOGLE_MODELS, minimum_ai_interval_seconds=0),
+            Settings(
+                google_models=GOOGLE_DEFAULT_MODELS, minimum_ai_interval_seconds=0
+            ),
             "Persona",
         )
         assert isinstance(ai, FallbackAI)
@@ -128,11 +130,11 @@ async def test_google_pool_falls_back_in_priority_order_and_shares_budget(monkey
 
         assert await ai.generate(history, reserve) == "OK"
         assert [v.url.path.split("/")[-1].split(":")[0] for v in calls[:-1]] == list(
-            GOOGLE_MODELS
+            GOOGLE_DEFAULT_MODELS
         )
-        assert ai.blocked_until[:-1] == [700] * len(GOOGLE_MODELS)
+        assert ai.blocked_until[:-1] == [700] * len(GOOGLE_DEFAULT_MODELS)
         assert ai.last_used.startswith("Groq / ")
-        assert len(reservations) == 5
+        assert len(reservations) == len(GOOGLE_DEFAULT_MODELS) + 1
         calls.clear()
         assert await ai.generate(history, reserve) == "OK"
         assert len(calls) == 1
@@ -161,7 +163,7 @@ async def test_google_next_model_success_stops_rotation():
                 client=client,
                 fail_fast=True,
             )
-            for model in GOOGLE_MODELS
+            for model in GOOGLE_DEFAULT_MODELS
         ]
         ai = FallbackAI(*clients, clock=lambda: 100, log=lambda _: None)
         assert (
@@ -169,7 +171,7 @@ async def test_google_next_model_success_stops_rotation():
         )
         assert len(calls) == 2
         assert ai.blocked_until[0] == 3700
-        assert ai.last_used.endswith(GOOGLE_MODELS[1])
+        assert ai.last_used.endswith(GOOGLE_DEFAULT_MODELS[1])
 
 
 @pytest.mark.asyncio
@@ -184,7 +186,7 @@ async def test_google_invalid_auth_config_stops_without_exposing_secrets(status)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         one = ChatAI(
             "private-key",
-            Settings(ai_provider="google", model=GOOGLE_MODELS[0]),
+            Settings(ai_provider="google", model=GOOGLE_DEFAULT_MODELS[0]),
             "Persona",
             client=client,
             fail_fast=True,
@@ -241,7 +243,7 @@ def test_google_daily_quota_and_structured_retry(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "models", ["gemma-4-31b-it", ["unknown"], [GOOGLE_MODELS[0]] * 2, [{}]]
+    "models", ["gemma-4-31b-it", ["bad model"], [GOOGLE_DEFAULT_MODELS[0]] * 2, [{}]]
 )
 def test_google_models_validation(models):
     with pytest.raises(ValueError, match="google_models"):
@@ -285,7 +287,7 @@ def test_configure_google_preserves_other_settings_and_can_disable(
     cli.configure_google()
     settings = Settings.load(tmp_path)
     assert settings.text_targets == (
-        *(("google", model) for model in GOOGLE_MODELS),
+        *(("google", model) for model in GOOGLE_DEFAULT_MODELS),
         ("groq", "qwen/qwen3.8-27b"),
         ("cloudflare", "@cf/qwen/qwen3.8-27b"),
     )
@@ -306,8 +308,11 @@ def test_configure_google_preserves_other_settings_and_can_disable(
     assert not Settings.load(tmp_path).provider_flags["google"]
     assert secret.read_bytes() == saved_secret
     monkeypatch.setattr(cli.getpass, "getpass", lambda _: "")
-    cli.configure_google([GOOGLE_MODELS[0]])
-    assert Settings.load(tmp_path).text_targets[0] == ("google", GOOGLE_MODELS[0])
+    cli.configure_google([GOOGLE_DEFAULT_MODELS[0]])
+    assert Settings.load(tmp_path).text_targets[0] == (
+        "google",
+        GOOGLE_DEFAULT_MODELS[0],
+    )
 
 
 def test_empty_google_key_does_not_change_files(tmp_path, monkeypatch):
@@ -339,7 +344,7 @@ async def test_google_pool_respects_local_budget(monkeypatch):
         )
         ai = module.create_ai(
             {"google_api_key": "google", "groq_api_key": "groq"},
-            Settings(google_models=GOOGLE_MODELS),
+            Settings(google_models=GOOGLE_DEFAULT_MODELS),
             "Persona",
         )
         with pytest.raises(AIError, match="giới hạn gọi AI"):

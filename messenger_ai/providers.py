@@ -2,7 +2,7 @@
 
 from .config import (
     DEFAULT_MODELS,
-    GOOGLE_MODELS,
+    GOOGLE_DEFAULT_MODELS,
     NVIDIA_DEFAULT_MODEL,
     PROVIDER_KEYS,
     Settings,
@@ -11,7 +11,7 @@ from .config import (
 
 DEFAULT_TEXT_MODELS = {
     **{provider: (model,) for provider, model in DEFAULT_MODELS.items()},
-    "google": GOOGLE_MODELS,
+    "google": GOOGLE_DEFAULT_MODELS,
     "nvidia": (NVIDIA_DEFAULT_MODEL,),
 }
 

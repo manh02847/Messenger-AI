@@ -177,15 +177,44 @@ Có thể tắt toàn bộ nguồn: bot tiếp tục nhận tin nhưng không g�
 `configure-ai` dùng được cho Google, NVIDIA, Groq và Cloudflare. Có thể truyền một hoặc nhiều model của cùng nguồn; ví dụ dưới đây là các lựa chọn độc lập, chỉ chạy dòng của nguồn muốn cấu hình:
 
 ```bash
-.venv/bin/python -m messenger_ai configure-ai google --models gemini-3.5-flash-lite gemini-3.1-flash-lite
+.venv/bin/python -m messenger_ai configure-ai google --models gemini-4-argon gemini-3.8-flash gemini-3.6-flash
 .venv/bin/python -m messenger_ai configure-ai nvidia --model google/gemma-4-31b-it
 .venv/bin/python -m messenger_ai configure-ai groq --model openai/gpt-oss-120b
 .venv/bin/python -m messenger_ai configure-ai cloudflare --model @cf/qwen/qwen3.8-27b
 ```
 
-Lệnh lưu model/key và bật nguồn được chọn, dùng cùng bộ xử lý cấu hình cho cả bốn bên. Ở dòng key, Enter giữ key cũ. Không truyền model thì giữ danh sách đã chọn; nguồn chưa có model dùng mẫu cố định của chương trình. Thứ tự thực tế được in ra sau khi lưu.
+Lệnh lưu model/key và bật nguồn được chọn, dùng cùng bộ xử lý cấu hình cho cả bốn bên. Ở dòng key, Enter giữ key cũ. Thêm `--keep-key` để dùng key hiện có mà không hỏi/ghi lại key. Không truyền model thì giữ danh sách đã chọn; nguồn chưa có model dùng mẫu cố định của chương trình. Thứ tự thực tế được in ra sau khi lưu.
 
-Key và mã model lấy tại [NVIDIA API Catalog](https://build.nvidia.com/), [Google AI Studio](https://aistudio.google.com/apikey), [Groq Console](https://console.groq.com/) hoặc [Cloudflare REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). Cloudflare cần thêm Account ID. NVIDIA nhận mã `hãng/tên-model`, không nhập URL; Google dùng danh sách `GOOGLE_MODELS` được hỗ trợ. Chọn model mới vẫn là thao tác thủ công, không tự đọc catalog.
+Key và mã model lấy tại [NVIDIA API Catalog](https://build.nvidia.com/), [Google AI Studio](https://aistudio.google.com/apikey), [Groq Console](https://console.groq.com/) hoặc [Cloudflare REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). Cloudflare cần thêm Account ID. NVIDIA nhận mã `hãng/tên-model`, không nhập URL. Google nhận **mã API tự chọn**, kể cả model mới chưa có trong mẫu; không bị khóa vào danh sách cố định. Nhập `gemini-4-argon`, không nhập tên hiển thị `Gemini 4 Argon`, tiền tố `models/` hoặc URL.
+
+### Tự đổi model Google
+
+Lấy mã model mà API trả về cho key hiện có:
+
+```bash
+.venv/bin/python -m messenger_ai list-models google
+```
+
+Lệnh chỉ đọc [Google Models API](https://ai.google.dev/api/models), lấy đủ các trang và in mã có `generateContent`; không gửi persona, ảnh hay nội dung chat, không thay cấu hình hoặc bật thêm nguồn. Có tên trong danh sách chưa chứng minh model có quota, miễn phí, hỗ trợ ảnh hoặc tạo được câu trả lời; chọn model trả lời chữ/hiểu ảnh phù hợp, tránh các model chuyên TTS, embedding hoặc tạo ảnh.
+
+Đổi model chữ theo thứ tự bạn muốn, dùng lại key cũ:
+
+```bash
+.venv/bin/python -m messenger_ai configure-ai google --keep-key --models gemini-4-argon gemini-3.8-flash gemini-3.6-flash
+.venv/bin/python -m messenger_ai providers only google
+```
+
+Đổi riêng chuỗi đọc ảnh, cũng nhập thủ công theo thứ tự:
+
+```bash
+.venv/bin/python -m messenger_ai configure-vision --chain google:gemini-4-argon google:gemini-3.8-flash google:gemini-3.6-flash
+```
+
+Để dùng một model, giữ đúng một mã sau `--models` hoặc `--chain`. Có thể đổi sang mã khác từ `list-models` bất cứ lúc nào, không phải sửa code. Sau khi lưu, chạy `check-ai`, `check-vision --all` nếu có dùng ảnh, rồi restart service đúng acc. Chỉ bật Google thì retry/fallback cũng chỉ dùng các model Google đã chọn.
+
+Mẫu Google mới ưu tiên **Gemini 4 Argon → Gemini 3.8 Flash → Gemini 3.6 Flash** cho chữ; mẫu ảnh dùng Argon → 3.8 Flash trước các nguồn khác. Đây là mẫu khi cấu hình nguồn chưa có model hoặc gọi `configure-vision --chain` không kèm danh sách. **`git pull` không ghi đè model đã lưu**; muốn thay cấu hình hiện có thì chạy các lệnh trên. Bot không tự theo dõi catalog để đổi model.
+
+Nếu AI Studio báo **Prepay credits depleted / No credits**, cần kiểm tra billing/số dư của project trước. Hạn mức hiển thị trên trang không phải số lượt miễn phí được cấp; đổi model hoặc retry không bổ sung số dư. Xem [Google Billing](https://ai.google.dev/gemini-api/docs/billing).
 
 Lệnh cũ `configure-google`, `configure-nvidia`, `configure-google --only` và `--disable` vẫn được chuyển vào cùng bộ xử lý. `--fallback` / `--no-fallback` của Groq/Cloudflare chỉ bật/tắt cờ nguồn còn lại; nên dùng `providers` để quản lý thống nhất.
 
@@ -205,11 +234,11 @@ Ví dụ phần nguồn, với Google đang bật và NVIDIA đang tắt:
   },
   "text_models": [
     "nvidia:google/gemma-4-31b-it",
-    "google:gemini-3.5-flash-lite",
-    "google:gemini-3.1-flash-lite"
+    "google:gemini-4-argon",
+    "google:gemini-3.8-flash"
   ],
   "vision_models": [
-    "google:gemini-3.5-flash-lite",
+    "google:gemini-4-argon",
     "nvidia:google/gemma-4-31b-it"
   ]
 }
@@ -385,8 +414,8 @@ Mẫu ưu tiên theo thứ tự dưới, chỉ thêm nguồn **đang bật và �
 
 | Thứ tự | Nguồn | Model |
 |---|---|---|
-| 1 | Google | `gemini-3.5-flash-lite` |
-| 2 | Google | `gemini-3.1-flash-lite` |
+| 1 | Google | `gemini-4-argon` |
+| 2 | Google | `gemini-3.8-flash` |
 | 3 | NVIDIA | `google/gemma-4-31b-it` |
 | 4 | Groq | `qwen/qwen3.8-27b` |
 | 5 | Cloudflare | `@cf/qwen/qwen3.8-27b` |
@@ -399,7 +428,7 @@ Muốn **tự chọn model/thứ tự**, ghi rõ danh sách (tối đa 12 mục,
 
 ```bash
 .venv/bin/python -m messenger_ai configure-vision --chain \
-  google:gemini-3.5-flash-lite \
+  google:gemini-4-argon \
   groq:qwen/qwen3.8-27b \
   nvidia:google/gemma-4-31b-it
 ```
@@ -420,7 +449,7 @@ Khi cấu hình một nguồn, ở dòng API key nhấn Enter để dùng key hi
 
 Mỗi model trong `--all` dùng một lượt gọi thử, có thể chờ đến 30 giây/model. Nếu có model lỗi, lệnh vẫn thử các model còn lại rồi báo tổng số lỗi; model nhận sai màu cần bạn tự đối chiếu. Hai chế độ dùng bộ đếm thử `ai-check.sqlite3`, không đăng nhập/gửi Messenger. Khởi động lại bot sau khi cấu hình xong.
 
-Có thể thay `nvidia` bằng `google`, `groq` hoặc `cloudflare` và nhập mã model thị giác tương ứng. Google dùng model trong danh sách `GOOGLE_MODELS`; NVIDIA cho nhập dạng `hãng/model`. Tên đúng định dạng chưa chứng minh model hỗ trợ ảnh hoặc key có quyền truy cập, nên luôn chạy `check-vision`. Nếu cần, xem [NVIDIA Gemma 4](https://docs.api.nvidia.com/nim/reference/google-gemma-4-31b-it-infer), [Google đọc ảnh](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding), [Groq Vision](https://console.groq.com/docs/vision) và [Cloudflare OpenAI-compatible API](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/).
+Có thể thay `nvidia` bằng `google`, `groq` hoặc `cloudflare` và nhập mã model thị giác tương ứng. Google cho nhập mã API thủ công, không giới hạn vào mẫu; NVIDIA cho nhập dạng `hãng/model`. Tên đúng định dạng chưa chứng minh model hỗ trợ ảnh hoặc key có quyền truy cập, nên luôn chạy `check-vision`. Nếu cần, xem [NVIDIA Gemma 4](https://docs.api.nvidia.com/nim/reference/google-gemma-4-31b-it-infer), [Google đọc ảnh](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding), [Groq Vision](https://console.groq.com/docs/vision) và [Cloudflare OpenAI-compatible API](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/).
 
 Lượt có ảnh gọi thẳng model thị giác để tạo câu trả lời, không gọi thêm model chữ để viết lại. **Mỗi request khi chuyển model đều tính một lượt gọi AI**, dùng chung ngân sách live với tin chữ; có tin mới làm bỏ bản nháp rồi tạo lại thì vẫn tốn lượt cho request đã gọi. Các model được thử nhận cùng ảnh đã xử lý, persona và ngữ cảnh. Ảnh dùng thêm token đầu vào theo nhà cung cấp, không nằm trong 3500 ký tự lịch sử chữ.
 

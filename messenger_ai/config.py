@@ -9,19 +9,17 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-GOOGLE_MODELS = (
-    "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
+GOOGLE_DEFAULT_MODELS = (
+    "gemini-4-argon",
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
 )
 NVIDIA_DEFAULT_MODEL = "google/gemma-4-31b-it"
 NVIDIA_MODEL_PATTERN = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z"
 )
 VISION_PRESET = (
-    "google:gemini-3.5-flash-lite",
-    "google:gemini-3.1-flash-lite",
+    *(f"google:{model}" for model in GOOGLE_DEFAULT_MODELS[:2]),
     "nvidia:google/gemma-4-31b-it",
     "groq:qwen/qwen3.8-27b",
     "cloudflare:@cf/qwen/qwen3.8-27b",
@@ -57,6 +55,16 @@ def valid_nvidia_model(value: object) -> bool:
     )
 
 
+def valid_google_model(value: object) -> bool:
+    # A bare model ID becomes one path segment on Google's fixed API endpoint.
+    # Availability and capabilities are checked by the API, not a local catalog.
+    return (
+        isinstance(value, str)
+        and len(value) <= 200
+        and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value))
+    )
+
+
 def model_target(value: str) -> tuple[str, str]:
     if not isinstance(value, str):
         raise ValueError("Danh sách model phải chứa mã nguồn:model.")
@@ -67,7 +75,7 @@ def model_target(value: str) -> tuple[str, str]:
         or len(model) > 200
         or not re.fullmatch(r"[@A-Za-z0-9][A-Za-z0-9@._/-]*", model)
         or (provider == "nvidia" and not valid_nvidia_model(model))
-        or (provider == "google" and model not in GOOGLE_MODELS)
+        or (provider == "google" and not valid_google_model(model))
         or (provider == "cloudflare" and not model.startswith("@cf/"))
     ):
         raise ValueError("Mã model chưa hợp lệ; dùng dạng nguồn:model.")
@@ -229,14 +237,11 @@ class Settings:
         google_models = value.get("google_models", [])
         if (
             not isinstance(google_models, list)
-            or any(
-                not isinstance(model, str) or model not in GOOGLE_MODELS
-                for model in google_models
-            )
+            or any(not valid_google_model(model) for model in google_models)
             or len(set(google_models)) != len(google_models)
         ):
             raise ValueError(
-                "google_models phải là danh sách model Google được hỗ trợ, không trùng."
+                "google_models phải là danh sách mã model Google hợp lệ, không trùng."
             )
         value["google_models"] = tuple(google_models)
         vision_models = value.get("vision_models", [])
@@ -288,8 +293,10 @@ class Settings:
             )
         if not isinstance(result.model, str) or not result.model.strip():
             raise ValueError("model phải là chuỗi không rỗng.")
-        if result.ai_provider == "google" and result.model not in GOOGLE_MODELS:
-            raise ValueError("model Google chưa được hỗ trợ.")
+        if result.ai_provider == "google" and not valid_google_model(result.model):
+            raise ValueError(
+                "model Google cần mã API, không phải tên hiển thị hoặc URL."
+            )
         if not isinstance(result.reply_prefix, str) or len(result.reply_prefix) > 40:
             raise ValueError("reply_prefix dài tối đa 40 ký tự.")
         for name in (

@@ -14,9 +14,9 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .config import (
-    GOOGLE_MODELS,
     PROVIDER_KEYS,
     Settings,
+    valid_google_model,
     valid_nvidia_model,
 )
 from .context import system_prompt
@@ -126,14 +126,15 @@ def google_payload(
         "generationConfig": {
             "temperature": 0.6,
             "maxOutputTokens": settings.max_completion_tokens,
-            "thinkingConfig": {
-                "thinkingLevel": "minimal"
-                if settings.model.startswith("gemma-")
-                else "low",
-                "includeThoughts": False,
-            },
         },
     }
+    if settings.model.startswith(("gemma-4-", "gemini-3", "gemini-4")):
+        payload["generationConfig"]["thinkingConfig"] = {
+            "thinkingLevel": "minimal"
+            if settings.model.startswith("gemma-")
+            else "low",
+            "includeThoughts": False,
+        }
     if images:
         payload["contents"][-1]["parts"].extend(
             {"inlineData": {"mimeType": image.mime_type, "data": image.data}}
@@ -187,8 +188,10 @@ def validate_connection(
             raise ValueError("Mã model NVIDIA phải có dạng hãng/tên-model.")
         return label, "https://integrate.api.nvidia.com/v1/chat/completions"
     if provider == "google":
-        if settings.model not in GOOGLE_MODELS:
-            raise ValueError("Model Google chưa được hỗ trợ.")
+        if not valid_google_model(settings.model):
+            raise ValueError(
+                "Model Google cần mã API, không phải tên hiển thị hoặc URL."
+            )
         return (
             label,
             f"https://generativelanguage.googleapis.com/v1beta/models/{settings.model}:generateContent",

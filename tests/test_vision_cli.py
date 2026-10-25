@@ -83,7 +83,7 @@ def test_disable_vision_does_not_require_key_or_change_text_provider(
     [
         (None, None, False),
         ("nvidia", "bad model", False),
-        ("google", "unknown", False),
+        ("google", "bad model", False),
         ("nvidia", None, True),
     ],
 )

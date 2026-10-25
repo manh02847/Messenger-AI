@@ -369,7 +369,7 @@ async def test_closing_one_failed_client_still_closes_every_other_client():
         {"vision_models": [None]},
         {"vision_models": ["google:gemini-3.5-flash-lite"] * 2},
         {"vision_models": ["groq:one"] * 13},
-        {"vision_models": ["google:missing"]},
+        {"vision_models": ["google:models/missing"]},
         {"vision_models": ["unknown:model"]},
         {"vision_models": ["nvidia:https://example.com/model"]},
         {"vision_models": ["groq:qwen/model\nsecret"]},
@@ -393,4 +393,4 @@ def test_legacy_single_vision_source_is_preserved_without_implicitly_enabling_mo
     )
     assert legacy.vision_targets == (("nvidia", "google/gemma-4-31b-it"),)
     explicit = Settings.from_dict({"vision_models": list(VISION_PRESET)})
-    assert explicit.vision_targets[0] == ("google", "gemini-3.5-flash-lite")
+    assert explicit.vision_targets[0] == ("google", "gemini-4-argon")

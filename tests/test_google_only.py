@@ -83,7 +83,11 @@ def test_only_google_removes_every_other_route_and_preserves_private_data(
     if previous_vision in ("off", "single"):
         assert not settings.vision_targets
     else:
-        assert settings.vision_targets == tuple(("google", model) for model in MODELS)
+        assert settings.vision_targets == tuple(
+            ("google", target.partition(":")[2])
+            for target in raw["vision_models"]
+            if target.startswith("google:")
+        )
     result = json.loads((root / "config.json").read_text())
     for name in ("reply_scope", "max_ai_calls_per_day", "history_messages"):
         assert result[name] == raw[name]
@@ -153,7 +157,10 @@ async def test_only_google_runtime_never_sends_to_other_hosts_even_after_all_goo
             )
         await ai.close()
     assert len(requests) == len(budget) == 2
-    assert all(model in str(request.url) for model, request in zip(MODELS, requests))
+    targets = settings.vision_targets if with_images else settings.text_targets
+    assert all(
+        model in str(request.url) for (_, model), request in zip(targets, requests)
+    )
 
 
 def test_only_google_keeps_other_provider_keys_available_for_later(account):

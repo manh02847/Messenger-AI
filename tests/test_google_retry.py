@@ -5,7 +5,14 @@ import pytest
 
 from messenger_ai import ai as module
 from messenger_ai.ai import AIError, ChatAI, FallbackAI, ProviderUnavailable
-from messenger_ai.config import GOOGLE_MODELS, Settings
+from messenger_ai.config import GOOGLE_DEFAULT_MODELS, Settings
+
+MIXED_GOOGLE_MODELS = (
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+)
 
 
 def google_reply():
@@ -23,7 +30,9 @@ def google(client):
     return ChatAI(
         "google-key",
         Settings(
-            ai_provider="google", model=GOOGLE_MODELS[0], minimum_ai_interval_seconds=0
+            ai_provider="google",
+            model=GOOGLE_DEFAULT_MODELS[0],
+            minimum_ai_interval_seconds=0,
         ),
         "Persona",
         client=client,
@@ -260,7 +269,7 @@ async def test_gemma_cannot_consume_flash_time_budget(monkeypatch, first_times_o
         model = request.url.path.rsplit("/", 1)[-1].split(":")[0]
         calls.append(model)
         if model.startswith("gemma-"):
-            if first_times_out and model == GOOGLE_MODELS[0]:
+            if first_times_out and model == MIXED_GOOGLE_MODELS[0]:
                 raise httpx.ReadTimeout("private", request=request)
             try:
                 await asyncio.Event().wait()
@@ -283,15 +292,15 @@ async def test_gemma_cannot_consume_flash_time_budget(monkeypatch, first_times_o
                 client=client,
                 fail_fast=True,
             )
-            for model in GOOGLE_MODELS
+            for model in MIXED_GOOGLE_MODELS
         ]
         ai = FallbackAI(*clients, log=lambda _: None)
         assert await ai.generate([{"role": "user", "content": "Hi"}], reserve) == "OK"
         assert ai.last_used == "Google / gemini-3.5-flash-lite"
-    expected = [GOOGLE_MODELS[0]]
+    expected = [MIXED_GOOGLE_MODELS[0]]
     if first_times_out:
-        expected.append(GOOGLE_MODELS[1])
-    assert calls == [*expected, GOOGLE_MODELS[2]]
+        expected.append(MIXED_GOOGLE_MODELS[1])
+    assert calls == [*expected, MIXED_GOOGLE_MODELS[2]]
     assert len(budget) == len(calls)
     assert cancelled == [expected[-1]]
 
@@ -329,7 +338,7 @@ async def test_flash_timeout_still_preserves_total_google_budget(monkeypatch):
                 client=client,
                 fail_fast=True,
             )
-            for model in GOOGLE_MODELS
+            for model in MIXED_GOOGLE_MODELS
         ]
         clients.append(
             ChatAI(
@@ -342,5 +351,5 @@ async def test_flash_timeout_still_preserves_total_google_budget(monkeypatch):
         )
         ai = FallbackAI(*clients, log=lambda _: None)
         assert await ai.generate([], lambda: True) == "backup"
-    assert calls == [GOOGLE_MODELS[0], GOOGLE_MODELS[2], "groq"]
-    assert cancelled == [GOOGLE_MODELS[0], GOOGLE_MODELS[2]]
+    assert calls == [MIXED_GOOGLE_MODELS[0], MIXED_GOOGLE_MODELS[2], "groq"]
+    assert cancelled == [MIXED_GOOGLE_MODELS[0], MIXED_GOOGLE_MODELS[2]]
