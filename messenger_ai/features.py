@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 
 from .config import Settings
+from .search_routing import needs_search
 
 
 @dataclass(frozen=True)
@@ -138,8 +139,10 @@ def plan(settings: Settings, history: list[dict[str, str]]) -> FeaturePlan:
     use_search = search != "off" and caps.search
     if use_search:
         instruction = (
-            "Dùng Google Search để xác minh thông tin thực tế trước khi trả lời."
-            if search == "on"
+            "Dùng Google Search để xác minh thông tin thực tế trước khi trả lời. "
+            "Với câu hỏi tiếp, suy ra chủ đề và đối tượng mới từ ngữ cảnh rồi tra cứu "
+            "cho chính câu hỏi đó; không dùng câu trả lời trước làm kết quả Search của lượt này."
+            if search == "on" or needs_search(history)
             else "Tự quyết định dùng Google Search khi cần thông tin mới, giá, tin tức, lịch, "
             "thời tiết hoặc cần kiểm chứng; không cần tra cứu cho lời chào hay chat cá nhân."
         )
@@ -168,6 +171,23 @@ def describe(settings: Settings, log=print, *, targets=None) -> None:
     log(
         f"Mặc định: suy luận={settings.reasoning_mode} | tra cứu={settings.search_mode}"
     )
+    if targets is None:
+        search_models = [
+            f"{provider}:{model}"
+            for provider, model in dict.fromkeys(
+                (*settings.text_targets, *settings.vision_targets)
+            )
+            if capabilities(provider, model).search
+            and modes(settings, provider, model)[1] != "off"
+        ]
+        log(
+            "Tự chọn model cho câu cần tra cứu: "
+            + (
+                " → ".join(search_models)
+                if search_models
+                else "chưa có model Search đang bật"
+            )
+        )
     targets = dict.fromkeys(
         (*settings.text_targets, *settings.vision_targets)
         if targets is None

@@ -258,7 +258,7 @@ Chạy lệnh ngắn, rồi nhập **on**, **off** hoặc **auto** ở hai câu 
 |---|---|---|
 | `off` | Tắt nếu model cho phép; model luôn suy luận dùng mức thấp nhất | Không gắn công cụ tìm kiếm |
 | `on` | Bật suy luận sâu theo API của model | Yêu cầu model dùng Google Search xác minh thông tin thực tế |
-| `auto` | Gemini tự phân bổ suy nghĩ trong ngân sách phù hợp; API chỉ có công tắc/mức cố định dùng quy tắc tại bot để chọn theo câu hỏi | Bật công cụ cho model tự quyết định khi cần thông tin mới/kiểm chứng; không cần tìm cho lời chào và chat cá nhân |
+| `auto` | Gemini tự phân bổ suy nghĩ trong ngân sách phù hợp; API chỉ có công tắc/mức cố định dùng quy tắc tại bot để chọn theo câu hỏi | Câu cần thông tin mới/kiểm chứng tự chọn model Search đang bật; model dùng công cụ tìm khi cần |
 
 Hai lựa chọn áp dụng cho cả chữ và ảnh, **theo đúng nguồn/model của từng lần thử**. Không có lượt gọi AI riêng để phân loại câu hỏi. Cấu hình cũ không có hai trường mới mặc định `off`/`off`, chưa tự bật Search. Lưu bằng `features` không gọi API, không đổi model, cờ nguồn, key/cookie, persona, lịch sử hoặc bộ đếm.
 
@@ -295,7 +295,7 @@ Tên tự nhập chưa được nhận diện vẫn dùng mặc định của AP
 
 Google quyết định việc thực thi Search: **bật/auto không có nghĩa mọi lượt đều phát sinh tìm kiếm**. Khi có dữ liệu grounding, bot thêm các nguồn web thật và gợi ý tìm kiếm Google bằng chữ/link trong tin trả lời. Log ghi `tra cứu thực tế=có/không` và số nguồn, không in câu tìm kiếm, HTML, API key hoặc nội dung chat. Lỗi quyền/billing/cấu hình Search được báo rõ và không âm thầm thử lại cùng request với công cụ bị gỡ bỏ.
 
-Suy luận/tra cứu cần thêm thời gian: lượt thực sự dùng chế độ này có deadline **45 giây/model**, cả chuỗi **90 giây**, nhóm Google chữ tối đa **60 giây** (Gemma tối đa 30 giây khi có Gemini dự phòng). Lượt cơ bản giữ giới hạn cũ. Quá tải/timeout vẫn đi theo cơ chế giữ câu chờ; không bỏ giới hạn thời gian để retry liên tục trong một request.
+Suy luận/tra cứu cần thêm thời gian: lượt thực sự dùng chế độ này có deadline **45 giây/model**, cả chuỗi **90 giây**, nhóm Google chữ tối đa **60 giây** (Gemma tối đa 30 giây khi có Gemini dự phòng). Khi tự chọn chuỗi Search, mỗi model được thử tối đa **30 giây** để còn thời gian cho model Search tiếp theo; thời gian cả nhóm/cả lượt vẫn bị giới hạn như trên. Lượt cơ bản giữ giới hạn cũ. Quá tải/timeout vẫn đi theo cơ chế giữ câu chờ; không bỏ giới hạn thời gian để retry liên tục trong một request.
 
 Ngân sách sinh vẫn là `max_completion_tokens` đang cấu hình, gồm cả suy luận; câu quá khó có thể hết ngân sách và bot không gửi bản bị cắt. Không tự tăng token hoặc quota. Một request vẫn tính một lượt ở bộ đếm cục bộ, nhưng **token suy luận và truy vấn Google Search có cách tính quota/phí riêng của nhà cung cấp**. Xem [Google thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking), [Google Search](https://ai.google.dev/gemini-api/docs/generate-content/google-search), [Groq reasoning](https://console.groq.com/docs/reasoning) và [Cloudflare Qwen](https://developers.cloudflare.com/workers-ai/models/qwen3.8-27b/).
 
@@ -308,7 +308,18 @@ Hai Gemma 4 trên **nguồn Google** hỗ trợ `googleSearch` theo [hướng d�
 .venv/bin/python -m messenger_ai features --model google:gemma-4-26b-a4b-it --search auto
 ```
 
-Lệnh trên không đổi thứ tự model hoặc gọi API. Nếu Gemini đứng trước và trả lời thành công thì lượt đó chưa chạy tới Gemma, nên cũng chưa dùng Search của Gemma. Chưa tự chuyển sang Gemma chỉ vì câu hỏi cần tra cứu. Khi thử, kiểm tra đúng model thực sự trả lời và dòng `tra cứu thực tế=có`; bật công cụ không bảo đảm model sẽ dùng nó. Không tự bật Search sau `git pull`.
+Bot tự chọn model theo câu hỏi, cho cả chữ và ảnh:
+
+- **Chat thường:** theo thứ tự model đã cấu hình. Ví dụ Flash đứng trước thì thử Flash trước.
+- **Cần thông tin mới/kiểm chứng:** chỉ thử các model có Search đã bật `on`/`auto` trong danh sách đang hoạt động, giữ thứ tự tương đối của chúng. Ví dụ Flash tắt Search và hai Gemma bật Search thì câu hỏi thời tiết đi thẳng tới Gemma, không gọi Flash trước để phân loại. Không thêm model hoặc bật lại nguồn đang tắt.
+- **Câu hỏi tiếp:** đọc ngữ cảnh người nhắn gần đây, nên sau câu hỏi thời tiết, “còn ngày mai thì sao?” vẫn đi tới Search; chuyển sang chat thường thì dùng lại thứ tự bình thường.
+- **Nguồn Search quá tải/hết quota:** thử model Search kế tiếp, rồi giữ câu chờ theo cơ chế retry. Không chuyển câu cần dữ liệu mới sang model tắt Search chỉ để có câu trả lời. Các cuộc chat thường vẫn dùng được Flash khỏe trong khi nguồn Search đang nghỉ.
+
+Nhận diện dùng quy tắc cục bộ, xử lý tiếng Việt có/không dấu và một số cách viết tắt, không có lượt gọi AI riêng để phân loại. Quy tắc có thể bỏ sót cách diễn đạt hoặc sai chính tả khác; không phải bộ phân loại hiểu hoàn hảo mọi câu hỏi. Khi đã nhận diện cần tra cứu, bot yêu cầu model xác minh bằng Search và kiểm tra metadata thực tế: model không trả dữ liệu Search thì bỏ bản nháp đó, thử nguồn Search khác hoặc giữ câu chờ. Lỗi nội dung bị chặn/câu trả lời bị cắt vẫn dừng như trước. Nếu không có model Search nào đang bật, bot dùng chuỗi thường với giới hạn không tra cứu của cấu hình.
+
+Lượt Search Gemma gửi ngữ cảnh trò chuyện có gắn nhãn cùng câu hỏi hiện tại để xử lý các câu hỏi tiếp ngắn. Persona và ảnh của lượt hiện tại vẫn được cung cấp; lịch sử cũ là dữ liệu có thể sai, không được coi là chỉ dẫn hệ thống hoặc nguồn xác minh. Các lượt chat thường và model khác dùng cách gửi lịch sử vốn có.
+
+Các lựa chọn `features` vẫn áp dụng: `off` không cho model đó tra cứu; `on`/`auto` mới được tự chọn vào chuỗi Search. Lựa chọn riêng từng model ưu tiên hơn mặc định chung. `features --show` hiển thị model Search có thể dùng; danh sách chữ và ảnh vẫn được xét riêng khi trả lời. Không tự bật Search sau `git pull`, không đổi key hay ghi lại thứ tự model trong file cấu hình. Khi thử bằng `chat-ai`, hỏi “thời tiết Hà Nội hôm nay” rồi “còn ngày mai thì sao?”, kiểm tra dòng `Tự chọn model tra cứu`, model thực sự trả lời và `tra cứu thực tế=có`.
 
 Khả năng gọi được Search không xác nhận project thuộc Free Tier hay chứng minh một lượt thử không phát sinh phí. Hướng dẫn Gemma hiện có ví dụ Search trong khi bảng giá Gemma vẫn ghi `Not available`; cần kiểm tra billing/quota thực tế của project. Tooltip `Default` có nhiều model cùng nhóm không có nghĩa mỗi model được một hạn mức Search riêng.
 

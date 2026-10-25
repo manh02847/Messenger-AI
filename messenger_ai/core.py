@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
-from .ai import AIBudgetExceeded, AIError, ChatAI, ProviderUnavailable
+from .ai import AIBudgetExceeded, AIError, ChatAI, FallbackAI, ProviderUnavailable
 from .config import Settings
 from .context import recent_history
 from .handoff import reply_text, requests_human
@@ -160,7 +160,7 @@ class ReplyBot:
         self.pending_images: dict[str, list[tuple[ImageAttachment, bool]]] = {}
         self.image_slots = asyncio.Semaphore(1)
         self.retry_wakeups: dict[str, asyncio.Event] = {}
-        self.retry_after: dict[int, float] = {}
+        self.retry_after: dict[int | tuple[int, bool], float] = {}
         self.budget_retry_at = 0.0
         self.ai_slots: dict[int, asyncio.Lock] = {}
 
@@ -314,10 +314,13 @@ class ReplyBot:
         )
         return max(1, midnight.timestamp() - self.clock() + 1)
 
-    def _check_retry_cooldown(self, ai) -> None:
+    def _retry_key(self, ai, history):
+        return (id(ai), ai.route(history)[1]) if isinstance(ai, FallbackAI) else id(ai)
+
+    def _check_retry_cooldown(self, ai, history=()) -> None:
         if self.clock() < self.budget_retry_at:
             raise AIBudgetExceeded()
-        remaining = self.retry_after.get(id(ai), 0) - self.clock()
+        remaining = self.retry_after.get(self._retry_key(ai, history), 0) - self.clock()
         if remaining > 0:
             raise RetryWaiting("Nguồn AI đang chờ hết thời gian nghỉ.", remaining)
 
@@ -443,7 +446,7 @@ class ReplyBot:
                             or revision != self.revisions[thread]
                         ):
                             continue
-                        self._check_retry_cooldown(active_ai)
+                        self._check_retry_cooldown(active_ai, history)
                         if (
                             not self.settings.dry_run
                             and thread not in self.typing_tasks
@@ -489,7 +492,9 @@ class ReplyBot:
                             AI_RETRY_MAX_BACKOFF_SECONDS,
                         ),
                     )
-                    self.retry_after[id(active_ai)] = self.clock() + delay
+                    self.retry_after[self._retry_key(active_ai, history)] = (
+                        self.clock() + delay
+                    )
                     self.log(f"{error} Giữ lượt chờ, thử lại sau {delay:.0f} giây.")
                     await self._wait_retry(thread, revision, delay)
                     continue

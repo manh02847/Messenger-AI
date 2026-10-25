@@ -243,6 +243,73 @@ async def test_multiple_chats_share_cooldown_and_a_single_inflight_attempt(make)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("same_thread", [False, True])
+async def test_waiting_for_search_does_not_hold_a_regular_chat_on_healthy_flash(
+    make, monkeypatch, same_thread
+):
+    calls = []
+
+    def handler(request):
+        model = request.url.path.rsplit("/", 1)[-1].split(":")[0]
+        calls.append(model)
+        if model == "gemma-4-26b-a4b-it":
+            return httpx.Response(429)
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {"parts": [{"text": "Chào bạn."}]},
+                    }
+                ]
+            },
+        )
+
+    settings = Settings.from_dict(
+        {
+            "provider_enabled": {
+                p: p == "google" for p in ("google", "nvidia", "groq", "cloudflare")
+            },
+            "text_models": [
+                "google:gemini-3.5-flash-lite",
+                "google:gemma-4-26b-a4b-it",
+            ],
+            "model_features": {"google:gemma-4-26b-a4b-it": {"search": "auto"}},
+            "minimum_ai_interval_seconds": 0,
+        }
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        monkeypatch.setattr(
+            module, "ChatAI", lambda *a, **kw: ChatAI(*a, **kw, client=client)
+        )
+        ai = create_ai({"google_api_key": "KEY"}, settings, "Persona")
+        bot, state, _, transport, clock, logs = make(ai)
+        waiting = WatchedEvent()
+        bot.retry_wakeups[THREAD] = waiting
+        bot.receive(incoming(clock, text="Thời tiết Hà Nội hôm nay thế nào?"))
+        await asyncio.wait_for(waiting.waiting.wait(), 1)
+        assert THREAD in bot.pending and not transport.sent
+        target = THREAD if same_thread else OTHER
+        bot.receive(
+            incoming(
+                clock,
+                "other",
+                "Bạn đang làm gì?",
+                thread=target,
+                sender="222" if same_thread else "333",
+            )
+        )
+        await asyncio.wait_for(bot.tasks[target], 1)
+        assert calls == ["gemma-4-26b-a4b-it", "gemini-3.5-flash-lite"]
+        assert len(transport.sent) == 1 and transport.sent[0][0].thread == target
+        assert transport.sent[0][0].id == "other"
+        assert (THREAD in bot.pending) is not same_thread
+        assert state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == 2
+        await bot.close()
+
+
+@pytest.mark.asyncio
 async def test_photo_retry_reuses_same_processed_image_and_never_calls_text_ai(make):
     vision = AI([ProviderUnavailable("Busy", 300), "Ảnh màu đỏ."])
     bot, state, text_ai, transport, clock, logs = make(image_ai=vision)
