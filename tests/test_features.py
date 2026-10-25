@@ -413,7 +413,7 @@ async def test_cross_provider_fallback_uses_only_that_providers_supported_contro
         else:
             assert "tools" not in body
             assert body["reasoning_effort"] == ("high" if len(calls) == 2 else "xhigh")
-            assert "không có công cụ tra cứu web" in body["messages"][0]["content"]
+            assert "[[NEED_SEARCH]]" in body["messages"][0]["content"]
         return httpx.Response(429) if len(calls) < 3 else response("cloudflare")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -453,7 +453,7 @@ METADATA = {
 
 
 @pytest.mark.asyncio
-async def test_grounded_reply_shows_real_sources_suggestions_and_hides_thoughts_html_and_queries(
+async def test_grounded_reply_hides_automatic_links_but_preserves_real_search_detection(
     capsys,
 ):
     async with httpx.AsyncClient(
@@ -467,9 +467,11 @@ async def test_grounded_reply_shows_real_sources_suggestions_and_hides_thoughts_
         )
         answer = await ai.generate(HARD, lambda: True)
         assert ai.last_search_used is True
-    assert "Nguồn chính thức: https://example.com/source" in answer
+    assert answer == "Thông tin đã kiểm tra."
     assert (
-        "Google Search:\nThông tin mới: https://www.google.com/search?q=test" in answer
+        "https://" not in answer
+        and "Google Search:" not in answer
+        and "Nguồn:" not in answer
     )
     assert all(
         secret not in answer

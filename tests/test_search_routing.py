@@ -49,7 +49,6 @@ def history(text):
         "Bạn google giúp mình xem",
         "search giá điện mới",
         "Nguồn đâu bạn?",
-        "Hôm nay ngày mấy?",
         "Dùng Search đi bạn",
         "su dung google de tim giup minh",
     ],
@@ -62,6 +61,7 @@ def test_local_intent_recognizes_fresh_public_information_and_common_typing(text
     "text",
     [
         "Chào bạn",
+        "Hôm nay ngày mấy?",
         "Mạnh đang làm gì",
         "hôm nay bạn làm gì",
         "tí đi choei k",
@@ -81,6 +81,8 @@ def test_local_intent_recognizes_fresh_public_information_and_common_typing(text
         "Ảnh mới nhất của mình đẹp ko?",
         "Đừng dùng Search nữa",
         "khong dung search nhe",
+        "đừng tìm thử xem nữa",
+        "ko cần tìm nhé",
     ],
 )
 def test_local_intent_does_not_route_private_chat_definitions_or_search_opt_out(text):
@@ -117,6 +119,131 @@ def test_topic_change_and_reset_stop_inheriting_old_search_intent():
         [{"role": "assistant", "content": QUESTION}] + history("Chào")
     )
     assert not needs_search([])
+
+
+REACTIONS = [
+    "thế à",
+    "the a",
+    "thế ạ bạn",
+    "thế á b",
+    "thế hả",
+    "thế hở",
+    "thế ah",
+    "vậy à",
+    "vay ha",
+    "vậy thôi",
+    "ừ",
+    "uh",
+    "ukm",
+    "ờ",
+    "ồ",
+    "oh",
+    "à thế à",
+    "ồ vậy hả",
+    "ừ vậy thôi",
+    "ừ biết rồi",
+    "ok",
+    "oke",
+    "okay",
+    "cảm ơn bạn",
+    "cam on",
+    "ok cảm ơn",
+    "hiểu rồi",
+    "biết rồi",
+    "vâng ạ",
+]
+
+
+@pytest.mark.parametrize("text", REACTIONS)
+@pytest.mark.parametrize(
+    "topic",
+    [QUESTION, "Giá vàng hôm nay bao nhiêu?", "Python phiên bản mới nhất là gì?"],
+)
+@pytest.mark.parametrize("style", ["plain", "upper", "punctuated"])
+def test_reactions_never_start_a_new_search_after_a_public_topic(text, topic, style):
+    text = (
+        text.upper()
+        if style == "upper"
+        else f"  {text} ?!🙂  "
+        if style == "punctuated"
+        else text
+    )
+    conversation = (
+        history(topic)
+        + [
+            {
+                "role": "assistant",
+                "content": "Đã tra cứu.\n\nNguồn:\nhttps://example.com/" + "x" * 1000,
+            }
+        ]
+        + history(text)
+    )
+    assert not needs_search(conversation)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "thế bạn rảnh ko",
+        "vậy mình đi ăn",
+        "còn bạn thì sao",
+        "thế có nên mang ô không",
+        "thế ngủ chưa b",
+        "vậy tối đi chơi k",
+        "thế cho mình xin ảnh",
+        "thế để mình xem",
+        "thế tớ không thích",
+        "vậy thì thôi",
+        "thế rồi sao",
+        "còn nữa?",
+        "thế mình buồn",
+    ],
+)
+def test_social_and_advice_followups_do_not_inherit_a_search_requirement(text):
+    assert not needs_search(history(QUESTION) + history(text))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "còn ngày mai thì sao?",
+        "còn Đà Nẵng?",
+        "thế mai thì sao",
+        "vậy còn Huế?",
+        "thế à, còn ngày mai thì sao?",
+        "OK, còn ngày mai?",
+        "cảm ơn bạn, còn Đà Nẵng?",
+        "thế có thật không?",
+        "vậy nguồn đâu?",
+        "thế à nhưng tra cứu lại đi",
+    ],
+)
+def test_real_questions_still_route_to_search_after_or_with_a_reaction(text):
+    assert needs_search(history(QUESTION) + history(text))
+    assert needs_search(history(QUESTION) + history("thế à") + history(text))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["thế à", "vậy hả", "ừ", "ok cảm ơn"])
+async def test_reactions_use_flash_with_one_call_and_no_search_tools(monkeypatch, text):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert model_of(request) == FLASH
+        assert "tools" not in json.loads(request.content)
+        return success()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ai = make_chain(monkeypatch, client)
+        await ai.generate(
+            history(QUESTION)
+            + [{"role": "assistant", "content": "Đã tra cứu."}]
+            + history(text),
+            lambda: True,
+        )
+        assert len(calls) == 1 and ai.last_used == f"Google / {FLASH}"
+        await ai.close()
 
 
 def success(*, grounded=False):
@@ -297,7 +424,8 @@ async def test_missing_real_search_results_tries_next_search_model_without_sendi
             **({"images": [red_image()]} if images else {}),
         )
         assert calls == list(SEARCHERS)
-        assert "https://example.com/weather" in answer
+        assert answer == "Trả lời."
+        assert ai.last_search_used is True
         await ai.close()
 
 

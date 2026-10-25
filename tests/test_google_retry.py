@@ -26,7 +26,7 @@ def google_reply():
     )
 
 
-def google(client):
+def google(client, *, fast=True):
     return ChatAI(
         "google-key",
         Settings(
@@ -36,7 +36,7 @@ def google(client):
         ),
         "Persona",
         client=client,
-        fail_fast=True,
+        fail_fast=fast,
     )
 
 
@@ -62,7 +62,7 @@ async def test_google_quick_error_retries_once_with_same_context_and_budget(
 
     monkeypatch.setattr(module.asyncio, "sleep", sleep)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        ai = google(client)
+        ai = google(client, fast=False)
         assert await ai.generate([{"role": "user", "content": "Hi"}], reserve) == "OK"
     assert len(requests) == len(reserves) == 2
     assert requests[0].content == requests[1].content
@@ -72,7 +72,7 @@ async def test_google_quick_error_retries_once_with_same_context_and_budget(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kind, cooldown",
-    [("quota", 300), ("retry-after", 120), ("retry-info", 90), ("network", 30)],
+    [("quota", 60), ("retry-after", 120), ("retry-info", 90), ("network", 1)],
 )
 async def test_google_does_not_retry_quota_long_hints_or_network_timeout(
     kind, cooldown
@@ -110,7 +110,7 @@ async def test_google_does_not_retry_quota_long_hints_or_network_timeout(
 
 
 @pytest.mark.asyncio
-async def test_google_retries_at_most_once_then_moves_to_next_source(monkeypatch):
+async def test_google_multi_source_moves_on_after_one_failed_request(monkeypatch):
     calls, reserves = [], []
 
     async def sleep(_):
@@ -142,9 +142,9 @@ async def test_google_retries_at_most_once_then_moves_to_next_source(monkeypatch
         )
         ai = FallbackAI(google(client), fallback, clock=lambda: 100, log=lambda _: None)
         assert await ai.generate([], reserve) == "backup"
-        assert calls == ["generativelanguage.googleapis.com"] * 2 + ["api.groq.com"]
-        assert len(reserves) == 3
-        assert ai.blocked_until[0] == 120
+        assert calls == ["generativelanguage.googleapis.com", "api.groq.com"]
+        assert len(reserves) == 2
+        assert ai.blocked_until[0] == 101
 
 
 @pytest.mark.asyncio
@@ -162,7 +162,7 @@ async def test_google_retry_respects_exhausted_local_budget(monkeypatch):
     monkeypatch.setattr(module.asyncio, "sleep", sleep)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(AIError, match="giới hạn gọi AI"):
-            await google(client).generate([], lambda: next(budget))
+            await google(client, fast=False).generate([], lambda: next(budget))
     assert len(calls) == 1
 
 
@@ -205,7 +205,7 @@ async def test_google_model_total_deadline_cancels_inflight_request(monkeypatch)
         with pytest.raises(ProviderUnavailable, match="quá chậm") as error:
             await google(client).generate([], lambda: True)
     assert entered == cancelled == [1]
-    assert error.value.cooldown == 30
+    assert error.value.cooldown == 1
 
 
 @pytest.mark.asyncio

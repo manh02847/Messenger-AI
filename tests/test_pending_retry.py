@@ -1,4 +1,5 @@
 import asyncio
+import json
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -145,20 +146,24 @@ def fast_forward(bot, clock):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failures", [6, 64])
 async def test_keeps_same_turn_beyond_age_limit_and_more_than_three_attempts_without_history_growth(
     make,
+    failures,
 ):
-    ai = AI([*[ProviderUnavailable("Busy", 1) for _ in range(6)], "Đã trả lời."])
-    bot, state, _, transport, clock, _ = make(ai)
+    ai = AI([*[ProviderUnavailable("Busy", 1) for _ in range(failures)], "Đã trả lời."])
+    bot, state, _, transport, clock, _ = make(ai, max_message_age_seconds=2)
     waits = fast_forward(bot, clock)
     bot.receive(incoming(clock))
     await finish(bot)
-    assert len(ai.calls) == 7 and len(transport.sent) == 1
+    assert len(ai.calls) == failures + 1 and len(transport.sent) == 1
     assert clock.now - NOW > bot.settings.max_message_age_seconds
-    assert waits == [5, 10, 20, 40, 60, 60]
+    assert waits == [1] * failures
     assert all(history == ai.calls[0][0] for history, _ in ai.calls)
     assert state.db.execute("SELECT count(*) FROM messages").fetchone()[0] == 2
-    assert state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == 7
+    assert (
+        state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == failures + 1
+    )
     assert not bot.pending
 
 
@@ -243,24 +248,37 @@ async def test_multiple_chats_share_cooldown_and_a_single_inflight_attempt(make)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("semantic", [False, True])
 @pytest.mark.parametrize("same_thread", [False, True])
+@pytest.mark.parametrize("text", ["Bạn đang làm gì?", "thế à", "ừ vậy hả"])
 async def test_waiting_for_search_does_not_hold_a_regular_chat_on_healthy_flash(
-    make, monkeypatch, same_thread
+    make, monkeypatch, same_thread, text, semantic
 ):
     calls = []
+    first_question = (
+        "Quán Phở Thìn ở Lò Đúc đóng cửa lúc nào?"
+        if semantic
+        else "Thời tiết Hà Nội hôm nay thế nào?"
+    )
 
     def handler(request):
         model = request.url.path.rsplit("/", 1)[-1].split(":")[0]
         calls.append(model)
         if model == "gemma-4-26b-a4b-it":
             return httpx.Response(429)
+        body = json.loads(request.content)
+        reply = (
+            "[[NEED_SEARCH]]"
+            if semantic and body["contents"][-1]["parts"][0]["text"] == first_question
+            else "Chào bạn."
+        )
         return httpx.Response(
             200,
             json={
                 "candidates": [
                     {
                         "finishReason": "STOP",
-                        "content": {"parts": [{"text": "Chào bạn."}]},
+                        "content": {"parts": [{"text": reply}]},
                     }
                 ]
             },
@@ -287,7 +305,7 @@ async def test_waiting_for_search_does_not_hold_a_regular_chat_on_healthy_flash(
         bot, state, _, transport, clock, logs = make(ai)
         waiting = WatchedEvent()
         bot.retry_wakeups[THREAD] = waiting
-        bot.receive(incoming(clock, text="Thời tiết Hà Nội hôm nay thế nào?"))
+        bot.receive(incoming(clock, text=first_question))
         await asyncio.wait_for(waiting.waiting.wait(), 1)
         assert THREAD in bot.pending and not transport.sent
         target = THREAD if same_thread else OTHER
@@ -295,17 +313,23 @@ async def test_waiting_for_search_does_not_hold_a_regular_chat_on_healthy_flash(
             incoming(
                 clock,
                 "other",
-                "Bạn đang làm gì?",
+                text,
                 thread=target,
                 sender="222" if same_thread else "333",
             )
         )
         await asyncio.wait_for(bot.tasks[target], 1)
-        assert calls == ["gemma-4-26b-a4b-it", "gemini-3.5-flash-lite"]
+        assert calls == (["gemini-3.5-flash-lite"] if semantic else []) + [
+            "gemma-4-26b-a4b-it",
+            "gemini-3.5-flash-lite",
+        ]
         assert len(transport.sent) == 1 and transport.sent[0][0].thread == target
         assert transport.sent[0][0].id == "other"
         assert (THREAD in bot.pending) is not same_thread
-        assert state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == 2
+        assert state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == (
+            3 if semantic else 2
+        )
+        assert "[[NEED_SEARCH]]" not in str(state.history(target, 12, 3500))
         await bot.close()
 
 
@@ -386,10 +410,65 @@ async def test_real_single_provider_with_multiple_models_recovers_without_using_
         bot.receive(incoming(clock))
         await finish(bot)
         await ai.close()
-    assert waits == [20] and len(requests) == 3 and len(transport.sent) == 1
+    assert waits == [3] and len(requests) == 3 and len(transport.sent) == 1
     assert "gemini-3.1-flash-lite" in requests[-1].url.path
     assert state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == 3
     assert "PRIVATE" not in str(logs)
+
+
+@pytest.mark.asyncio
+async def test_server_errors_keep_rotating_models_with_a_short_constant_round_pause(
+    make, monkeypatch
+):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path.rsplit("/", 1)[-1].split(":")[0])
+        if len(calls) <= 8:
+            return httpx.Response(503, text="PRIVATE_BODY")
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {"parts": [{"text": "Đã trả lời."}]},
+                    }
+                ]
+            },
+        )
+
+    settings = Settings.from_dict(
+        {
+            "provider_enabled": {
+                p: p == "google" for p in ("google", "nvidia", "groq", "cloudflare")
+            },
+            "text_models": [
+                "google:gemini-3.5-flash-lite",
+                "google:gemini-3.1-flash-lite",
+            ],
+            "minimum_ai_interval_seconds": 0,
+        }
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        monkeypatch.setattr(
+            module, "ChatAI", lambda *a, **kw: ChatAI(*a, **kw, client=client)
+        )
+        ai = create_ai({"google_api_key": "PRIVATE_KEY"}, settings, "Persona")
+        bot, state, _, transport, clock, logs = make(ai, max_message_age_seconds=2)
+        ai.clock = lambda: clock.now
+        waits = fast_forward(bot, clock)
+        bot.receive(incoming(clock))
+        await finish(bot)
+        assert calls == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"] * 4 + [
+            "gemini-3.5-flash-lite"
+        ]
+        assert waits == [1] * 4
+        assert len(transport.sent) == 1 and not bot.pending
+        assert state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == 9
+        assert state.db.execute("SELECT count(*) FROM messages").fetchone()[0] == 2
+        assert "PRIVATE" not in str(logs)
+        await ai.close()
 
 
 @pytest.mark.asyncio

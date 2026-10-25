@@ -1,4 +1,4 @@
-"""Show API-provided web sources/search suggestions as plain Messenger text."""
+"""Validate grounding metadata, with optional source rendering for callers that need it."""
 
 from __future__ import annotations
 
@@ -64,10 +64,12 @@ class SearchSuggestions(HTMLParser):
             self.href, self.label = None, []
 
 
-def with_sources(data: dict, answer: str, char_limit: int) -> tuple[str, bool, int]:
+def with_sources(
+    data: dict, answer: str, char_limit: int, *, include_sources: bool = True
+) -> tuple[str, bool, int]:
     metadata = data["candidates"][0].get("groundingMetadata")
     if not isinstance(metadata, dict):
-        return answer, False, 0
+        return answer[:char_limit], False, 0
     chunks = metadata.get("groundingChunks", [])
     sources = []
     if isinstance(chunks, list):
@@ -84,6 +86,16 @@ def with_sources(data: dict, answer: str, char_limit: int) -> tuple[str, bool, i
                     else urlsplit(url).hostname
                 )
                 sources.append((title, url))
+    queries = metadata.get("webSearchQueries")
+    used = bool(
+        sources
+        or (
+            isinstance(queries, list)
+            and any(isinstance(query, str) and query.strip() for query in queries)
+        )
+    )
+    if not include_sources:
+        return answer[:char_limit], used, len(sources)
     suggestions = []
     entry = metadata.get("searchEntryPoint")
     if isinstance(entry, dict) and isinstance(entry.get("renderedContent"), str):
@@ -103,7 +115,6 @@ def with_sources(data: dict, answer: str, char_limit: int) -> tuple[str, bool, i
                 lines.append(line)
         if lines:
             footer += "\n\n" + heading + ":\n" + "\n".join(lines)
-    used = bool(sources or metadata.get("webSearchQueries"))
     if not footer:
         return answer[:char_limit], used, len(sources)
     return (

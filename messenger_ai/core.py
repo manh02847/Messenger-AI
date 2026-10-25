@@ -24,8 +24,7 @@ from .state import State
 VIETNAM = timezone(timedelta(hours=7))
 TYPING_REFRESH_SECONDS = 4
 TYPING_UPDATE_TIMEOUT = 2
-AI_RETRY_MIN_SECONDS = 5
-AI_RETRY_MAX_BACKOFF_SECONDS = 60
+AI_RETRY_MIN_SECONDS = 1
 
 
 class RetryWaiting(ProviderUnavailable):
@@ -372,14 +371,9 @@ class ReplyBot:
 
     async def _worker(self, thread: str) -> None:
         image_cache: dict[tuple[ImageAttachment, bool], ImageInput] = {}
-        retry_count = 0
-        previous_revision = None
         try:
             while thread in self.pending:
                 revision = self.revisions[thread]
-                if revision != previous_revision:
-                    retry_count = 0
-                    previous_revision = revision
                 await asyncio.sleep(self.settings.debounce_seconds)
                 if revision != self.revisions[thread]:
                     continue
@@ -484,14 +478,7 @@ class ReplyBot:
                         ):
                             continue
                         raise
-                    retry_count += 1
-                    delay = max(
-                        error.cooldown,
-                        min(
-                            AI_RETRY_MIN_SECONDS * 2 ** min(retry_count - 1, 6),
-                            AI_RETRY_MAX_BACKOFF_SECONDS,
-                        ),
-                    )
+                    delay = max(error.cooldown, AI_RETRY_MIN_SECONDS)
                     self.retry_after[self._retry_key(active_ai, history)] = (
                         self.clock() + delay
                     )

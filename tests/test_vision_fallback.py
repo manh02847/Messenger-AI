@@ -138,7 +138,7 @@ async def test_cooldown_skips_failed_model_then_restores_priority_after_recovery
             clock=lambda: now[0],
             log=lambda _: None,
         )
-        for moment in (100, 101, 121):
+        for moment in (100, 100.5, 101.1):
             now[0] = moment
             assert (
                 await ai.generate(HISTORY, lambda: True, images=[red_image()])
