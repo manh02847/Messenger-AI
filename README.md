@@ -183,11 +183,27 @@ Có thể tắt toàn bộ nguồn: bot tiếp tục nhận tin nhưng không g�
 .venv/bin/python -m messenger_ai configure-ai cloudflare --model @cf/qwen/qwen3.8-27b
 ```
 
-Lệnh lưu model/key và bật nguồn được chọn, dùng cùng bộ xử lý cấu hình cho cả bốn bên. Ở dòng key, Enter giữ key cũ. Thêm `--keep-key` để dùng key hiện có mà không hỏi/ghi lại key. Không truyền model thì giữ danh sách đã chọn; nguồn chưa có model dùng mẫu cố định của chương trình. Thứ tự thực tế được in ra sau khi lưu.
+Lệnh lưu model/key và bật nguồn được chọn, dùng cùng bộ xử lý cấu hình cho cả bốn bên. Ở dòng key, Enter giữ key cũ. Thêm `--keep-key` để dùng key hiện có mà không hỏi/ghi lại key. Nếu không truyền `--models`, lệnh hỏi để bạn nhập mã trực tiếp; Enter giữ danh sách đang hiển thị. Nguồn chưa có model hiển thị mẫu của chương trình. Thứ tự thực tế được in ra sau khi lưu.
 
 Key và mã model lấy tại [NVIDIA API Catalog](https://build.nvidia.com/), [Google AI Studio](https://aistudio.google.com/apikey), [Groq Console](https://console.groq.com/) hoặc [Cloudflare REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/). Cloudflare cần thêm Account ID. NVIDIA nhận mã `hãng/tên-model`, không nhập URL. Google nhận **mã API tự chọn**, kể cả model mới chưa có trong mẫu; không bị khóa vào danh sách cố định. Nhập `gemini-4-argon`, không nhập tên hiển thị `Gemini 4 Argon`, tiền tố `models/` hoặc URL.
 
 ### Tự đổi model Google
+
+**Cách dễ nhất:** chạy lệnh ngắn rồi dán mã model khi được hỏi:
+
+```bash
+.venv/bin/python -m messenger_ai configure-ai google
+```
+
+Nhập một mã như `gemini-4-argon`, hoặc nhiều mã như `gemini-4-argon gemini-3.8-flash gemini-3.6-flash`. Có thể dùng dấu phẩy thay dấu cách; thứ tự nhập là thứ tự thử. Nhấn Enter không nhập gì để giữ danh sách hiện tại. Chế độ này tự dùng key đã lưu nếu có, không hỏi lại cookie. Muốn nhập lại key thì thêm `--edit-key`; chưa có key sẽ được hỏi để nhập.
+
+Đổi chuỗi ảnh cũng theo cách nhập trực tiếp, dùng key đã cấu hình:
+
+```bash
+.venv/bin/python -m messenger_ai configure-vision google
+```
+
+Chỉ dán mã model, không cần thêm `google:`. Enter giữ các model ảnh Google đang lưu; nếu chưa có thì hiện các model chữ Google để bạn chọn. Lệnh chọn chuỗi ảnh của nguồn này; model chữ được giữ. Thay `google` bằng `nvidia`, `groq` hoặc `cloudflare` để cấu hình tương tự cho nguồn khác. Dùng `providers` để xem/bật/tắt nguồn; restart service đúng acc sau khi đổi model.
 
 Lấy mã model mà API trả về cho key hiện có:
 

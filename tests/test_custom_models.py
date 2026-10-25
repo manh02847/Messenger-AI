@@ -443,3 +443,164 @@ def test_list_models_cli_dispatch(monkeypatch):
     monkeypatch.setattr("sys.argv", ["messenger_ai", "list-models", "google"])
     cli.main()
     called.assert_awaited_once_with("google")
+
+
+@pytest.mark.parametrize(
+    "entered,expected",
+    [
+        ("gemini-4-argon", ["gemini-4-argon"]),
+        ("gemini-4-argon, gemini-3.8-flash", ["gemini-4-argon", "gemini-3.8-flash"]),
+        (
+            "gemini-3.8-flash gemini-4-argon gemini-3.6-flash",
+            ["gemini-3.8-flash", "gemini-4-argon", "gemini-3.6-flash"],
+        ),
+        ("", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]),
+    ],
+)
+def test_short_configure_command_accepts_model_input_and_reuses_key_without_prompt(
+    account, monkeypatch, entered, expected, capsys
+):
+    root, raw, _ = account
+    before = {
+        path: path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and path.name != "config.json"
+    }
+    prompts = []
+    monkeypatch.setattr(
+        "builtins.input", lambda prompt: prompts.append(prompt) or entered
+    )
+    monkeypatch.setattr("sys.argv", ["messenger_ai", "configure-ai", "google"])
+    cli.main()
+    saved = json.loads((root / "config.json").read_text())
+    assert saved == {
+        **raw,
+        "text_models": [*(f"google:{m}" for m in expected), raw["text_models"][-1]],
+    }
+    assert len(prompts) == 1 and "Nhập mã model" in prompts[0]
+    assert "PRIVATE" not in capsys.readouterr().out
+    assert before == {path: path.read_bytes() for path in before}
+
+
+def test_interactive_enter_preserves_an_interleaved_model_order(account, monkeypatch):
+    root, raw, _ = account
+    raw["text_models"].insert(1, raw["text_models"].pop())
+    (root / "config.json").write_text(json.dumps(raw))
+    monkeypatch.setattr("builtins.input", lambda _: "")
+    monkeypatch.setattr("sys.argv", ["messenger_ai", "configure-ai", "google"])
+    cli.main()
+    assert json.loads((root / "config.json").read_text()) == raw
+
+
+@pytest.mark.parametrize("edit_existing_key", [False, True])
+def test_interactive_key_prompt_only_when_missing_or_explicitly_requested(
+    account, monkeypatch, edit_existing_key
+):
+    root, _, secrets = account
+    if not edit_existing_key:
+        secrets["google_api_key"] = ""
+    key_prompt = Mock(return_value="PRIVATE_NEW_KEY")
+    monkeypatch.setattr(cli.getpass, "getpass", key_prompt)
+    monkeypatch.setattr("builtins.input", lambda _: "gemini-4-argon")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "messenger_ai",
+            "configure-ai",
+            "google",
+            *(["--edit-key"] if edit_existing_key else []),
+        ],
+    )
+    cli.main()
+    key_prompt.assert_called_once()
+    saved = json.loads((root / "secrets.json").read_text())
+    assert saved == {**secrets, "google_api_key": "PRIVATE_NEW_KEY"}
+
+
+@pytest.mark.parametrize(
+    "entered",
+    ["https://example.com/model", ",,,", "gemini-4-argon,gemini-4-argon", None],
+)
+def test_invalid_or_missing_interactive_input_never_writes_partial_configuration(
+    account, monkeypatch, entered
+):
+    root, _, _ = account
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+    def prompt(_):
+        if entered is None:
+            raise EOFError
+        return entered
+
+    monkeypatch.setattr("builtins.input", prompt)
+    monkeypatch.setattr("sys.argv", ["messenger_ai", "configure-ai", "google"])
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+    assert error.value.code == 2
+    assert before == {
+        path: path.read_bytes() for path in root.rglob("*") if path.is_file()
+    }
+
+
+@pytest.mark.parametrize("entered", ["gemini-4-argon,gemini-3.8-flash", ""])
+def test_short_vision_command_accepts_bare_model_ids_and_keeps_text_and_keys(
+    account, monkeypatch, entered
+):
+    root, raw, _ = account
+    before = {
+        path: path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and path.name != "config.json"
+    }
+    monkeypatch.setattr("builtins.input", lambda _: entered)
+    monkeypatch.setattr("sys.argv", ["messenger_ai", "configure-vision", "google"])
+    cli.main()
+    expected = (
+        ["google:gemini-4-argon", "google:gemini-3.8-flash"]
+        if entered
+        else raw["vision_models"]
+    )
+    assert json.loads((root / "config.json").read_text()) == {
+        **raw,
+        "vision_models": expected,
+    }
+    assert before == {path: path.read_bytes() for path in before}
+
+
+def test_short_vision_command_offers_text_models_when_no_image_models_exist(
+    account, monkeypatch
+):
+    root, raw, _ = account
+    raw["vision_models"] = []
+    (root / "config.json").write_text(json.dumps(raw))
+    monkeypatch.setattr("builtins.input", lambda _: "")
+    monkeypatch.setattr("sys.argv", ["messenger_ai", "configure-vision", "google"])
+    cli.main()
+    assert Settings.load(root).vision_models == tuple(
+        target for target in raw["text_models"] if target.startswith("google:")
+    )
+
+
+@pytest.mark.parametrize("has_account_id", [False, True])
+def test_interactive_cloudflare_reuses_key_and_collects_account_id_only_if_missing(
+    account, monkeypatch, has_account_id
+):
+    root, _, secrets = account
+    secrets["cloudflare_api_token"] = "PRIVATE_CF_KEY"
+    secrets["cloudflare_account_id"] = "a" * 32 if has_account_id else ""
+    answers = iter(["@cf/owner/selected", *([] if has_account_id else ["a" * 32])])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    key_prompt = Mock(return_value="")
+    if not has_account_id:
+        monkeypatch.setattr(cli.getpass, "getpass", key_prompt)
+    monkeypatch.setattr("sys.argv", ["messenger_ai", "configure-ai", "cloudflare"])
+    cli.main()
+    assert ("cloudflare", "@cf/owner/selected") in Settings.load(root).text_targets
+    if has_account_id:
+        key_prompt.assert_not_called()
+    else:
+        key_prompt.assert_called_once()
+        assert json.loads((root / "secrets.json").read_text()) == {
+            **secrets,
+            "cloudflare_account_id": "a" * 32,
+        }

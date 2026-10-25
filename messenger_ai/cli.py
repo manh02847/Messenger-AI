@@ -6,6 +6,7 @@ import getpass
 import importlib.metadata
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -125,6 +126,30 @@ def _ask_ai_key(secrets: dict, provider: str) -> None:
     secrets[key] = getpass.getpass(
         f"{labels[provider]} API key (Enter để giữ cũ): "
     ).strip() or secrets.get(key, "")
+
+
+def _ask_models(
+    provider: str, current: list[str], *, images: bool = False
+) -> list[str] | None:
+    label = "đọc ảnh" if images else "nhắn chữ"
+    print(f"Model {label} {provider} hiện tại: {', '.join(current)}")
+    try:
+        entered = input(
+            "Nhập mã model (nhiều mã cách nhau bằng dấu cách hoặc dấu phẩy; "
+            "Enter để giữ danh sách trên): "
+        ).strip()
+    except EOFError:
+        raise ValueError(
+            "Chưa nhập mã model; dùng --models/--model hoặc --chain khi chạy không tương tác."
+        ) from None
+    if not entered:
+        return None
+    models = [model for model in re.split(r"[\s,]+", entered) if model]
+    if not models:
+        raise ValueError("Cần nhập ít nhất một mã model hoặc nhấn Enter để giữ cũ.")
+    for model in models:
+        model_target(f"{provider}:{model}")
+    return models
 
 
 def configure(*, provider: str | None = None, copy_ai_from: Path | None = None) -> None:
@@ -268,7 +293,7 @@ async def list_models(provider: str) -> None:
         print(model)
     print(
         "Danh sách này không xác nhận quota/billing hoặc khả năng đọc ảnh. "
-        "Chọn bằng configure-ai google --keep-key --models MÃ_MODEL; "
+        "Chạy configure-ai google rồi nhập mã model; "
         "không tự đổi cấu hình."
     )
 
@@ -745,10 +770,14 @@ def main() -> None:
         nargs="+",
         help="Mã API tự chọn theo thứ tự; Google cũng cho nhập model mới.",
     )
-    ai_config.add_argument(
+    key_options = ai_config.add_mutually_exclusive_group()
+    key_options.add_argument(
         "--keep-key",
         action="store_true",
         help="Dùng key hiện có, không hỏi hoặc ghi lại key.",
+    )
+    key_options.add_argument(
+        "--edit-key", action="store_true", help="Yêu cầu nhập lại key khi chọn model."
     )
     model_list = sub.add_parser(
         "list-models", help="Lấy mã model Google từ API, không đổi cấu hình."
@@ -851,12 +880,28 @@ def main() -> None:
         if args.command == "configure":
             configure(provider=args.provider, copy_ai_from=args.copy_ai_from)
         elif args.command == "configure-ai":
+            models, keep_key = args.models, args.keep_key
+            if models is None:
+                raw = read_config(ROOT)
+                current = models_for(raw, args.provider) or list(
+                    DEFAULT_TEXT_MODELS[args.provider]
+                )
+                models = _ask_models(args.provider, current)
+                secrets = load_secrets(ROOT)
+                has_key = bool(secrets.get(PROVIDER_KEYS[args.provider], "").strip())
+                if args.provider == "cloudflare":
+                    has_key = has_key and bool(
+                        secrets.get("cloudflare_account_id", "").strip()
+                    )
+                if has_key and not args.edit_key:
+                    keep_key = True
+                    print("Dùng key hiện có. Thêm --edit-key nếu muốn nhập lại key.")
             configure_ai(
                 args.provider,
                 args.daily_limit,
                 args.fallback,
-                models=args.models,
-                keep_key=args.keep_key,
+                models=models,
+                keep_key=keep_key,
             )
         elif args.command == "list-models":
             asyncio.run(list_models(args.provider))
@@ -869,9 +914,26 @@ def main() -> None:
         elif args.command == "check-nvidia":
             asyncio.run(check_ai(provider="nvidia"))
         elif args.command == "configure-vision":
-            configure_vision(
-                args.provider, args.model, disable=args.disable, chain=args.chain
-            )
+            if (
+                args.provider
+                and args.model is None
+                and args.chain is None
+                and not args.disable
+            ):
+                raw = read_config(ROOT)
+                current = (
+                    models_for(raw, args.provider, "vision_models")
+                    or models_for(raw, args.provider)
+                    or list(DEFAULT_TEXT_MODELS[args.provider])
+                )
+                models = _ask_models(args.provider, current, images=True) or current
+                configure_vision(
+                    None, None, chain=[f"{args.provider}:{model}" for model in models]
+                )
+            else:
+                configure_vision(
+                    args.provider, args.model, disable=args.disable, chain=args.chain
+                )
         elif args.command == "check-vision":
             asyncio.run(check_vision(all_models=args.all))
         elif args.command == "doctor":
