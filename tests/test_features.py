@@ -259,10 +259,13 @@ async def test_unknown_models_never_get_guessed_reasoning_or_search_parameters(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model", ["gemini-3.8-flash", "gemma-4-31b-it", "gemma-4-26b-a4b-it"]
+)
 @pytest.mark.parametrize("mode", ["off", "auto", "on"])
 @pytest.mark.parametrize("images", [False, True])
 async def test_google_native_search_can_be_enabled_with_photos_without_mutating_history(
-    mode, images
+    model, mode, images
 ):
     original = deepcopy(HARD)
 
@@ -294,7 +297,7 @@ async def test_google_native_search_can_be_enabled_with_photos_without_mutating_
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         ai = ChatAI(
             "KEY",
-            Settings(ai_provider="google", model="gemini-3.8-flash", search_mode=mode),
+            Settings(ai_provider="google", model=model, search_mode=mode),
             "Persona",
             client=client,
         )
@@ -303,6 +306,27 @@ async def test_google_native_search_can_be_enabled_with_photos_without_mutating_
         )
         assert ai.last_search_used is False
     assert original == HARD
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model", ["google/gemma-4-31b-it", "google/gemma-4-26b-a4b-it"]
+)
+async def test_nvidia_gemma_does_not_inherit_google_search_capability(model):
+    def handler(request):
+        body = json.loads(request.content)
+        assert "tools" not in body
+        assert "không có công cụ tra cứu web" in body["messages"][0]["content"]
+        return response("nvidia")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ai = ChatAI(
+            "KEY",
+            Settings(ai_provider="nvidia", model=model, search_mode="on"),
+            "Persona",
+            client=client,
+        )
+        await ai.generate(HARD, lambda: True)
 
 
 @pytest.mark.asyncio

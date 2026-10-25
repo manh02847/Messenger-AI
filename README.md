@@ -285,7 +285,7 @@ Khả năng đã được đối chiếu cho các model đang dùng:
 |---|---|---|
 | Google Gemini 3.8 Flash, 3.6 Flash và các Gemini 3 được nhận diện; Argon cho người tự chọn trả phí | `thinkingLevel`; `auto` dùng mức cân bằng và cơ chế suy nghĩ động của model | Google Search ở các model đã xác minh hỗ trợ |
 | Google Gemini 2.5 Pro/Flash/Flash-Lite | `thinkingBudget`; `auto` dùng ngân sách động; Pro không tắt hẳn | Google Search |
-| Google Gemma 4 31B/26B | `high` hoặc `minimal`; auto chọn theo câu hỏi | Chưa tích hợp |
+| Google Gemma 4 31B/26B | `high` hoặc `minimal`; auto chọn theo câu hỏi | Google Search qua Gemini API |
 | NVIDIA Google Gemma 4 31B/26B | `enable_thinking`; auto chọn theo câu hỏi | Chưa tích hợp |
 | Groq GPT-OSS 20B/120B, Qwen 3.8 27B | Mức được API hỗ trợ; GPT-OSS không tắt hẳn | Chưa tích hợp |
 | Cloudflare Qwen 3.8 27B | `low`/`medium`/`xhigh`; không có mức tắt hẳn được xác minh | Chưa tích hợp |
@@ -300,6 +300,17 @@ Suy luận/tra cứu cần thêm thời gian: lượt thực sự dùng chế đ
 Ngân sách sinh vẫn là `max_completion_tokens` đang cấu hình, gồm cả suy luận; câu quá khó có thể hết ngân sách và bot không gửi bản bị cắt. Không tự tăng token hoặc quota. Một request vẫn tính một lượt ở bộ đếm cục bộ, nhưng **token suy luận và truy vấn Google Search có cách tính quota/phí riêng của nhà cung cấp**. Xem [Google thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking), [Google Search](https://ai.google.dev/gemini-api/docs/generate-content/google-search), [Groq reasoning](https://console.groq.com/docs/reasoning) và [Cloudflare Qwen](https://developers.cloudflare.com/workers-ai/models/qwen3.8-27b/).
 
 Chạy `chat-ai`, hỏi một câu cần thông tin hiện tại để kiểm tra nguồn/link trả về, rồi restart service đúng acc. `check-ai` chỉ hỏi chào nên `auto` có thể không tìm kiếm; các lệnh thử không gửi Messenger.
+
+Hai Gemma 4 trên **nguồn Google** hỗ trợ `googleSearch` theo [hướng dẫn Gemma qua Gemini API](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api#google-search); khả năng này không tự áp dụng cho Gemma chạy ở NVIDIA. Muốn chỉ cho hai model này tự tra cứu, giữ Search chung `off` và đặt riêng:
+
+```bash
+.venv/bin/python -m messenger_ai features --model google:gemma-4-31b-it --search auto
+.venv/bin/python -m messenger_ai features --model google:gemma-4-26b-a4b-it --search auto
+```
+
+Lệnh trên không đổi thứ tự model hoặc gọi API. Nếu Gemini đứng trước và trả lời thành công thì lượt đó chưa chạy tới Gemma, nên cũng chưa dùng Search của Gemma. Chưa tự chuyển sang Gemma chỉ vì câu hỏi cần tra cứu. Khi thử, kiểm tra đúng model thực sự trả lời và dòng `tra cứu thực tế=có`; bật công cụ không bảo đảm model sẽ dùng nó. Không tự bật Search sau `git pull`.
+
+Khả năng gọi được Search không xác nhận project thuộc Free Tier hay chứng minh một lượt thử không phát sinh phí. Hướng dẫn Gemma hiện có ví dụ Search trong khi bảng giá Gemma vẫn ghi `Not available`; cần kiểm tra billing/quota thực tế của project. Tooltip `Default` có nhiều model cùng nhóm không có nghĩa mỗi model được một hạn mức Search riêng.
 
 ### Ba trường quản lý nguồn trong config.json
 

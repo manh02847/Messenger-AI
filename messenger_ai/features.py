@@ -40,7 +40,7 @@ def capabilities(provider: str, model: str) -> Capabilities:
                 "google-budget", "128" if model.endswith("-pro") else "0", search=True
             )
         if model in GEMMA_MODELS:
-            return Capabilities("google-toggle", "minimal")
+            return Capabilities("google-toggle", "minimal", search=True)
     if provider == "nvidia" and model in {f"google/{name}" for name in GEMMA_MODELS}:
         return Capabilities("nvidia-toggle", "off")
     if provider == "groq":
