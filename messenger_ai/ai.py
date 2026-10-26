@@ -90,14 +90,16 @@ def retry_delay(value: str | None, attempt: int) -> float:
 
 def final_text(value: object) -> str:
     if not isinstance(value, str):
-        raise AIError("Model chưa trả về nội dung văn bản.")
+        raise ProviderUnavailable("Model chưa trả về nội dung văn bản.", 1)
     value = re.sub(
         r"<think>.*?</think>", "", value, flags=re.DOTALL | re.IGNORECASE
     ).strip()
     if "<think" in value.lower():
-        raise AIError("Model trả về phần suy luận chưa đóng; không gửi nội dung này.")
+        raise ProviderUnavailable(
+            "Model trả về phần suy luận chưa đóng; không gửi nội dung này.", 1
+        )
     if not value:
-        raise AIError("Model trả về câu trả lời trống.")
+        raise ProviderUnavailable("Model trả về câu trả lời trống.", 1)
     return value
 
 
@@ -216,6 +218,20 @@ def google_text(data: dict) -> str:
     if reason == "MAX_TOKENS":
         raise AIError(
             "Câu trả lời Google chạm max_completion_tokens; chưa gửi bản bị cắt."
+        )
+    if reason in (
+        None,
+        "FINISH_REASON_UNSPECIFIED",
+        "OTHER",
+        "MALFORMED_RESPONSE",
+        "MALFORMED_FUNCTION_CALL",
+    ):
+        # A successful HTTP status can still contain a transient protocol fault.
+        # Keep explicit content blocks, token limits and unknown finish reasons
+        # outside retry so they cannot create an unbounded request loop.
+        raise ProviderUnavailable(
+            "Google trả phản hồi lỗi hoặc chưa hoàn chỉnh; thử model/lượt tiếp theo.",
+            1,
         )
     if reason != "STOP":
         raise AIError(
@@ -595,7 +611,12 @@ class ChatAI:
                         "đây không phải thông báo hết quota API. "
                         "Chạy tune-chat nếu đang dùng mức 768 cũ."
                     )
-                if (nvidia or vision) and choice.get("finish_reason") != "stop":
+                if choice.get("finish_reason") is None:
+                    raise ProviderUnavailable(
+                        f"{self.label} chưa xác nhận phản hồi hoàn chỉnh; thử lại sau.",
+                        1,
+                    )
+                if choice.get("finish_reason") != "stop":
                     raise AIError(
                         f"{self.label} chưa trả câu trả lời hoàn chỉnh; không gửi nội dung này."
                     )
@@ -604,8 +625,8 @@ class ChatAI:
                 self.last_used = self.description
                 return answer
             except (ValueError, KeyError, IndexError, TypeError, AttributeError):
-                raise AIError(
-                    f"Phản hồi {self.label} không đúng định dạng mong đợi."
+                raise ProviderUnavailable(
+                    f"Phản hồi {self.label} không đúng định dạng mong đợi.", 1
                 ) from None
         raise AIError(f"Không nhận được phản hồi từ {self.label}.")
 

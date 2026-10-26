@@ -40,7 +40,9 @@ class Sender:
 
 
 def message(mid="m1", text="Chào bạn", sender="222", thread=THREAD, timestamp=NOW):
-    return Message(thread, mid, sender, text, timestamp, "222@msgr", "222:1@msgr")
+    return Message(
+        thread, mid, sender, text, timestamp, "222@msgr", "222:1@msgr", is_private=True
+    )
 
 
 def make_bot(tmp_path, **options):
@@ -367,6 +369,7 @@ def scope_event(*, jid=None, thread_type=None, sender=222, mid="scope-1", tid=99
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["allowlist", "all_private"])
 @pytest.mark.parametrize(
     "event,private",
     [
@@ -386,12 +389,12 @@ def scope_event(*, jid=None, thread_type=None, sender=222, mid="scope-1", tid=99
         ],
     ],
 )
-async def test_all_private_filters_before_ai_and_history(tmp_path, event, private):
+async def test_private_filters_before_ai_and_history(tmp_path, event, private, scope):
     msg = parse_event(event)
     assert msg is not None and msg.is_private is private
-    # Even an explicitly listed group must be rejected in all_private mode.
+    # Listing a group must not override the private-chat boundary in either mode.
     bot, state, ai, sender, _ = make_bot(
-        tmp_path, reply_scope="all_private", allowed_threads=(msg.thread,)
+        tmp_path, reply_scope=scope, allowed_threads=(msg.thread,)
     )
     bot.receive(msg)
     await drain(bot)
@@ -513,7 +516,9 @@ async def test_typing_during_ai_and_clears_on_every_result(tmp_path, finish):
 
 
 @pytest.mark.asyncio
-async def test_typing_refreshes_while_waiting_without_extra_ai_calls(tmp_path, monkeypatch):
+async def test_typing_refreshes_while_waiting_without_extra_ai_calls(
+    tmp_path, monkeypatch
+):
     from messenger_ai import core
 
     monkeypatch.setattr(core, "TYPING_REFRESH_SECONDS", 0.01)
@@ -554,7 +559,9 @@ async def test_handoff_clears_typing_before_ai_returns(tmp_path, sender_id, text
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["error", "timeout"])
-async def test_typing_failure_never_blocks_reply_or_leaks_error(tmp_path, monkeypatch, failure):
+async def test_typing_failure_never_blocks_reply_or_leaks_error(
+    tmp_path, monkeypatch, failure
+):
     from messenger_ai import core
 
     monkeypatch.setattr(core, "TYPING_UPDATE_TIMEOUT", 0.01)
@@ -632,7 +639,11 @@ async def test_close_clears_typing_without_cancelling_inflight_send(tmp_path):
 
 @pytest.mark.asyncio
 async def test_new_message_during_typing_cleanup_still_gets_reply(tmp_path):
-    stopping, release_stop, second_sent = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    stopping, release_stop, second_sent = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
 
     class SlowTypingStop(TypingSender):
         async def set_typing(self, message, is_typing):
@@ -660,4 +671,40 @@ async def test_new_message_during_typing_cleanup_still_gets_reply(tmp_path):
     await asyncio.wait_for(drain(bot), 1)
     assert [original.id for original, _ in sender.calls] == ["m1", "second"]
     assert not bot.typing_tasks
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_finished_chats_release_ram_and_keep_persistent_deduplication(tmp_path):
+    bot, state, ai, sender, _ = make_bot(tmp_path, reply_scope="all_private")
+    for index in range(30):
+        bot.receive(message(mid=f"in-{index}", thread=f"e2ee:{index + 222}@msgr"))
+    await drain(bot)
+    assert len(sender.calls) == 30
+    assert not bot.latest and not bot.tasks and not bot.revisions
+    assert not bot.retry_wakeups and not bot.pending_images
+    bot.receive(message(mid="in-0"))
+    assert not bot.tasks and len(ai.calls) == 30
+    assert state.history(THREAD, 12, 3500)[-1]["role"] == "assistant"
+    bot.receive(message(mid="another"))
+    await drain(bot)
+    assert len(sender.calls) == 31 and not bot.latest and not bot.tasks
+    await bot.close()
+    state.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("manual", [False, True])
+async def test_stop_or_manual_message_without_active_worker_does_not_retain_ram(
+    tmp_path, manual
+):
+    bot, state, _, _, _ = make_bot(tmp_path)
+    bot.receive(
+        message(
+            text="Mình tự rep nhé" if manual else "Đừng trả lời nữa",
+            sender="111" if manual else "222",
+        )
+    )
+    assert state.paused(THREAD, NOW)
+    assert not bot.tasks and not bot.revisions and not bot.latest
     state.close()

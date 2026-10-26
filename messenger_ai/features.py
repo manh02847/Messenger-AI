@@ -6,7 +6,13 @@ import re
 from dataclasses import dataclass, field
 
 from .config import Settings
-from .search_routing import SEARCH_REQUEST_PROMPT, needs_search
+from .search_routing import (
+    CURRENT_CLOCK,
+    SEARCH_REQUEST_PROMPT,
+    acknowledgement,
+    needs_search,
+    normalized,
+)
 
 
 @dataclass(frozen=True)
@@ -64,19 +70,72 @@ def modes(settings: Settings, provider: str, model: str) -> tuple[str, str]:
     )
 
 
-def complex_question(history: list[dict[str, str]]) -> bool:
-    # Binary/effort-only APIs cannot do native adaptive thinking. This is a local
-    # heuristic, not a claim to understand every question and not another AI call.
-    recent = "\n".join(
-        item["content"] for item in history[-4:] if item["role"] == "user"
-    ).lower()
-    return len(recent) > 500 or bool(
-        re.search(
-            r"phân tích|so sánh|chứng minh|tính toán|giải thích|tại sao|vì sao|thuật toán|"
-            r"debug|sửa lỗi|đoạn code|bài toán|```|\d\s*[+*/=]\s*\d",
-            recent,
+def _lightweight(text: str) -> bool:
+    return acknowledgement(text) or bool(
+        CURRENT_CLOCK.fullmatch(text)
+        or re.fullmatch(
+            r"(?:chao|xin chao|hello|hi|hey)(?: (?:ban|b|nhe|nha|buoi sang|buoi toi))*[!?. ]*",
+            text,
         )
     )
+
+
+def lightweight_turn(history: list[dict[str, str]]) -> bool:
+    return bool(
+        history
+        and history[-1]["role"] == "user"
+        and _lightweight(normalized(history[-1]["content"]))
+    )
+
+
+def _hard_question(text: str) -> bool:
+    return len(text) > 500 or bool(
+        re.search(
+            r"\b(?:phan tich|so sanh|chung minh|tinh toan|giai thich|tai sao|vi sao|"
+            r"thuat toan|debug|sua loi|doan code|bai toan|tim x|tinh lai)\b|"
+            r"```|\d\s*[+*/=×÷−-]\s*\d",
+            text,
+        )
+        or (
+            len(re.findall(r"\b\d+(?:[.,]\d+)?\b", text)) >= 3
+            and re.search(
+                r"\b(?:bao nhieu|bao lau|toi thieu|nho nhat|it nhat|lon nhat|toi da|tinh|tim)\b",
+                text,
+            )
+        )
+    )
+
+
+REASONING_FOLLOWUP = re.compile(
+    r"^(?:neu|gia su|con|the|vay|doi|thay|lam tiep|tiep tuc|giai tiep|"
+    r"cach khac|chi tra|chi can|rut gon|ngan gon|viet lai|sao lai|khong dung)\b"
+)
+
+
+def complex_question(history: list[dict[str, str]]) -> bool:
+    # Binary/effort-only APIs still use a local heuristic, not a semantic
+    # classifier. Only genuine followups may inherit an earlier hard question.
+    if not history or history[-1]["role"] != "user":
+        return False
+    recent = [
+        normalized(item["content"])
+        for item in history[-12:]
+        if item["role"] == "user"
+    ][-4:]
+    latest = recent[-1]
+    if _lightweight(latest):
+        return False
+    if _hard_question(latest):
+        return True
+    if len(latest) > 160 or not REASONING_FOLLOWUP.search(latest):
+        return False
+    for previous in reversed(recent[:-1]):
+        if _hard_question(previous):
+            return True
+        if _lightweight(previous) or REASONING_FOLLOWUP.search(previous):
+            continue
+        break
+    return False
 
 
 @dataclass(frozen=True)
@@ -105,23 +164,23 @@ def plan(
     if caps.reasoning == "google-level":
         level = (
             caps.minimum
-            if reasoning == "off"
+            if reasoning == "off" or (reasoning == "auto" and lightweight_turn(history))
             else "high"
             if reasoning == "on"
             else caps.automatic
         )
         thinking = {"thinkingLevel": level, "includeThoughts": False}
-        active_reasoning = reasoning != "off"
+        active_reasoning = level != caps.minimum
     elif caps.reasoning == "google-budget":
         budget = (
             int(caps.minimum)
-            if reasoning == "off"
+            if reasoning == "off" or (reasoning == "auto" and lightweight_turn(history))
             else 1024
             if reasoning == "on"
             else -1
         )
         thinking = {"thinkingBudget": budget, "includeThoughts": False}
-        active_reasoning = reasoning != "off"
+        active_reasoning = budget != int(caps.minimum)
     elif caps.reasoning == "google-toggle":
         thinking = {
             "thinkingLevel": "high" if think else "minimal",
@@ -222,7 +281,7 @@ def describe(settings: Settings, log=print, *, targets=None) -> None:
             detail = f"mức tối thiểu {caps.minimum}; tắt hẳn tùy model"
         elif reasoning == "auto":
             detail = (
-                "model tự điều chỉnh"
+                "model tự điều chỉnh; lời chào/cảm thán dùng mức tối thiểu"
                 if caps.reasoning in ("google-level", "google-budget")
                 else "chọn mức theo câu hỏi tại bot"
             )

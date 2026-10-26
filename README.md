@@ -293,6 +293,8 @@ Khả năng đã được đối chiếu cho các model đang dùng:
 
 Tên tự nhập chưa được nhận diện vẫn dùng mặc định của API, không đoán/gửi tham số reasoning hoặc công cụ không hỗ trợ; `features --show` ghi rõ giới hạn đó. Model chưa hỗ trợ Search có thể yêu cầu chuyển câu cần kiểm chứng sang model Search đã bật trong cùng danh sách. Nếu không có model Search, bot dùng giới hạn không tra cứu. Không tự gọi nhà cung cấp ngoài danh sách đang bật.
 
+`auto` xét câu mới nhất trước: lời chào/cảm thán rõ ràng như “chào bạn”, “thế à”, “ok cảm ơn” dùng mức suy luận tối thiểu, kể cả sau một bài khó. Các câu hỏi thực chất trên Gemini vẫn dùng cơ chế động ở mức/ngân sách trong bảng. Với Gemma và API chỉ hỗ trợ bật/tắt/mức cố định, bot dùng quy tắc tại máy: nhận tiếng Việt không dấu, bài toán có nhiều dữ kiện số và câu hỏi tiếp như “nếu đổi 13 thành 14?”. Chủ đề cũ không tự làm mọi câu sau thành khó. Đây vẫn là quy tắc gần đúng, chưa phải bộ phân loại ngữ nghĩa; không bảo đảm nhận đúng mọi bài toán, lỗi gõ hoặc hàm ý. `on` vẫn ép suy luận sâu, `off` giữ mức tối thiểu; không tự đổi lựa chọn đã lưu.
+
 Google quyết định việc thực thi Search: **bật/auto không có nghĩa mọi lượt đều phát sinh tìm kiếm**. Bot dùng metadata grounding để xác nhận việc tra cứu, **không tự nối mục Nguồn, gợi ý Google Search hoặc đống link redirect vào tin nhắn**. Prompt yêu cầu trả lời tự nhiên; chỉ đưa link/nguồn trong nội dung khi người nhắn yêu cầu. Link model viết trong câu trả lời vẫn được giữ. Log ghi `tra cứu thực tế=có/không` và số nguồn, không in câu tìm kiếm, HTML, API key hoặc nội dung chat. Lỗi quyền/billing/cấu hình Search được báo rõ và không âm thầm thử lại cùng request với công cụ bị gỡ bỏ.
 
 Suy luận/tra cứu cần thêm thời gian: lượt thực sự dùng chế độ này có deadline **45 giây/model**, cả chuỗi **90 giây**, nhóm Google chữ tối đa **60 giây** (Gemma tối đa 30 giây khi có Gemini dự phòng). Khi tự chọn chuỗi Search, mỗi model được thử tối đa **30 giây** để còn thời gian cho model Search tiếp theo; thời gian cả nhóm/cả lượt vẫn bị giới hạn như trên. Lượt cơ bản giữ giới hạn cũ. Quá tải/timeout vẫn đi theo cơ chế giữ câu chờ; không bỏ giới hạn thời gian để retry liên tục trong một request.
@@ -355,7 +357,7 @@ Cấu hình cũ vẫn được đọc theo đúng thứ tự đang dùng. Lần 
 <details>
 <summary>Khi một nguồn lỗi, bot chuyển nguồn như thế nào?</summary>
 
-- Bot chuyển nguồn khi gặp lỗi khả dụng như mạng, timeout hoặc quota; nguồn lỗi được tạm bỏ qua trong các lượt sau. Lỗi cấu hình hoặc nội dung phản hồi sai định dạng/bị cắt/chặn cần xử lý riêng, không thử vô hạn.
+- Bot chuyển nguồn khi gặp lỗi khả dụng như mạng, timeout, quota hoặc phản hồi API hỏng/trống; nguồn lỗi được tạm bỏ qua trong các lượt sau. Lỗi cấu hình, nội dung bị chặn hoặc câu trả lời chạm giới hạn token cần xử lý riêng, không thử vô hạn.
 - **NVIDIA:** một lần thử/lượt, tối đa 12 giây. HTTP 202 đang xếp hàng được bỏ qua, không polling. HTTP 401/403 cho nguồn nghỉ 600 giây rồi thử nguồn sau.
 - **Google:** mỗi model thử một request trong chuỗi nhiều model; lỗi tạm thời chuyển ngay sang model kế tiếp. Nếu chỉ cấu hình một model, lỗi 500/502/503/504 trả về nhanh được thử lại một lần trong deadline. Lượt cơ bản cả nhóm tối đa 20 giây; Gemma dùng chung 10 giây khi có Flash. Suy luận/Search dùng deadline riêng ở trên. Khi model đang trả lời yêu cầu chuyển sang Search, thời gian Google đã dùng vẫn bị trừ, không mở lại ngân sách 60 giây mới. Key/quyền sai hoặc HTTP 400 cần sửa cấu hình.
 - **Groq/Cloudflare khi có nhiều model:** mỗi model thử một request/vòng rồi chuyển tiếp khi gặp lỗi tạm thời.
@@ -371,7 +373,9 @@ Mặc định **bật** (`ai_retry_enabled: true` trong `config.json`). Chỉ d�
 
 Model lỗi được chuyển tiếp ngay; hết một vòng lỗi tạm thời thì chờ tới model sẵn sàng sớm nhất và thử tiếp, tối thiểu **1 giây**, không tăng dần 5–60 giây. Bot vẫn tuân thủ `Retry-After`, reset quota và `minimum_ai_interval_seconds` đã cấu hình. Mặc định khoảng cách gọi cùng model là 6 giây; nếu muốn vòng retry nhanh hơn, giảm trường đó xuống 1 rồi restart. Model lỗi còn chờ khoảng cách riêng được bỏ qua để thử model khác sẵn sàng. Các chat dùng chung trạng thái nghỉ nguồn; khi chờ, bot tắt trạng thái đang nhập và bật lại lúc thực sự tạo phản hồi.
 
-Mỗi request thật vẫn tính vào ngân sách AI. Hết ngân sách cục bộ hoặc giới hạn rep/chat/ngày thì giữ lượt tới ngày mới theo giờ Việt Nam; quota nhà cung cấp dùng thời gian reset của bên đó nếu API có chỉ dẫn. Không tự tăng/reset giới hạn. Lỗi key/quyền/model không tồn tại, HTTP 400, nội dung bị chặn hoặc câu trả lời hỏng/bị cắt không được gọi lại vô hạn.
+Mỗi request thật vẫn tính vào ngân sách AI. Hết ngân sách cục bộ hoặc giới hạn rep/chat/ngày thì giữ lượt tới ngày mới theo giờ Việt Nam; quota nhà cung cấp dùng thời gian reset của bên đó nếu API có chỉ dẫn. Không tự tăng/reset giới hạn. Lỗi key/quyền/model không tồn tại, HTTP 400, nội dung bị chặn hoặc câu trả lời chạm giới hạn token không được gọi lại vô hạn.
+
+HTTP 200 vẫn có thể chứa phản hồi hỏng. JSON sai cấu trúc, nội dung trống/chỉ có suy luận, thiếu trạng thái hoàn tất và các lỗi Google `MALFORMED_RESPONSE`/`MALFORMED_FUNCTION_CALL`/`OTHER` được chuyển model và giữ lượt để thử lại, mặc định nghỉ 1 giây nếu cả chuỗi lỗi. Không gửi phần nháp đó. Groq/Cloudflare cũng phải trả `finish_reason=stop` mới được gửi; nội dung bị lọc hoặc yêu cầu gọi tool chưa xử lý không được coi là câu trả lời hoàn chỉnh. `check-ai`/`chat-ai` vẫn thử hữu hạn, không chạy vòng retry của bot Messenger.
 
 Tin **đã được nhận khi còn mới** không bị bỏ chỉ vì chờ vượt `max_message_age_seconds`. Tin mới trong cùng chat thay lượt đang chờ bằng ngữ cảnh mới nhất; các lần gọi lỗi không thêm tin nháp vào lịch sử. Bạn tự rep hoặc người nhắn yêu cầu dừng thì hủy lượt chờ và nhường như cũ. Lượt gửi Messenger chưa rõ kết quả vẫn không tự gửi lại để tránh trùng.
 
@@ -402,7 +406,7 @@ Nhờ đúng người muốn thử gửi một tin mới. `discover` in mã cu�
 .venv/bin/python -m messenger_ai allow "e2ee:123456789@msgr"
 ```
 
-Mã trên chỉ minh họa; thay bằng kết quả thật, có thể là `e2ee:...` hoặc `thread:...`. Không mặc định lấy số trong URL Messenger `/e2ee/t/...` làm mã cho bot. `allowlist` chỉ rep các cuộc trò chuyện trong `allowed_threads`; để bỏ một mã, xóa nó khỏi danh sách trong `config.json`.
+Mã trên chỉ minh họa; thay bằng kết quả thật, có thể là `e2ee:...` hoặc `thread:...`. Không mặc định lấy số trong URL Messenger `/e2ee/t/...` làm mã cho bot. `allowlist` chỉ rep các **chat riêng đã xác định** trong `allowed_threads`; nhóm và loại chưa xác định vẫn bị bỏ qua dù lỡ thêm ID. Để bỏ một mã, xóa nó khỏi danh sách trong `config.json`.
 
 ### Xem trước, sau đó gửi thật
 
@@ -587,6 +591,7 @@ Khi chạy gửi thật, bot báo **đang nhập** lúc AI bắt đầu soạn v
 - Nếu hai tin liên tiếp trong một chat cách nhau **từ 1 giờ**, lượt tiếp theo bắt đầu ngữ cảnh mới. Điều chỉnh `history_idle_seconds` trong `config.json`; đặt `0` để tắt. Quy tắc cũng áp dụng sau restart và cho `chat-ai`. Dữ liệu cũ vẫn được giữ theo giới hạn lưu trữ, nhưng không gửi qua ranh giới này.
 - Tin cũ được bỏ dần theo giới hạn, nên ngữ cảnh không phình vô hạn. Bot không đọc lại toàn bộ lịch sử Messenger và không reset trắng sau mỗi lần API hết quota.
 - Lịch sử bot nằm trong `data/`; dữ liệu quá hạn mặc định **7 ngày** được dọn khi khởi động. `chat-ai` là cuộc trò chuyện thử riêng trong RAM.
+- Khi một lượt đã kết thúc, bot giải phóng đối tượng tin nhắn/ảnh, task và bộ đếm sửa đổi của chat khỏi RAM. Lịch sử, chống gửi trùng và thời gian nhường trong SQLite vẫn được giữ theo quy tắc ở trên.
 
 Mỗi request kèm một hướng dẫn ngắn để đối chiếu persona, phân biệt chủ tài khoản với người nhắn và không coi câu trả lời cũ của bot là sự thật đã xác minh. Hướng dẫn áp dụng cả khi có `persona.local.txt`, thêm một ít token đầu vào; không gọi AI riêng để tóm tắt hoặc đánh giá lịch sử. Đây là hướng dẫn cho model, không bảo đảm mọi câu trả lời đều đúng.
 
@@ -761,7 +766,7 @@ Phần thử nghiệm ChatGPT web đã được gỡ. Không cần cookie ChatGP
 - Nội dung cùng một phần lịch sử được gửi tới nhà cung cấp AI được thử. `data/` chứa lịch sử và trạng thái/khóa thiết bị E2EE, chưa mã hóa ở tầng ứng dụng; bảo vệ máy chạy và không chia sẻ thư mục này. Không chạy hai máy dùng chung bản sao thiết bị E2EE.
 - Hạn mức, model và điều kiện sử dụng phụ thuộc từng dịch vụ; xem dashboard/tài liệu hiện hành, không coi free tier là không giới hạn.
 
-Tài liệu dự án: [kết quả kiểm tra và phạm vi xác minh](VALIDATION.md), [thành phần bên thứ ba](THIRD_PARTY.md), [system service cho root](deploy/messenger-ai-system.service), [user service](deploy/messenger-ai.service).
+Tài liệu dự án: [rà soát dự án và các việc còn nên bổ sung](REVIEW.md), [kết quả kiểm tra và phạm vi xác minh](VALIDATION.md), [thành phần bên thứ ba](THIRD_PARTY.md), [system service cho root](deploy/messenger-ai-system.service), [user service](deploy/messenger-ai.service).
 
 Tài liệu nhà cung cấp:
 

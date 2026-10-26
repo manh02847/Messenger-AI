@@ -88,7 +88,7 @@ async def test_live_reply_uses_new_session_after_idle(tmp_path):
     bot = ReplyBot(
         settings, state, AI(), Mock(), "111", clock=lambda: 1000, log=lambda _: None
     )
-    bot.receive(Message(THREAD, "new", "222", "New question", 1000))
+    bot.receive(Message(THREAD, "new", "222", "New question", 1000, is_private=True))
     await asyncio.gather(*bot.tasks.values())
     assert calls == [[{"role": "user", "content": "New question"}]]
     await bot.close()

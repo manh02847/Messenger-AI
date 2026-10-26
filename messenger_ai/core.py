@@ -182,10 +182,14 @@ class ReplyBot:
         if self.closing:
             return
         now = self.clock()
-        if self.settings.reply_scope == "all_private":
-            if not message.is_private:
-                return
-        elif message.thread not in self.settings.allowed_threads:
+        # An allowlist selects people; it must not authorize groups or unknown
+        # thread types. Apply this before saving history or loading any image.
+        if not message.is_private:
+            return
+        if (
+            self.settings.reply_scope == "allowlist"
+            and message.thread not in self.settings.allowed_threads
+        ):
             return
         if not (
             max(self.started_at - 2, now - self.settings.max_message_age_seconds)
@@ -198,7 +202,8 @@ class ReplyBot:
         if message.sender_id == self.own_id:
             if self.state.bot_echo(message.thread, message.id, message.text, now):
                 return
-            self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
+            if message.thread in self.revisions:
+                self.revisions[message.thread] += 1
             self.pending.discard(message.thread)
             self._wake_retry(message.thread)
             self.pending_images.pop(message.thread, None)
@@ -232,7 +237,8 @@ class ReplyBot:
             self.settings.history_messages,
         )
         if requests_human(message.text):
-            self.revisions[message.thread] = self.revisions.get(message.thread, 0) + 1
+            if message.thread in self.revisions:
+                self.revisions[message.thread] += 1
             self.pending.discard(message.thread)
             self._wake_retry(message.thread)
             self.pending_images.pop(message.thread, None)
@@ -563,6 +569,9 @@ class ReplyBot:
                 self.tasks[thread] = asyncio.create_task(self._worker(thread))
             else:
                 self.retry_wakeups.pop(thread, None)
+                self.latest.pop(thread, None)
+                self.revisions.pop(thread, None)
+                self.tasks.pop(thread, None)
 
     async def close(self) -> None:
         # Let any in-flight send finish instead of blindly cancelling/replaying it.

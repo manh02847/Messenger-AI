@@ -7,7 +7,13 @@ import httpx
 import pytest
 
 from messenger_ai import ai as module
-from messenger_ai.ai import AIError, ChatAI, VisionFallbackAI, create_vision_ai
+from messenger_ai.ai import (
+    AIError,
+    ChatAI,
+    ProviderUnavailable,
+    VisionFallbackAI,
+    create_vision_ai,
+)
 from messenger_ai.config import PROVIDER_KEYS, VISION_PRESET, Settings
 from messenger_ai.images import test_image as red_image
 
@@ -187,9 +193,7 @@ async def test_unavailable_status_advances_once_and_honors_retry_after(target, s
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "failure", ["blocked", "truncated", "malformed", "config", "filtered"]
-)
+@pytest.mark.parametrize("failure", ["blocked", "truncated", "config", "filtered"])
 async def test_content_and_config_errors_stop_without_trying_another_vision_model(
     failure,
 ):
@@ -204,8 +208,6 @@ async def test_content_and_config_errors_stop_without_trying_another_vision_mode
             )
         if failure == "config":
             return httpx.Response(400, text="PRIVATE_BODY")
-        if failure == "malformed":
-            return httpx.Response(200, json={"unexpected": "PRIVATE_BODY"})
         return httpx.Response(
             200,
             json={
@@ -226,6 +228,23 @@ async def test_content_and_config_errors_stop_without_trying_another_vision_mode
             await ai.generate(HISTORY, lambda: True, images=[red_image()])
     assert len(calls) == 1
     assert "PRIVATE_BODY" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_malformed_vision_response_rotates_then_reports_retryable_when_all_fail():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={"unexpected": "PRIVATE_BODY"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ai = chain(client, (VISION_PRESET[3], VISION_PRESET[4]), log=lambda _: None)
+        with pytest.raises(ProviderUnavailable) as caught:
+            await ai.generate(HISTORY, lambda: True, images=[red_image()])
+    assert len(calls) == 2
+    assert caught.value.retryable and caught.value.cooldown <= 6
+    assert "PRIVATE_BODY" not in str(caught.value)
 
 
 @pytest.mark.asyncio

@@ -146,6 +146,55 @@ def fast_forward(bot, clock):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["malformed", "empty", "json"])
+async def test_single_google_model_retains_turn_after_corrupt_response(make, fault):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1 and fault == "json":
+            return httpx.Response(200, text="PRIVATE_BODY")
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "finishReason": "MALFORMED_RESPONSE"
+                        if len(calls) == 1 and fault == "malformed"
+                        else "STOP",
+                        "content": {
+                            "parts": [
+                                {"text": "" if len(calls) == 1 else "Đã trả lời."}
+                            ]
+                        },
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ai = ChatAI(
+            "KEY",
+            Settings(
+                ai_provider="google",
+                model="gemini-3.5-flash-lite",
+                minimum_ai_interval_seconds=0,
+            ),
+            "Persona",
+            client=client,
+        )
+        bot, state, _, transport, clock, logs = make(ai)
+        waits = fast_forward(bot, clock)
+        bot.receive(incoming(clock))
+        await finish(bot)
+    assert waits == [1] and len(calls) == 2
+    assert len(transport.sent) == 1 and transport.sent[0][1] == "Đã trả lời."
+    assert state.db.execute("SELECT count(*) FROM ai_calls").fetchone()[0] == 2
+    assert len(state.history(THREAD, 12, 3500)) == 2
+    assert "PRIVATE" not in " ".join(logs)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failures", [6, 64])
 async def test_keeps_same_turn_beyond_age_limit_and_more_than_three_attempts_without_history_growth(
     make,

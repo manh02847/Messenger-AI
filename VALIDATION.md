@@ -1,4 +1,27 @@
-# Kiểm tra bản 1.0.0 — 23/10/2026
+# Kết quả kiểm tra
+
+## Rà soát tổng thể — 26/10/2026
+
+- **1.222 kiểm thử offline đạt**, tăng 119 ca so với bản trước đợt rà soát;
+  Ruff E4/E7/E9/F và `git diff --check` đạt.
+- Bổ sung ca tái hiện và hồi quy cho phản hồi API hỏng/trống, Google lỗi
+  giao thức dù HTTP 200, luân chuyển cả chữ/ảnh, retry với một model, giữ
+  giới hạn request và phân biệt nội dung bị chặn/cắt với lỗi tạm thời.
+- Chặn nhóm/loại chưa xác định trong cả allowlist và all_private trước
+  lịch sử/AI; thu hồi dữ liệu RAM của lượt đã kết thúc, giữ chống trùng,
+  pause và tin mới đến lúc đang dọn typing.
+- Auto thinking nhận câu không dấu/bài toán nhiều số/câu hỏi tiếp, hạ mức
+  cho lời chào/cảm thán và không lấy chủ đề khó cũ áp vào câu mới không liên
+  quan. Vẫn là quy tắc gần đúng với API không có thinking động.
+- Bốn request Google thật sau sửa: hai model giải đúng một bài cầu; câu
+  “thế à” dùng mức minimal và không có token suy luận. Số liệu, giới hạn
+  thử nghiệm và các việc còn cần bổ sung nằm trong [REVIEW.md](REVIEW.md).
+- Chưa đăng nhập/gửi Messenger hoặc triển khai trên VPS trong đợt này.
+
+Các mục dưới là nhật ký kiểm tra các bản cũ; số lượng test và mô tả hành vi
+ở từng mục phản ánh thời điểm ghi, không thay thế kết quả mới nhất ở trên.
+
+## Kiểm tra bản 1.0.0 — 23/10/2026
 
 Đã kiểm tra trên Linux x86-64, Python 3.12:
 
