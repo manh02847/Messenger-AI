@@ -268,7 +268,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const notes = {
         ENDPOINT: "Địa chỉ cần là ws://127.0.0.1:8765 hoặc localhost qua SSH tunnel.",
         TOKEN: "Dán mã kết nối từ lệnh call-lab, không dán API key.",
-        ACTIVE: "Đã có phiên thử. Bấm Dừng AI trước.",
+        ACTIVE: "Đã có phiên AI. Bấm Dừng AI trước.",
       };
       status = notes[error.message] || "Chưa kết nối được tiện ích; tải lại trang Facebook rồi thử lại.";
       sendResponse({ok: false, status, active: !!current || starting});

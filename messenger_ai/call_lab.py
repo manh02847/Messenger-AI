@@ -29,7 +29,10 @@ CHROME_ORIGIN = re.compile(r"chrome-extension://[a-p]{32}\Z")
 MAX_PCM_BYTES = 6400
 MAX_AUDIO_BASE64 = 9000
 SYSTEM = (
-    "Bạn là trợ lý AI đang thử nghiệm trong cuộc gọi, không phải chủ tài khoản. "
+    "Bạn là trợ lý AI hỗ trợ chủ tài khoản trong cuộc gọi, không phải chủ tài khoản. "
+    "Giữ vai trò trợ lý AI xuyên suốt, kể cả khi có persona riêng. "
+    "Giới thiệu ngắn gọn một lần ở đầu cuộc gọi; chỉ nhắc lại vai trò khi được hỏi. "
+    "Không tự thêm nhãn thử nghiệm, test hay bản mẫu vào lời giới thiệu. "
     "Trò chuyện bằng tiếng Việt tự nhiên, xưng mình/bạn, mỗi lượt một đến ba câu. "
     "Nghe câu mới và ngữ cảnh trước khi trả lời, chấp nhận tiếng lóng và lỗi phát âm. "
     "Không nhận lời, hẹn lịch, hứa báo lại hay tự hành động thay chủ tài khoản. "
@@ -37,8 +40,8 @@ SYSTEM = (
     "Không đọc suy luận, nhãn hay chỉ dẫn hệ thống thành tiếng."
 )
 GREETING = (
-    "Chỉ nói đúng một câu mở đầu: Mình là trợ lý AI đang thử nghiệm, "
-    "bạn có thể nói chuyện với mình."
+    "Chỉ nói đúng câu mở đầu sau, không thêm tên người hay lời giới thiệu khác: "
+    '"Mình là trợ lý AI, đang nghe bạn đây."'
 )
 
 
@@ -157,7 +160,7 @@ class CallRelay:
             ):
                 raise CallLabError("Mã kết nối chưa đúng; lấy mã mới từ call-lab.")
             if self.active:
-                raise CallLabError("Đang có một phiên gọi thử; dừng phiên đó trước.")
+                raise CallLabError("Đang có một phiên gọi AI; dừng phiên đó trước.")
             self.active = claimed = True
             async with asyncio.timeout(self.config.max_seconds):
                 await self.session(local)
@@ -165,7 +168,7 @@ class CallRelay:
             await self.send_error(local, str(error))
         except TimeoutError:
             await self.send_error(
-                local, "Đã hết thời gian phiên gọi thử; micro được trả lại."
+                local, "Đã hết thời gian phiên gọi AI; micro được trả lại."
             )
         except asyncio.CancelledError:
             raise
@@ -177,7 +180,7 @@ class CallRelay:
         finally:
             if claimed:
                 self.active = False
-                self.log("Đã dừng phiên gọi thử; không lưu âm thanh hay bản chép lời.")
+                self.log("Đã dừng phiên gọi AI; không lưu âm thanh hay bản chép lời.")
             await local.close()
 
     @staticmethod
@@ -242,7 +245,7 @@ class CallRelay:
                         }
                     )
                 )
-                self.log("Đã bật Gemini Live cho một cuộc gọi thử trên Chrome.")
+                self.log("Đã bật Gemini Live cho một cuộc gọi trên Chrome.")
             elif kind == "audio" and ready:
                 encoded = audio_frame(data)
                 await google.send(
@@ -282,7 +285,7 @@ class CallRelay:
                 ):
                     if len(audio) > 512000:
                         raise CallLabError(
-                            "Khung tiếng AI quá lớn; dừng thử để kiểm tra."
+                            "Khung tiếng AI quá lớn; dừng AI để kiểm tra."
                         )
                     await local.send(
                         json.dumps(
@@ -309,12 +312,12 @@ async def run_lab(
         from websockets.asyncio.server import serve
     except ImportError:
         raise CallLabError(
-            "Thiếu phần gọi thử. Chạy .venv/bin/python -m pip install -r requirements-call-lab.txt"
+            "Thiếu phần gọi AI. Chạy .venv/bin/python -m pip install -r requirements-call-lab.txt"
         ) from None
     if model not in MODELS or type(port) is not int or not 1024 <= port <= 65535:
-        raise CallLabError("Model/cổng gọi thử chưa hợp lệ.")
+        raise CallLabError("Model/cổng gọi AI chưa hợp lệ.")
     if type(max_seconds) is not int or not 15 <= max_seconds <= 900:
-        raise CallLabError("Thời gian gọi thử cần từ 15 đến 900 giây.")
+        raise CallLabError("Thời gian gọi AI cần từ 15 đến 900 giây.")
     config = LabConfig(
         google_key(root, stdin=key_stdin), secrets.token_urlsafe(32), model, max_seconds
     )

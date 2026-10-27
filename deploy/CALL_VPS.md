@@ -4,7 +4,7 @@ Chrome, phiên Facebook, thiết bị âm thanh ảo và Google Live relay cùng
 
 **Đây là bản triển khai đầu tiên cần thử trên VPS thật.** Người dùng đã xác nhận cầu nối Chrome trên Windows hoạt động ở bản 0.1.1. Bản 0.2.0 bổ sung desktop Ubuntu và nhận cuộc gọi tự động; phần mới đã kiểm thử offline/mô phỏng, chưa được cài hoặc kiểm chứng với Facebook trên VPS trong môi trường phát triển.
 
-**Bản hiện tại: 0.3.0.** Thêm dọn trang gọi đã kết thúc, nút Nhường người thật và chọn persona riêng cho cuộc gọi. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
+**Bản hiện tại: 0.3.1.** Lời chào thống nhất là “Mình là trợ lý AI, đang nghe bạn đây”, bỏ nhãn thử nghiệm trong lời giới thiệu và giao diện tiện ích. Vẫn có dọn trang gọi đã kết thúc, nút Nhường người thật và chọn persona riêng cho cuộc gọi từ 0.3.0. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
 
 Cấu hình khởi đầu dự kiến: 2 vCPU, khoảng 4 GB RAM cho một phiên Chrome với một tài khoản. Đây là đánh giá theo cấu hình, chưa phải số đo tải thật. Bộ cài giới hạn service ở 2500 MB để dành RAM cho hệ thống và bot text. Chưa tự thêm swap.
 
@@ -62,7 +62,7 @@ Relay 8765, VNC 5977 và noVNC 6080 đều chỉ nghe loopback. Không mở các
 /opt/messenger-ai-call/app/experimental/call-lab-extension
 ```
 
-3. Kiểm tra phiên bản **0.3.0**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
+3. Kiểm tra phiên bản **0.3.1**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
 4. Ghim tiện ích. Tải lại trang Facebook trước khi tạo cuộc gọi mới.
 5. Mở tiện ích, địa chỉ giữ `ws://127.0.0.1:8765`, dán mã kết nối từ bộ cài. Có thể tắt **Nghe giọng AI trên máy này** vì VPS không cần phát loa để bạn nghe qua noVNC.
 

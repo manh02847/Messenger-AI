@@ -1,5 +1,11 @@
 # Kết quả kiểm tra
 
+## Thống nhất lời giới thiệu cuộc gọi — 0.3.1, 27/10/2026
+
+- Bỏ lời giới thiệu cũ “AI đang thử nghiệm” trong system instruction và yêu cầu lời chào. Dùng câu mở đầu “Mình là trợ lý AI, đang nghe bạn đây”, yêu cầu giữ vai trò AI khi có persona và chỉ nhắc lại vai trò khi được hỏi. Không thay dữ liệu persona riêng hoặc cách chọn file.
+- Đổi tên/tiêu đề tiện ích thành Messenger AI — Cuộc gọi, bỏ nhãn phiên thử trong trạng thái hiển thị. Không đổi cơ chế nhận/dừng cuộc gọi, dọn tab, nhường người thật hoặc quyền truy cập của tiện ích.
+- **57 kiểm thử relay/VPS/tiện ích đạt, 1 fixture Chrome bỏ qua**; lint Python, cú pháp JavaScript, manifest và `git diff --check` đạt. Không gọi Google thật hoặc gửi persona thật trong đợt này; chưa xác nhận cách model phát âm/làm theo lời chào mới trên cuộc gọi thật.
+
 ## Dọn trang gọi, nhường người thật và persona — 0.3.0, 27/10/2026
 
 - Dọn trang gọi có màn hình kết thúc/đánh giá bằng nhãn Việt/Anh, sau khi xác nhận không còn peer âm thanh. Giữ trang Facebook chính, kiểm tra lại trạng thái và `call_id` trước khi đóng; không đóng tab đang điều hướng/đã dùng cho cuộc gọi mới, không bấm sao hoặc gọi lại.
