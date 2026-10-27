@@ -143,6 +143,7 @@ def test_setup_has_no_web_private_persona_text_output_or_exposed_key():
     assert "tools" not in data["setup"]
     assert "PRIVATE" not in json.dumps(data)
     assert "PRIVATE" not in repr(CONFIG)
+    assert "speechConfig" not in data["setup"]["generationConfig"]
 
 
 def test_only_google_key_is_loaded_and_no_persona_is_read(tmp_path, monkeypatch):
@@ -194,12 +195,22 @@ async def test_wrong_token_cannot_open_google_or_leak_it():
 
 
 @pytest.mark.asyncio
-async def test_authenticated_audio_routes_both_ways_and_filters_all_private_thoughts():
-    async with server() as (url, relay, created, logs):
+@pytest.mark.parametrize("voice", [None, "Kore", "Puck", "Aoede"])
+async def test_authenticated_audio_routes_both_ways_and_filters_all_private_thoughts(
+    voice,
+):
+    config = replace(CONFIG, voice=voice)
+    async with server(config=config) as (url, relay, created, logs):
         async with connect(url, origin=ORIGIN, proxy=None) as ws:
             await authorize(ws)
             assert (await receive(ws))["type"] == "google_ready"
-            assert created[0].sent == [lab.setup(CONFIG)]
+            assert created[0].sent == [lab.setup(config)]
+            speech = created[0].sent[0]["setup"]["generationConfig"].get("speechConfig")
+            assert speech == (
+                {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
+                if voice
+                else None
+            )
             await ws.send(json.dumps({"type": "ready"}))
             audio, usage = await receive(ws), await receive(ws)
             assert audio == {"type": "audio", "data": PCM, "sampleRate": 24000}
@@ -332,6 +343,8 @@ async def test_google_errors_are_sanitized_and_browser_disconnect_cleans_up():
         {"model": "gemini-3.8-live-extended-thinking"},
         {"max_seconds": 1},
         {"max_seconds": 901},
+        {"voice": "UNKNOWN"},
+        {"voice": ["Kore"]},
     ],
 )
 async def test_invalid_lab_parameters_do_not_read_credentials(

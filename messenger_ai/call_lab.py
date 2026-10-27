@@ -26,6 +26,38 @@ MODELS = (
     "gemini-3.1-flash-live-preview",
     "gemini-2.5-flash-native-audio-latest",
 )
+VOICES = (
+    "Zephyr",
+    "Puck",
+    "Charon",
+    "Kore",
+    "Fenrir",
+    "Leda",
+    "Orus",
+    "Aoede",
+    "Callirrhoe",
+    "Autonoe",
+    "Enceladus",
+    "Iapetus",
+    "Umbriel",
+    "Algieba",
+    "Despina",
+    "Erinome",
+    "Algenib",
+    "Rasalgethi",
+    "Laomedeia",
+    "Achernar",
+    "Alnilam",
+    "Schedar",
+    "Gacrux",
+    "Pulcherrima",
+    "Achird",
+    "Zubenelgenubi",
+    "Vindemiatrix",
+    "Sadachbia",
+    "Sadaltager",
+    "Sulafat",
+)
 CHROME_ORIGIN = re.compile(r"chrome-extension://[a-p]{32}\Z")
 MAX_PCM_BYTES = 6400
 MAX_AUDIO_BASE64 = 9000
@@ -99,6 +131,7 @@ class LabConfig:
     model: str = MODELS[0]
     max_seconds: float = 180
     system_instruction: str = field(default=SYSTEM, repr=False)
+    voice: str | None = None
 
 
 @dataclass
@@ -172,6 +205,14 @@ def setup(config: LabConfig, *, end_call_enabled=False) -> dict:
             },
         }
     }
+    if config.voice is not None:
+        if config.voice not in VOICES:
+            raise CallLabError(
+                "Giọng gọi AI chưa hợp lệ; chọn tên giọng Google hỗ trợ."
+            )
+        data["setup"]["generationConfig"]["speechConfig"] = {
+            "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": config.voice}}
+        }
     if end_call_enabled:
         data["setup"]["systemInstruction"]["parts"][0]["text"] += END_CALL_INSTRUCTION
         data["setup"]["tools"] = [
@@ -474,7 +515,13 @@ class CallRelay:
 
 
 async def run_lab(
-    root: Path, *, port=8765, model=MODELS[0], max_seconds=180, key_stdin=False
+    root: Path,
+    *,
+    port=8765,
+    model=MODELS[0],
+    max_seconds=180,
+    key_stdin=False,
+    voice=None,
 ):
     try:
         from websockets.asyncio.server import serve
@@ -486,8 +533,16 @@ async def run_lab(
         raise CallLabError("Model/cổng gọi AI chưa hợp lệ.")
     if type(max_seconds) is not int or not 15 <= max_seconds <= 900:
         raise CallLabError("Thời gian gọi AI cần từ 15 đến 900 giây.")
+    if voice == "default":
+        voice = None
+    if voice is not None and voice not in VOICES:
+        raise CallLabError("Giọng gọi AI chưa hợp lệ; chọn tên giọng Google hỗ trợ.")
     config = LabConfig(
-        google_key(root, stdin=key_stdin), secrets.token_urlsafe(32), model, max_seconds
+        google_key(root, stdin=key_stdin),
+        secrets.token_urlsafe(32),
+        model,
+        max_seconds,
+        voice=voice,
     )
     relay = CallRelay(config)
     async with serve(
@@ -503,6 +558,7 @@ async def run_lab(
         close_timeout=3,
     ):
         print(f"CALL LAB — Google / {model}; tối đa {max_seconds} giây mỗi phiên.")
+        print("Giọng gọi: " + (voice or "mặc định của Google"))
         print(f"Địa chỉ trong tiện ích: ws://127.0.0.1:{port}")
         print(f"Mã kết nối riêng cho lần chạy này: {config.token}")
         print("Nếu relay chạy trên VPS, cần SSH tunnel từ máy đang mở Chrome.")

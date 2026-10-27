@@ -1,5 +1,12 @@
 # Kết quả kiểm tra
 
+## Chọn giọng gọi và lưu trên VPS — 27/10/2026
+
+- Thêm `--voice NAME` cho bộ cài host VPS và lệnh `call-lab`, với 30 tên giọng có sẵn trong tài liệu Google. Cấu hình cũ chưa chọn giọng tiếp tục dùng mặc định; cập nhật không truyền cờ giữ lựa chọn, `--voice default` xóa lựa chọn riêng. Host truyền giọng vào `generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` khi mở phiên mới. Tiện ích vẫn ở 0.4.0.
+- **86 kiểm thử relay/VPS đạt**: bổ sung trường hợp âm thanh hai chiều với giọng đã chọn, giữ giọng khi cập nhật/đổi persona, đổi và khôi phục mặc định, đọc cấu hình cũ, từ chối giọng sai trước khi đọc key. Wrapper kiểm tra JS cũng đạt; fixture Chrome thật vẫn bỏ qua. Lint, CLI help và `git diff --check` đạt.
+- **5 lượt Google thật đạt:** Gemini 3.8 Live với `Aoede`, `Puck`, `Kore`; Gemini 3.1 Flash Live Preview với `Puck`; Gemini 2.5 Flash Native Audio với `Kore`. Tất cả chấp nhận setup có tên giọng, trả PCM 24 kHz và transcript có lời chào tiếng Việt. Các lượt này kiểm tra API chấp nhận lựa chọn và trả âm thanh, chưa đánh giá cảm nhận chất giọng hoặc giọng vùng miền.
+- Chỉ dùng lời chào công khai, key nhập ẩn trong bộ nhớ; không gửi persona, âm thanh người dùng hoặc cookie. Chưa triển khai lên VPS hoặc thử giọng đã chọn qua cuộc gọi Facebook thật. Hướng dẫn đổi giọng và khôi phục mặc định nằm trong [deploy/CALL_VPS.md](deploy/CALL_VPS.md#chọn-giọng-nói).
+
 ## Hiểu câu kết chuyện theo ngữ cảnh, giảm giới thiệu lặp — 27/10/2026
 
 - Bỏ ràng buộc cũ yêu cầu phải nói rõ việc cúp và chặn mọi câu tạm biệt. Hướng dẫn model đọc cả hội thoại: yêu cầu rút gọn như “ok ngắt đi” và lời kết chuyện “ok thôi nhá” có thể gọi `end_call`; không yêu cầu đúng mẫu hoặc đủ từ “máy/cuộc gọi”. Phân biệt “ok” xác nhận đã hiểu với đồng ý kết thúc, phủ định/muốn nói tiếp, đổi chủ đề và ngắt việc khác. Cập nhật cả mô tả function và ý nghĩa đối số để không giữ hạn chế cũ ở schema.

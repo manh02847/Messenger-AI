@@ -10,7 +10,7 @@ import signal
 import sys
 from pathlib import Path
 
-from .call_lab import MODELS, SYSTEM, CallRelay, LabConfig
+from .call_lab import MODELS, SYSTEM, VOICES, CallRelay, LabConfig
 
 STATE = Path("/var/lib/messenger-ai-call")
 RUNTIME = Path("/run/messenger-ai-call")
@@ -46,6 +46,7 @@ def read_settings(root: Path) -> dict:
         or not isinstance(data.get("browser"), str)
         or not Path(data["browser"]).is_absolute()
         or type(data.get("use_persona", False)) is not bool
+        or (data.get("voice") is not None and data["voice"] not in VOICES)
     ):
         raise HostError("Cấu hình gọi VPS chưa hợp lệ.")
     return data
@@ -254,6 +255,7 @@ async def run(root: Path = STATE, runtime: Path = RUNTIME, *, port=8765):
             data["model"],
             data["max_seconds"],
             system_instruction=call_instruction(root, data),
+            voice=data.get("voice"),
         )
     )
     try:

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
+from .call_lab import VOICES
 from .config import (
     NVIDIA_DEFAULT_MODEL,
     PROVIDER_KEYS,
@@ -832,6 +833,12 @@ def main() -> None:
     )
     call_lab.add_argument("--port", type=int, default=8765)
     call_lab.add_argument("--model", default="gemini-3.8-live")
+    call_lab.add_argument(
+        "--voice",
+        choices=("default", *VOICES),
+        metavar="NAME",
+        help="Tên giọng Google, ví dụ Kore, Puck, Aoede; default để dùng mặc định.",
+    )
     call_lab.add_argument("--max-seconds", type=int, default=180)
     call_lab.add_argument(
         "--key-stdin",
@@ -1005,6 +1012,7 @@ def main() -> None:
                         model=args.model,
                         max_seconds=args.max_seconds,
                         key_stdin=args.key_stdin,
+                        voice=args.voice,
                     )
                 )
             except CallLabError as error:

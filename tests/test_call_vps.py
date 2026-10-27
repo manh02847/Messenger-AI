@@ -38,6 +38,26 @@ def test_settings_preserve_token_but_never_copy_facebook_or_persona():
     assert len(installer.settings(None, "KEY", "/usr/bin/chrome")["relay_token"]) >= 32
 
 
+def test_voice_survives_updates_can_be_changed_and_reset(tmp_path):
+    selected = installer.settings(
+        configuration(), "KEY", "/usr/bin/chrome", voice="Puck"
+    )
+    updated = installer.settings(selected, "KEY", "/usr/bin/chrome", use_persona=True)
+    assert updated["voice"] == "Puck"
+    changed = installer.settings(updated, "KEY", "/usr/bin/chrome", voice="Kore")
+    assert changed["voice"] == "Kore" and changed["use_persona"] is True
+    reset = installer.settings(changed, "KEY", "/usr/bin/chrome", voice="default")
+    assert reset["voice"] is None and reset["relay_token"] == selected["relay_token"]
+    for data in (configuration(), selected, updated, changed, reset):
+        installer.private_write(
+            tmp_path / "settings.json",
+            json.dumps(data).encode(),
+            os.getuid(),
+            os.getgid(),
+        )
+        assert host.read_settings(tmp_path) == data
+
+
 def test_persona_is_only_read_when_explicitly_enabled_and_never_shown_in_repr(tmp_path):
     from messenger_ai.call_lab import SYSTEM, LabConfig, setup
 
@@ -102,6 +122,9 @@ def test_private_config_write_is_atomic_and_does_not_follow_symlinks(tmp_path):
         {"relay_token": "short"},
         {"relay_token": "é" * 40},
         {"browser": "relative/chrome"},
+        {"voice": "UNKNOWN_PRIVATE"},
+        {"voice": ["Kore"]},
+        {"voice": True},
     ],
 )
 def test_bad_host_settings_fail_without_echoing_values(tmp_path, patch):

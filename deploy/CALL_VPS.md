@@ -92,6 +92,36 @@ AI mở đầu bằng “Xin chào, mình là trợ lý AI đang hỗ trợ ch�
 
 Cuộc gọi ưu tiên tiếng Việt xuyên suốt, phát âm rõ và tốc độ vừa phải. AI được yêu cầu chỉ đổi ngôn ngữ khi người gọi yêu cầu rõ ràng; nếu nghe lời nói không rõ thì hỏi lại bằng tiếng Việt, không đoán nội dung/ngôn ngữ từ tiếng nền. Đây là hướng dẫn cho model, không khóa cứng nhận dạng hay giọng phát ra. Theo [tài liệu Live API](https://ai.google.dev/gemini-api/docs/live-api/capabilities#change-voice-and-language), native audio tự chọn ngôn ngữ và không hỗ trợ đặt mã ngôn ngữ trực tiếp; không thêm `languageCode` vào cấu hình để tránh tham số không được hỗ trợ. Nếu tiếng vẫn nghe lạ hoặc méo sau cập nhật, cần nghe đoạn âm thanh mẫu để phân biệt lỗi ngôn ngữ với chất lượng tiếng/đường truyền.
 
+## Chọn giọng nói
+
+Trong thư mục nguồn trên VPS, cập nhật rồi chọn tên giọng:
+
+```bash
+cd ~/messenger-ai-bot
+git pull --ff-only
+.venv/bin/python setup_call_vps.py install --voice Aoede
+```
+
+Bộ cài lưu lựa chọn và khởi động lại host gọi; áp dụng từ cuộc gọi mới. Các lần cập nhật không có `--voice` giữ giọng đã chọn. Cấu hình cũ chưa chọn giọng tiếp tục dùng mặc định của Google. Không cần đổi mã kết nối hoặc reload tiện ích 0.4.0 chỉ để đổi giọng.
+
+Một số giọng có thể thử; mô tả là phong cách trong [danh sách giọng Google](https://ai.google.dev/gemini-api/docs/speech-generation#prebuilt-voices), không phải cam kết về giọng vùng miền tiếng Việt:
+
+| Tên để nhập | Phong cách |
+|---|---|
+| `Aoede` | Thoải mái |
+| `Puck` | Vui tươi |
+| `Kore` | Dứt khoát |
+| `Achernar` | Nhẹ nhàng |
+| `Sulafat` | Ấm áp |
+
+Hỗ trợ 30 tên giọng có sẵn của Google. Nghe trước trong **Google AI Studio → Stream** rồi nhập đúng tên, phân biệt chữ hoa/thường. Việc chọn giọng điều chỉnh chất giọng phát ra; hướng dẫn ưu tiên tiếng Việt vẫn giữ như trên. Chưa hỗ trợ tạo/nhân bản giọng riêng hoặc chọn giọng bằng popup.
+
+Đổi lại mặc định:
+
+```bash
+.venv/bin/python setup_call_vps.py install --voice default
+```
+
 ## Yêu cầu AI kết thúc cuộc gọi
 
 Khi AI đang nghe trong cuộc gọi, model hiểu ý định kết thúc qua toàn bộ hội thoại và lượt mới nhất rồi dùng công cụ `end_call`. Có thể nói rõ như **“ngắt cuộc gọi đi”**, nói ngắn **“ok ngắt đi”**, **“cúp đi”**, hoặc chào kết chuyện **“ok thôi nhá”**, **“ừ thế nhé”** sau khi đã hỏi xong. Không cần đọc nguyên một mẫu câu hoặc nhắc từ “máy/cuộc gọi”. Tiện ích vẫn kiểm tra đúng phiên, đúng cửa sổ và kết nối âm thanh trước khi bấm nút kết thúc. Tính năng hoạt động với cả cuộc gọi AI tự nhận và cuộc gọi bạn đã bật AI thủ công. Tự nhận cuộc gọi sau vẫn giữ theo lựa chọn đã lưu.

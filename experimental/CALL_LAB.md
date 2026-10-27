@@ -95,6 +95,14 @@ Hoặc:
 
 `--max-seconds` nhận từ 15 đến 900 giây. Không tự xoay model hoặc nối lại cuộc gọi khi lỗi: tiện ích dừng AI và khôi phục micro; bạn chủ động bật lại. Không dùng Extended Thinking trong mẫu vì thử nghiệm trước có lượt không hoàn thành được câu trả lời.
 
+Chọn giọng có sẵn bằng `--voice`, ví dụ:
+
+```bash
+.venv/bin/python -m messenger_ai call-lab --voice Aoede
+```
+
+Có thể thay bằng `Puck`, `Kore` hoặc tên khác trong [30 giọng Google](https://ai.google.dev/gemini-api/docs/speech-generation#prebuilt-voices). Nghe trước trong Google AI Studio → Stream. Không truyền `--voice` hoặc dùng `--voice default` để giữ mặc định Google. Relay thử chỉ dùng lựa chọn cho lần chạy đó; [host VPS](../deploy/CALL_VPS.md#chọn-giọng-nói) lưu giọng qua các lần cập nhật.
+
 Live gọi API trực tiếp, dùng quota của project Google và **không qua bộ đếm ngày của bot text**. Có quota hiển thị không đồng nghĩa miễn phí/vô hạn; kiểm tra tier và hạn mức project của bạn. Phiên thử không bật Search, không gửi cấu hình suy luận của bot text và không đọc `persona.local.txt`.
 
 ## Nếu chưa chạy được

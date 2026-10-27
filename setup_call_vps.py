@@ -16,7 +16,7 @@ import tempfile
 import venv
 from pathlib import Path
 
-from messenger_ai.call_lab import MODELS, google_key
+from messenger_ai.call_lab import MODELS, VOICES, google_key
 from messenger_ai.call_vps import PERSONA_NAME, read_persona, read_settings
 
 ROOT = Path(__file__).resolve().parent
@@ -63,8 +63,12 @@ def settings(
     model=None,
     max_seconds=None,
     use_persona=None,
+    voice=None,
 ):
     data = dict(old or {})
+    selected_voice = data.get("voice") if voice is None else voice
+    if selected_voice == "default":
+        selected_voice = None
     return {
         "google_api_key": key,
         "relay_token": data.get("relay_token") or secrets.token_urlsafe(32),
@@ -76,6 +80,7 @@ def settings(
         "use_persona": data.get("use_persona", False)
         if use_persona is None
         else use_persona,
+        "voice": selected_voice,
     }
 
 
@@ -227,7 +232,15 @@ def install(args):
     use_persona = (
         True if chosen_persona is not None else False if args.no_persona else None
     )
-    data = settings(old, key, browser, args.model, args.max_seconds, use_persona)
+    data = settings(
+        old,
+        key,
+        browser,
+        args.model,
+        args.max_seconds,
+        use_persona,
+        voice=args.voice,
+    )
     if chosen_persona is not None:
         private_write(
             STATE / PERSONA_NAME,
@@ -251,6 +264,7 @@ def install(args):
     command("systemctl", "daemon-reload")
     command("systemctl", "enable", "--now", SERVICE)
     print("Đã cài service messenger-ai-call. Google model: " + data["model"])
+    print("Giọng gọi: " + (data["voice"] or "mặc định của Google"))
     print(
         "Persona cuộc gọi: "
         + (
@@ -272,6 +286,12 @@ def main():
         "action", choices=("install", "token", "password"), nargs="?", default="install"
     )
     parser.add_argument("--model", choices=MODELS)
+    parser.add_argument(
+        "--voice",
+        choices=("default", *VOICES),
+        metavar="NAME",
+        help="Tên giọng Google, ví dụ Kore, Puck, Aoede; default để dùng mặc định.",
+    )
     parser.add_argument(
         "--max-seconds", type=int, choices=range(15, 901), metavar="15..900"
     )
