@@ -1,5 +1,14 @@
 # Kết quả kiểm tra
 
+## Hiểu câu kết chuyện theo ngữ cảnh, giảm giới thiệu lặp — 27/10/2026
+
+- Bỏ ràng buộc cũ yêu cầu phải nói rõ việc cúp và chặn mọi câu tạm biệt. Hướng dẫn model đọc cả hội thoại: yêu cầu rút gọn như “ok ngắt đi” và lời kết chuyện “ok thôi nhá” có thể gọi `end_call`; không yêu cầu đúng mẫu hoặc đủ từ “máy/cuộc gọi”. Phân biệt “ok” xác nhận đã hiểu với đồng ý kết thúc, phủ định/muốn nói tiếp, đổi chủ đề và ngắt việc khác. Cập nhật cả mô tả function và ý nghĩa đối số để không giữ hạn chế cũ ở schema.
+- Thêm quy tắc cách nói sau persona trong setup, ưu tiên trả lời thẳng và không kèm lại danh xưng mỗi lượt. Câu hỏi thông tin chủ tài khoản không bị coi là hỏi danh tính AI; hỏi trực tiếp có phải AI vẫn được trả lời trung thực. Giữ nguyên lời chào đầu cuộc gọi do người dùng chọn. Không thêm bộ từ khóa, sửa đường âm thanh, thay model hoặc đổi giao thức/phiên bản tiện ích 0.4.0.
+- **78 kiểm thử relay/VPS/tiện ích đạt, 1 fixture Chrome bỏ qua**, lint và `git diff --check` đạt. Không thêm test chỉ so khớp câu prompt; giữ kiểm tra giao thức và thử hành vi bằng model thật.
+- **Google thật / Gemini 3.8 Live:** 20 tình huống chữ có lịch sử đều đạt: 8 tình huống muốn kết thúc, 12 tình huống giữ cuộc gọi/trả lời. Bao gồm câu rút gọn, chào kết chuyện, ngữ cảnh đang hỏi cách cúp, “ok” theo hai ngữ cảnh, phủ định, yêu cầu nói tiếp, trích dẫn/giả định, ngắt nhạc, đổi chủ đề và hỏi thông tin chủ tài khoản. Các lượt thông thường không lặp danh xưng trong transcript, kể cả hồ sơ tổng hợp cố tình yêu cầu giới thiệu mỗi câu.
+- **4 mẫu giọng nói tổng hợp đạt:** “ok thôi nhá”, “ok ngắt đi” tạo lệnh đúng; “thôi đừng ngắt, mình muốn hỏi thêm”, “ok thôi, nói tiếp đi” không tạo lệnh. Kiểm nội dung speech bằng output transcription, chuyển 24 kHz thành 16 kHz và gửi realtime sau lịch sử hỏi/đáp. **1 hội thoại thật với model qua nhiều lượt liên tục đạt:** giữ lời chào ban đầu, hỏi thông tin chủ tài khoản không giới thiệu lại, hỏi có phải AI được xác nhận trung thực, sau đó “ok thôi nhá” tạo lệnh kết thúc. Không bấm cúp Messenger trong các probe này.
+- Chỉ gửi câu/hồ sơ tổng hợp công khai và dùng key trong bộ nhớ; không đọc hoặc gửi persona, âm thanh hoặc cookie thật của người dùng. Chưa xác nhận thao tác cúp trên Facebook thật sau thay đổi; các mẫu đạt không bảo đảm không nhận nhầm mọi giọng/nhiễu. Cập nhật host rồi mở cuộc gọi mới để nạp hướng dẫn mới.
+
 ## Kết thúc cuộc gọi theo yêu cầu — 0.4.0, 27/10/2026
 
 - Thêm công cụ Live API `end_call`, chỉ khai báo khi tiện ích xác nhận hỗ trợ. Yêu cầu model chỉ dùng cho yêu cầu cúp ngay, không dùng cho phủ định, hỏi khả năng, giả định, trích dẫn, chào tạm biệt đơn thuần hoặc câu nghe không rõ. Hướng dẫn được thêm sau persona đã chọn; không đọc thêm hồ sơ hoặc lịch sử.

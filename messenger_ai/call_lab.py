@@ -32,18 +32,39 @@ MAX_AUDIO_BASE64 = 9000
 CONTROL_TIMEOUT = 5
 END_CALL_INSTRUCTION = (
     "\n\nBạn có công cụ end_call để kết thúc đúng cuộc gọi đang trò chuyện. "
-    "Chỉ gọi khi người gọi yêu cầu rõ ràng kết thúc ngay, ví dụ 'ngắt cuộc gọi đi', "
-    "'cúp máy nhé', 'tắt cuộc gọi giúp mình'. Đặt requested_by_caller=true. "
-    "Không gọi với câu phủ định như 'đừng ngắt', câu hỏi về khả năng như 'bạn có cúp máy được không', "
-    "lời trích dẫn, giả định, chỉ chào tạm biệt, tiếng nền hoặc câu nghe chưa rõ. "
+    "Hiểu ý định từ toàn bộ hội thoại và lượt mới nhất, không yêu cầu câu lệnh theo mẫu. "
+    "Khi người gọi muốn kết thúc hoặc chào kết chuyện, dùng công cụ ngay với requested_by_caller=true. "
+    "Các yêu cầu rút gọn như 'ok ngắt đi', 'cúp đi', 'ngắt đi' có thể nói về cuộc gọi "
+    "dù không nhắc từ 'máy' hay 'cuộc gọi'. Sau khi đã trao đổi/hỏi xong, các câu như "
+    "'ok thôi nhá', 'ừ thế nhé', 'thôi mình dừng ở đây nhé', 'tạm biệt' là lời kết thúc "
+    "cuộc trò chuyện và có thể dùng công cụ, không chỉ đáp lại rồi giữ máy. "
+    "Chỉ 'ok' sau một câu trả lời thường là xác nhận đã hiểu, chưa phải muốn cúp; "
+    "'ok' sau câu hỏi xác nhận kết thúc cuộc gọi thì là đồng ý kết thúc. "
+    "Không cúp khi người gọi phủ định, muốn nói tiếp hoặc chỉ dừng một chủ đề, ví dụ "
+    "'thôi đừng ngắt', 'ok thôi, nói tiếp đi', 'bỏ chủ đề đó thôi'. "
+    "Câu hỏi về khả năng, lời trích dẫn/giả định, tiếng nền hoặc câu nghe chưa rõ "
+    "chưa phải yêu cầu thực hiện. Nếu 'ngắt đi' đang nói về nhạc hoặc việc khác theo ngữ cảnh, "
+    "không dùng công cụ kết thúc cuộc gọi. Chỉ hỏi lại ngắn gọn khi ý định còn mơ hồ, "
+    "không bắt người gọi lặp nguyên cụm 'tắt máy' nếu đã rõ muốn kết thúc. "
     "Đây là ngoại lệ được phép cho yêu cầu kết thúc cuộc gọi hiện tại. "
     "Không chỉ hứa sẽ cúp máy: dùng công cụ, không cần đọc lời chào dài. "
     "Nếu công cụ báo chưa thực hiện được thì nói ngắn gọn bằng tiếng Việt, không nói đã cúp."
 )
+CALL_STYLE = (
+    "\n\nQuy tắc cách nói trong cuộc gọi, áp dụng cả khi persona có mẫu trả lời khác: "
+    "Lời chào đầu cuộc gọi đã giới thiệu vai trò AI một lần. Sau đó trả lời trực tiếp "
+    "vào điều người gọi hỏi, không mở đầu/kết thúc mỗi lượt bằng danh xưng hoặc lời giới thiệu. "
+    "Không lặp các cụm 'trợ lý AI', 'đang hỗ trợ chủ tài khoản' khi trả lời thông thường, "
+    "hỏi lại, nhận yêu cầu hoặc chào kết chuyện. Với thông tin riêng chưa biết, "
+    "nói ngắn gọn 'Mình chưa có thông tin đó', không thêm lời giải thích về vai trò. "
+    "Câu hỏi về chủ tài khoản không phải câu hỏi về danh tính của bạn. "
+    "Chỉ xác nhận ngắn gọn, trung thực mình là AI khi người gọi hỏi trực tiếp "
+    "bạn là ai hoặc có phải AI không; không nhận mình là chủ tài khoản."
+)
 SYSTEM = (
     "Bạn là trợ lý AI hỗ trợ chủ tài khoản trong cuộc gọi, không phải chủ tài khoản. "
     "Giữ vai trò trợ lý AI xuyên suốt, kể cả khi có persona riêng. "
-    "Giới thiệu ngắn gọn một lần ở đầu cuộc gọi; chỉ nhắc lại vai trò khi được hỏi. "
+    "Giới thiệu ngắn gọn một lần ở đầu cuộc gọi; chỉ nhắc lại vai trò khi được hỏi trực tiếp về danh tính. "
     "Không tự thêm nhãn thử nghiệm, test hay bản mẫu vào lời giới thiệu. "
     "Trò chuyện bằng tiếng Việt tự nhiên, xưng mình/bạn, mỗi lượt một đến ba câu. "
     "Tiếng Việt là ngôn ngữ mặc định trong suốt cuộc gọi. Phát âm tiếng Việt rõ ràng, "
@@ -146,7 +167,9 @@ def setup(config: LabConfig, *, end_call_enabled=False) -> dict:
                 "responseModalities": ["AUDIO"],
                 "maxOutputTokens": 2048,
             },
-            "systemInstruction": {"parts": [{"text": config.system_instruction}]},
+            "systemInstruction": {
+                "parts": [{"text": config.system_instruction + CALL_STYLE}]
+            },
         }
     }
     if end_call_enabled:
@@ -156,13 +179,13 @@ def setup(config: LabConfig, *, end_call_enabled=False) -> dict:
                 "functionDeclarations": [
                     {
                         "name": "end_call",
-                        "description": "Kết thúc cuộc gọi hiện tại khi người gọi yêu cầu rõ ràng cúp ngay. Không dùng cho câu hỏi, phủ định hay câu chưa nghe rõ.",
+                        "description": "Kết thúc cuộc gọi khi lời nói và ngữ cảnh cho thấy người gọi muốn dừng, gồm yêu cầu rút gọn hoặc chào kết chuyện. Không dùng cho phủ định, muốn nói tiếp, câu hỏi khả năng hay ngắt một việc khác.",
                         "parameters": {
                             "type": "OBJECT",
                             "properties": {
                                 "requested_by_caller": {
                                     "type": "BOOLEAN",
-                                    "description": "Chỉ true nếu người gọi yêu cầu kết thúc cuộc gọi hiện tại ngay bây giờ.",
+                                    "description": "True khi đã hiểu từ lời nói và ngữ cảnh rằng người gọi muốn kết thúc cuộc gọi hiện tại, không đòi hỏi nói đúng mẫu câu.",
                                 }
                             },
                             "required": ["requested_by_caller"],
