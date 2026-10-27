@@ -1,5 +1,12 @@
 # Kết quả kiểm tra
 
+## Ưu tiên tiếng Việt và hỏi lại khi nghe mơ hồ — 27/10/2026
+
+- Bổ sung system instruction giữ tiếng Việt trong suốt cuộc gọi, chỉ đổi khi người gọi yêu cầu rõ; phát âm rõ và tốc độ vừa phải. Với lời nói chưa hiểu thì hỏi lại bằng tiếng Việt, không tự đoán nội dung/ngôn ngữ từ đoạn ngắn hoặc tiếng nền; chờ khi chỉ có im lặng/tiếng nền. Giữ nguyên câu chào người dùng đã chọn và thêm hướng dẫn đọc rõ tiếng Việt.
+- Dùng hướng dẫn cho model theo [Live API capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities#change-voice-and-language). Native audio tự chọn ngôn ngữ, không hỗ trợ đặt mã ngôn ngữ trực tiếp; không thêm `languageCode` vào request. Không đổi model, voice, sample rate, persona, quyền tiện ích hoặc phiên bản 0.3.2.
+- **57 kiểm thử relay/VPS/tiện ích đạt, 1 fixture Chrome bỏ qua**, lint và `git diff --check` đạt. Bộ Node kiểm tra PCM/resample và luồng âm thanh mô phỏng cũng chạy trong wrapper. Môi trường kiểm thử được bổ sung dependency `websockets==16.0` đã khai báo, sau khi lượt chạy đầu báo thiếu thư viện.
+- Không gọi Google thật hoặc gửi dữ liệu cá nhân trong đợt này. Chưa có đoạn âm thanh của trường hợp người dùng mô tả nên chưa xác định đó là tự đổi ngôn ngữ, phát âm lạ hay tiếng bị méo. Kiểm thử offline không đánh giá chất giọng, khả năng nhận tiếng Việt hoặc mức cải thiện của hướng dẫn mới.
+
 ## Lời chào lịch sự theo lựa chọn — 27/10/2026
 
 - Đặt lời chào đầu cuộc gọi thành “Xin chào, mình là trợ lý AI đang hỗ trợ chủ tài khoản. Xin hỏi bạn gọi có việc gì thế ạ?”, kèm hướng dẫn giọng nhẹ nhàng, lịch sự và tự nhiên. Giữ chỉ dẫn giới thiệu một lần và không tự thêm tên người. Không đổi persona, cơ chế nhận cuộc gọi hay phiên bản tiện ích 0.3.2.

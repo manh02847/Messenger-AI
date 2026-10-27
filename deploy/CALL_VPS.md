@@ -90,6 +90,8 @@ Mỗi phiên VPS mặc định **600 giây (10 phút)**. Dùng Google/Gemini 3.8
 
 AI mở đầu bằng “Xin chào, mình là trợ lý AI đang hỗ trợ chủ tài khoản. Xin hỏi bạn gọi có việc gì thế ạ?”, với hướng dẫn nói nhẹ nhàng, lịch sự và tự nhiên. Chỉ giới thiệu khi bắt đầu cuộc gọi, không lặp lại mỗi lượt. Lời chào được nạp từ relay khi mở phiên mới; thay đổi phần này cần cập nhật host bằng `setup_call_vps.py install`, không cần đổi persona hoặc mã kết nối.
 
+Cuộc gọi ưu tiên tiếng Việt xuyên suốt, phát âm rõ và tốc độ vừa phải. AI được yêu cầu chỉ đổi ngôn ngữ khi người gọi yêu cầu rõ ràng; nếu nghe lời nói không rõ thì hỏi lại bằng tiếng Việt, không đoán nội dung/ngôn ngữ từ tiếng nền. Đây là hướng dẫn cho model, không khóa cứng nhận dạng hay giọng phát ra. Theo [tài liệu Live API](https://ai.google.dev/gemini-api/docs/live-api/capabilities#change-voice-and-language), native audio tự chọn ngôn ngữ và không hỗ trợ đặt mã ngôn ngữ trực tiếp; không thêm `languageCode` vào cấu hình để tránh tham số không được hỗ trợ. Nếu tiếng vẫn nghe lạ hoặc méo sau cập nhật, cần nghe đoạn âm thanh mẫu để phân biệt lỗi ngôn ngữ với chất lượng tiếng/đường truyền.
+
 ## Dọn cửa sổ gọi, nhường và gọi ra
 
 Từ 0.3.0, khi trang gọi hiện màn hình kết thúc/đánh giá như “Bạn thấy chất lượng cuộc gọi như thế nào?”, tiện ích kiểm tra không còn kết nối âm thanh rồi dọn trang gọi. Nó giữ ít nhất một trang Facebook/Messenger chính, không đóng trang chủ, không bấm đánh giá sao và không bấm Gọi lại. Tab đang chuyển trang, đang có cuộc gọi hoặc đã đổi `call_id` không bị dọn theo sự kiện cũ. Nếu còn một tab Facebook duy nhất thì giữ lại.
