@@ -2,6 +2,11 @@
   const CHANNEL = "messenger-ai-call-lab-v1";
   const pending = new Map();
   let session = null;
+  function matchesCall(key) {
+    if (!key) return true;
+    const url = new URL(location.href);
+    return key === url.origin + url.pathname + "?call_id=" + (url.searchParams.get("call_id") || "");
+  }
   function main(command, details) {
     const requestId = crypto.randomUUID();
     return new Promise(resolve => {
@@ -50,6 +55,19 @@
     if (msg.command !== "probe" && msg.session !== session) {
       sendResponse({ok: false, code: "SESSION_CHANGED"});
       return;
+    }
+    if (msg.command === "end-call") {
+      const selected = session;
+      main("hangup-check", {session: selected}).then(result => {
+        try {
+          const incoming = globalThis.CallLabIncoming;
+          if (!result.ok || !Number.isFinite(msg.expiresAt) || Date.now() >= msg.expiresAt
+              || session !== selected || msg.session !== session || !matchesCall(msg.callKey)
+              || !incoming || incoming.endState().handoff) { sendResponse({ok: false}); return; }
+          sendResponse(incoming.hangup());
+        } catch { sendResponse({ok: false}); }
+      });
+      return true;
     }
     main(msg.command, msg).then(result => {
       if (msg.command === "stop" && session === msg.session) session = null;

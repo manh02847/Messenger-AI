@@ -457,3 +457,91 @@ test('a delayed native tab-removed event cannot reload the home a second time',a
   f.emitRemoved(84);for(let i=0;i<8;i++)await flush();assert.deepEqual(f.reloaded,[42]);
   await f.popup('stop');
 });
+
+const hangupMessage=(patch={})=>({type:'end_call',requestId:'request-1',expiresAt:Date.now()+4000,...patch});
+async function manualCall(f) {
+  await f.popup('start');const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();return ws;
+}
+
+test('a valid voice hangup ends only its current tab and keeps automatic answering enabled',async()=>{
+  const f=autoFixture();await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});for(let i=0;i<5;i++)await flush();
+  assert.deepEqual(ws.sent[0].capabilities,['end_call']);
+  ws.receive(hangupMessage());for(let i=0;i<5;i++)await flush();
+  assert.equal(f.page.filter(msg=>msg.command==='end-call').length,1);
+  assert.equal(f.page.find(msg=>msg.command==='end-call').tabId,84);
+  assert.ok(ws.sent.some(msg=>msg.type==='end_call_result'&&msg.ok));
+  assert.equal((await f.popup('status')).active,false);assert.equal((await f.popup('status')).autoEnabled,true);
+  assert.ok(!f.page.some(msg=>msg.command==='auto-hangup'));await f.popup('stop');
+});
+
+test('voice hangup also works in a manually started AI call',async()=>{
+  const f=background(),ws=await manualCall(f);ws.receive(hangupMessage());await flush();
+  assert.equal(f.page.find(msg=>msg.command==='end-call').tabId,42);
+  assert.equal(ws.readyState,3);assert.equal((await f.popup('status')).active,false);
+});
+
+for(const note of ['not ready','expired','no deadline','duplicate']) test(`voice hangup refuses ${note} control messages`,async()=>{
+  const f=background();await f.popup('start');const ws=f.sockets[0];ws.open();
+  if(note!=='not ready'){ws.receive({type:'google_ready'});await flush();}
+  const message=hangupMessage(note==='expired'?{expiresAt:Date.now()-1}:note==='no deadline'?{expiresAt:undefined}:{});
+  ws.receive(message);if(note==='duplicate')ws.receive(message);await flush();
+  assert.equal(f.page.filter(msg=>msg.command==='end-call').length,note==='duplicate'?1:0);
+  if(note!=='duplicate')assert.equal((await f.popup('status')).active,true);
+  await f.popup('stop');
+});
+
+test('a missing end-call button leaves the AI call running and acknowledges failure',async()=>{
+  const f=background({send:async msg=>msg.command==='end-call'?{ok:false}:{ok:true,count:1}}),ws=await manualCall(f);
+  ws.receive(hangupMessage());await flush();
+  assert.ok(ws.sent.some(msg=>msg.type==='end_call_result'&&msg.ok===false));
+  assert.equal(ws.readyState,1);assert.equal((await f.popup('status')).active,true);await f.popup('stop');
+});
+
+test('a changed call id prevents a stale model command from ending the reused popup',async()=>{
+  const f=background({query:async()=>[{id:42,url:'https://www.facebook.com/groupcall/TEST?call_id=one'}],
+    getTab:async()=>({id:42,url:'https://www.facebook.com/groupcall/TEST?call_id=two'})}),ws=await manualCall(f);
+  ws.receive(hangupMessage());await flush();assert.ok(!f.page.some(msg=>msg.command==='end-call'));
+  assert.equal(ws.readyState,1);await f.popup('stop');
+});
+
+test('a late command from the old relay cannot end a newly started call',async()=>{
+  const f=background(),old=await manualCall(f);await f.popup('stop');const current=await manualCall(f);
+  old.receive(hangupMessage());await flush();assert.ok(!f.page.some(msg=>msg.command==='end-call'));
+  assert.equal(current.readyState,1);await f.popup('stop');
+});
+
+function endContent() {
+  const id='b'.repeat(32),events=[],listeners=[];
+  let runtime,clicks=0;
+  const location={origin:'https://www.facebook.com',href:'https://www.facebook.com/groupcall/TEST?call_id=one'};
+  const window={postMessage:msg=>events.push(msg),addEventListener:(_,fn)=>listeners.push(fn)};
+  const chrome={runtime:{id,onMessage:{addListener:fn=>runtime=fn},sendMessage:async()=>({watch:false})}};
+  const incoming={watch(){},endState:()=>({handoff:false}),hangup:()=>{clicks++;return{ok:true};}};
+  vm.runInContext(fs.readFileSync(path.join(root,'content.js'),'utf8'),vm.createContext({window,chrome,crypto:{randomUUID},location,URL,setTimeout,clearTimeout,CallLabIncoming:incoming}));
+  const command=(command,session='old',details={})=>new Promise(resolve=>runtime({to:'call-lab-content',command,session,
+    callKey:'https://www.facebook.com/groupcall/TEST?call_id=one',expiresAt:Date.now()+4000,...details},{id},resolve));
+  function reply(event,ok=true){for(const listener of listeners)listener({source:window,data:{channel:event.channel,direction:'event',kind:'reply',requestId:event.requestId,ok}});}
+  return{events,location,command,reply,clicks:()=>clicks,incoming};
+}
+
+for(const note of ['valid','wrong peer','expired','new session','changed URL','handoff']) test(`content hangup guard handles ${note}`,async()=>{
+  const f=endContent();let pending=f.command('start');f.reply(f.events.at(-1));await pending;
+  const ending=f.command('end-call','old',note==='expired'?{expiresAt:Date.now()-1}:{}),check=f.events.at(-1);
+  assert.equal(check.command,'hangup-check');
+  if(note==='new session'){pending=f.command('start','new');f.reply(f.events.at(-1));await pending;}
+  if(note==='changed URL')f.location.href='https://www.facebook.com/groupcall/TEST?call_id=two';
+  if(note==='handoff')f.incoming.endState=()=>({handoff:true});
+  f.reply(check,note!=='wrong peer');const result=await ending;
+  assert.equal(result.ok,note==='valid');assert.equal(f.clicks(),note==='valid'?1:0);
+});
+
+test('an in-flight voice hangup lookup cannot affect the replacement AI session',async()=>{
+  let release;
+  const f=background({getTab:()=>new Promise(resolve=>release=resolve)}),old=await manualCall(f);
+  old.receive(hangupMessage());await flush();assert.ok(release);
+  await f.popup('stop');const current=await manualCall(f);
+  release({id:42,url:'https://www.facebook.com/call'});await flush();
+  assert.ok(!f.page.some(msg=>msg.command==='end-call'));
+  assert.equal(current.readyState,1);assert.equal((await f.popup('status')).active,true);await f.popup('stop');
+});

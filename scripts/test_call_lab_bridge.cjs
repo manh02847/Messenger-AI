@@ -26,7 +26,7 @@ function fixture({deferResume=false,deferRestore=false}={}) {
   class Context {
     constructor(){this.currentTime=10;this.sampleRate=48000;this.state='suspended';this.destination=new Node();this.sources=[];contexts.push(this);}
     async resume(){if(deferResume)await new Promise(resolve=>resume=resolve);if(this.state==='closed')throw Error('Context closed');this.state='running';}
-    createMediaStreamDestination(){const node=new Node();node.stream=new Stream([{kind:'audio',id:'ai-audio',stop(){this.readyState='ended';}}]);return node;}
+    createMediaStreamDestination(){const node=new Node();node.stream=new Stream([{kind:'audio',id:'ai-audio',readyState:'live',stop(){this.readyState='ended';}}]);return node;}
     createMediaStreamSource(stream){this.input=stream.getTracks()[0].id;return new Node();}
     createScriptProcessor(){this.processor=new Node();return this.processor;}
     createGain(){const node=new Node();node.gain={value:1};return node;}
@@ -116,4 +116,22 @@ test('a new Start waits for the old physical microphone restoration',async()=>{
   await new Promise(resolve=>setImmediate(resolve));assert.equal(f.contexts.length,1);
   f.restore();await stopping;assert.equal((await starting).ok,true);
   await f.send('stop',{},'new-session');assert.equal(pc.sender.track,pc.original);
+});
+
+test('hangup authorization only matches the current single audio peer and session',async()=>{
+  const f=fixture(),old=new f.window.RTCPeerConnection();
+  assert.equal((await f.send('hangup-check')).ok,false);
+  await f.send('start');assert.equal((await f.send('hangup-check')).ok,true);
+  assert.equal((await f.send('hangup-check',{},'stale-session')).ok,false);
+  assert.equal(old.sender.track.id,'ai-audio','a failed check must not stop the current call');
+  new f.window.RTCPeerConnection();assert.equal((await f.send('hangup-check')).ok,false);
+  assert.equal(f.events.filter(x=>x.kind==='error').length,0);
+  await f.send('stop');
+});
+
+test('a disconnected old peer cannot authorize ending a new peer on the same page',async()=>{
+  const f=fixture(),old=new f.window.RTCPeerConnection();await f.send('start');old.close();
+  new f.window.RTCPeerConnection();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal((await f.send('probe')).count,1);
+  assert.equal((await f.send('hangup-check')).ok,false);
 });

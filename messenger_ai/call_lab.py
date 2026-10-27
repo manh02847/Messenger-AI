@@ -12,6 +12,7 @@ import os
 import re
 import secrets
 import sys
+import time
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
@@ -28,6 +29,17 @@ MODELS = (
 CHROME_ORIGIN = re.compile(r"chrome-extension://[a-p]{32}\Z")
 MAX_PCM_BYTES = 6400
 MAX_AUDIO_BASE64 = 9000
+CONTROL_TIMEOUT = 5
+END_CALL_INSTRUCTION = (
+    "\n\nBạn có công cụ end_call để kết thúc đúng cuộc gọi đang trò chuyện. "
+    "Chỉ gọi khi người gọi yêu cầu rõ ràng kết thúc ngay, ví dụ 'ngắt cuộc gọi đi', "
+    "'cúp máy nhé', 'tắt cuộc gọi giúp mình'. Đặt requested_by_caller=true. "
+    "Không gọi với câu phủ định như 'đừng ngắt', câu hỏi về khả năng như 'bạn có cúp máy được không', "
+    "lời trích dẫn, giả định, chỉ chào tạm biệt, tiếng nền hoặc câu nghe chưa rõ. "
+    "Đây là ngoại lệ được phép cho yêu cầu kết thúc cuộc gọi hiện tại. "
+    "Không chỉ hứa sẽ cúp máy: dùng công cụ, không cần đọc lời chào dài. "
+    "Nếu công cụ báo chưa thực hiện được thì nói ngắn gọn bằng tiếng Việt, không nói đã cúp."
+)
 SYSTEM = (
     "Bạn là trợ lý AI hỗ trợ chủ tài khoản trong cuộc gọi, không phải chủ tài khoản. "
     "Giữ vai trò trợ lý AI xuyên suốt, kể cả khi có persona riêng. "
@@ -66,6 +78,16 @@ class LabConfig:
     model: str = MODELS[0]
     max_seconds: float = 180
     system_instruction: str = field(default=SYSTEM, repr=False)
+
+
+@dataclass
+class CallControl:
+    enabled: bool = False
+    ready: bool = False
+    audio_received: bool = False
+    seen: set = field(default_factory=set, repr=False)
+    request_id: str | None = None
+    result: asyncio.Future | None = field(default=None, repr=False)
 
 
 def google_key(root: Path, *, stdin: bool = False) -> str:
@@ -116,8 +138,8 @@ def audio_frame(data: dict) -> str:
     return encoded
 
 
-def setup(config: LabConfig) -> dict:
-    return {
+def setup(config: LabConfig, *, end_call_enabled=False) -> dict:
+    data = {
         "setup": {
             "model": "models/" + config.model,
             "generationConfig": {
@@ -127,6 +149,29 @@ def setup(config: LabConfig) -> dict:
             "systemInstruction": {"parts": [{"text": config.system_instruction}]},
         }
     }
+    if end_call_enabled:
+        data["setup"]["systemInstruction"]["parts"][0]["text"] += END_CALL_INSTRUCTION
+        data["setup"]["tools"] = [
+            {
+                "functionDeclarations": [
+                    {
+                        "name": "end_call",
+                        "description": "Kết thúc cuộc gọi hiện tại khi người gọi yêu cầu rõ ràng cúp ngay. Không dùng cho câu hỏi, phủ định hay câu chưa nghe rõ.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "requested_by_caller": {
+                                    "type": "BOOLEAN",
+                                    "description": "Chỉ true nếu người gọi yêu cầu kết thúc cuộc gọi hiện tại ngay bây giờ.",
+                                }
+                            },
+                            "required": ["requested_by_caller"],
+                        },
+                    }
+                ]
+            }
+        ]
+    return data
 
 
 class CallRelay:
@@ -173,7 +218,13 @@ class CallRelay:
                 raise CallLabError("Đang có một phiên gọi AI; dừng phiên đó trước.")
             self.active = claimed = True
             async with asyncio.timeout(self.config.max_seconds):
-                await self.session(local)
+                capabilities = auth.get("capabilities")
+                await self.session(
+                    local,
+                    end_call_enabled=(
+                        isinstance(capabilities, list) and "end_call" in capabilities
+                    ),
+                )
         except CallLabError as error:
             await self.send_error(local, str(error))
         except TimeoutError:
@@ -202,7 +253,8 @@ class CallRelay:
         except Exception:
             pass
 
-    async def session(self, local):
+    async def session(self, local, *, end_call_enabled=False):
+        control = CallControl(enabled=end_call_enabled)
         async with self.connector(
             ENDPOINT,
             additional_headers={"x-goog-api-key": self.config.api_key},
@@ -212,7 +264,9 @@ class CallRelay:
             compression=None,
             logger=logging.getLogger("messenger_ai.call_lab.google"),
         ) as google:
-            await google.send(json.dumps(setup(self.config)))
+            await google.send(
+                json.dumps(setup(self.config, end_call_enabled=end_call_enabled))
+            )
             first = json.loads(await asyncio.wait_for(google.recv(), 20))
             if not isinstance(first, dict) or "setupComplete" not in first:
                 raise CallLabError(
@@ -222,8 +276,8 @@ class CallRelay:
                 json.dumps({"type": "google_ready", "model": self.config.model})
             )
             tasks = [
-                asyncio.create_task(self.from_browser(local, google)),
-                asyncio.create_task(self.from_google(local, google)),
+                asyncio.create_task(self.from_browser(local, google, control)),
+                asyncio.create_task(self.from_google(local, google, control)),
             ]
             try:
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -234,7 +288,7 @@ class CallRelay:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def from_browser(self, local, google):
+    async def from_browser(self, local, google, control):
         ready = False
         async for raw in local:
             data = message(raw)
@@ -243,6 +297,7 @@ class CallRelay:
                 await local.send(json.dumps({"type": "pong"}))
             elif kind == "ready" and not ready:
                 ready = True
+                control.ready = True
                 await google.send(
                     json.dumps(
                         {
@@ -258,6 +313,7 @@ class CallRelay:
                 self.log("Đã bật Gemini Live cho một cuộc gọi trên Chrome.")
             elif kind == "audio" and ready:
                 encoded = audio_frame(data)
+                control.audio_received = True
                 await google.send(
                     json.dumps(
                         {
@@ -270,6 +326,14 @@ class CallRelay:
                         }
                     )
                 )
+            elif kind == "end_call_result":
+                if (
+                    control.result is not None
+                    and not control.result.done()
+                    and data.get("requestId") == control.request_id
+                    and type(data.get("ok")) is bool
+                ):
+                    control.result.set_result(data["ok"])
             elif kind == "stop":
                 return
             else:
@@ -277,11 +341,82 @@ class CallRelay:
                     "Trạng thái cầu nối âm thanh chưa hợp lệ; bật lại tiện ích."
                 )
 
-    async def from_google(self, local, google):
+    async def tool_calls(self, local, google, control, calls):
+        if not isinstance(calls, list):
+            return False
+        for call in calls[:8]:
+            if not isinstance(call, dict):
+                continue
+            tool_id, name = call.get("id"), call.get("name")
+            if (
+                not isinstance(tool_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", tool_id)
+                or not isinstance(name, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name)
+            ):
+                continue
+            ok = False
+            eligible = (
+                name == "end_call"
+                and call.get("args") == {"requested_by_caller": True}
+                and type(call.get("args", {}).get("requested_by_caller")) is bool
+                and control.enabled
+                and control.ready
+                and control.audio_received
+                and tool_id not in control.seen
+                and len(control.seen) < 128
+            )
+            if eligible:
+                control.seen.add(tool_id)
+                control.request_id = secrets.token_urlsafe(18)
+                control.result = asyncio.get_running_loop().create_future()
+                try:
+                    await local.send(
+                        json.dumps(
+                            {
+                                "type": "end_call",
+                                "requestId": control.request_id,
+                                "expiresAt": int(
+                                    time.time() * 1000 + CONTROL_TIMEOUT * 1000
+                                ),
+                            }
+                        )
+                    )
+                    ok = await asyncio.wait_for(control.result, CONTROL_TIMEOUT)
+                except TimeoutError:
+                    pass
+                finally:
+                    control.request_id = control.result = None
+            await google.send(
+                json.dumps(
+                    {
+                        "toolResponse": {
+                            "functionResponses": [
+                                {
+                                    "id": tool_id,
+                                    "name": name,
+                                    "response": {"ok": ok},
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
+            if ok:
+                self.log("Đã kết thúc cuộc gọi theo yêu cầu người gọi.")
+                return True
+        return False
+
+    async def from_google(self, local, google, control):
         async for raw in google:
             data = json.loads(raw)
             if not isinstance(data, dict) or "error" in data or "goAway" in data:
                 raise CallLabError("Google đã dừng phiên Live; bật lại khi sẵn sàng.")
+            tool = data.get("toolCall")
+            if isinstance(tool, dict) and await self.tool_calls(
+                local, google, control, tool.get("functionCalls")
+            ):
+                return
             content = data.get("serverContent", {})
             if content.get("interrupted"):
                 await local.send(json.dumps({"type": "clear"}))

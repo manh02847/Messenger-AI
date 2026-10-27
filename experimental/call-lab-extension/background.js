@@ -37,6 +37,31 @@ function callIdentity(value) {
 async function takeover() {
   await stop("Đã nhường cuộc gọi cho người thật; AI dừng, tự nhận cuộc gọi sau vẫn giữ theo lựa chọn.", {hangup: false});
 }
+async function endCall(state, requestId, expiresAt) {
+  if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(requestId)
+      || state.endRequests.has(requestId)) return;
+  state.endRequests.add(requestId);
+  if (state.ending) return;
+  let ok = false;
+  try {
+    if (current === state && state.ready && Number.isFinite(expiresAt) && Date.now() < expiresAt) {
+      state.ending = true;
+      const tab = await chrome.tabs.get(state.tabId);
+      if (current === state && Date.now() < expiresAt && supported(tab?.url) && !tab.pendingUrl && tab.status !== "loading"
+          && (!state.callKey || callIdentity(tab.url) === state.callKey)) {
+        const result = await content(state, "end-call", {callKey: state.callKey, expiresAt});
+        ok = result?.ok === true;
+      }
+    }
+  } catch { /* A missing button or changed call leaves the current call alone. */ }
+  if (current !== state) return;
+  state.ending = false;
+  try {
+    if (state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify({type: "end_call_result", requestId, ok}));
+  } catch {}
+  if (ok) await stop("Đã kết thúc cuộc gọi theo yêu cầu; tự nhận cuộc gọi sau vẫn giữ theo lựa chọn.", {hangup: false});
+  else status = "Chưa kết thúc được cuộc gọi theo yêu cầu; kiểm tra nút kết thúc trên trang gọi.";
+}
 async function refreshHome(preferredTabId) {
   const revision = ++refreshRevision;
   const idle = () => revision === refreshRevision && !current && !starting;
@@ -257,12 +282,12 @@ async function start(msg, automatic = null) {
     await chrome.storage.session.set({endpoint, token: msg.token, monitor: msg.monitor === true});
     if (attempt !== revision) return;
     const ws = new WebSocket(endpoint);
-    const state = {id, tabId: tab.id, callKey: callIdentity(tab.url), ws, ready: false, preparing: false, automatic, accepted: false, keepalive: null, delivery: Promise.resolve()};
+    const state = {id, tabId: tab.id, callKey: callIdentity(tab.url), ws, ready: false, preparing: false, ending: false, endRequests: new Set(), automatic, accepted: false, keepalive: null, delivery: Promise.resolve()};
     current = state;
     status = "Đang kết nối relay và Google Live…";
     ws.onopen = () => {
       if (current !== state) return;
-      ws.send(JSON.stringify({type: "auth", token: msg.token}));
+      ws.send(JSON.stringify({type: "auth", token: msg.token, capabilities: ["end_call"]}));
       state.keepalive = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: "ping"}));
       }, 20000);
@@ -286,9 +311,11 @@ async function start(msg, automatic = null) {
           ws.send(JSON.stringify({type: "ready"}));
           status = "AI đang nghe và nói trong cuộc gọi này. Bấm Dừng AI để trả micro.";
         }).catch(() => { if (current === state) return stop("Không gắn được âm thanh; tải lại trang rồi gọi thử lại."); });
+      } else if (data.type === "end_call") {
+        void endCall(state, data.requestId, data.expiresAt);
       } else if (["audio", "clear"].includes(data.type)) {
         state.delivery = state.delivery.then(async () => {
-          if (current === state && state.ready) {
+          if (current === state && state.ready && !state.ending) {
             const result = await content(state, data.type, data);
             if (!result?.ok) throw new Error("BRIDGE");
           }

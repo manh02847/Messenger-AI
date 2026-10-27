@@ -159,6 +159,12 @@
         emit("reply", {requestId: msg.requestId, ok: true, count: candidates().length});
         return;
       }
+      if (msg.command === "hangup-check") {
+        const choices = candidates();
+        const ok = active?.session === msg.session && choices.length === 1 && choices[0] === active.pc;
+        emit("reply", {requestId: msg.requestId, ok, code: ok ? undefined : "SESSION_CHANGED"});
+        return;
+      }
       if (msg.command === "start") await start(msg.session, msg.monitor === true);
       else if (msg.command === "stop") {
         if (!active || active.session === msg.session) await stop();

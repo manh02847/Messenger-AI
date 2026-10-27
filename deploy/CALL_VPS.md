@@ -4,7 +4,7 @@ Chrome, phiên Facebook, thiết bị âm thanh ảo và Google Live relay cùng
 
 **Đây là bản triển khai đầu tiên cần thử trên VPS thật.** Người dùng đã xác nhận cầu nối Chrome trên Windows hoạt động ở bản 0.1.1. Bản 0.2.0 bổ sung desktop Ubuntu và nhận cuộc gọi tự động; phần mới đã kiểm thử offline/mô phỏng, chưa được cài hoặc kiểm chứng với Facebook trên VPS trong môi trường phát triển.
 
-**Bản hiện tại: 0.3.2.** Tải lại trang Facebook một lần sau khi dọn cuộc gọi đã kết thúc, giữ chế độ tự nhận. Sửa lỗi khôi phục tiện ích làm đổi mã cuộc gọi đến và có thể bỏ lỡ lượt gọi đầu sau lúc nghỉ. Giữ lời chào thống nhất, dọn cửa sổ gọi, nhường người thật và persona riêng từ các bản trước. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
+**Bản hiện tại: 0.4.0.** AI có thể kết thúc cuộc gọi đang xử lý khi người gọi yêu cầu rõ ràng, giữ chế độ tự nhận cho lần sau. Tiếp tục giữ lời chào, làm mới Facebook sau cuộc gọi, nhường người thật và persona riêng. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
 
 Cấu hình khởi đầu dự kiến: 2 vCPU, khoảng 4 GB RAM cho một phiên Chrome với một tài khoản. Đây là đánh giá theo cấu hình, chưa phải số đo tải thật. Bộ cài giới hạn service ở 2500 MB để dành RAM cho hệ thống và bot text. Chưa tự thêm swap.
 
@@ -62,7 +62,7 @@ Relay 8765, VNC 5977 và noVNC 6080 đều chỉ nghe loopback. Không mở các
 /opt/messenger-ai-call/app/experimental/call-lab-extension
 ```
 
-3. Kiểm tra phiên bản **0.3.2**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
+3. Kiểm tra phiên bản **0.4.0**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
 4. Ghim tiện ích. Tải lại trang Facebook trước khi tạo cuộc gọi mới.
 5. Mở tiện ích, địa chỉ giữ `ws://127.0.0.1:8765`, dán mã kết nối từ bộ cài. Có thể tắt **Nghe giọng AI trên máy này** vì VPS không cần phát loa để bạn nghe qua noVNC.
 
@@ -91,6 +91,18 @@ Mỗi phiên VPS mặc định **600 giây (10 phút)**. Dùng Google/Gemini 3.8
 AI mở đầu bằng “Xin chào, mình là trợ lý AI đang hỗ trợ chủ tài khoản. Xin hỏi bạn gọi có việc gì thế ạ?”, với hướng dẫn nói nhẹ nhàng, lịch sự và tự nhiên. Chỉ giới thiệu khi bắt đầu cuộc gọi, không lặp lại mỗi lượt. Lời chào được nạp từ relay khi mở phiên mới; thay đổi phần này cần cập nhật host bằng `setup_call_vps.py install`, không cần đổi persona hoặc mã kết nối.
 
 Cuộc gọi ưu tiên tiếng Việt xuyên suốt, phát âm rõ và tốc độ vừa phải. AI được yêu cầu chỉ đổi ngôn ngữ khi người gọi yêu cầu rõ ràng; nếu nghe lời nói không rõ thì hỏi lại bằng tiếng Việt, không đoán nội dung/ngôn ngữ từ tiếng nền. Đây là hướng dẫn cho model, không khóa cứng nhận dạng hay giọng phát ra. Theo [tài liệu Live API](https://ai.google.dev/gemini-api/docs/live-api/capabilities#change-voice-and-language), native audio tự chọn ngôn ngữ và không hỗ trợ đặt mã ngôn ngữ trực tiếp; không thêm `languageCode` vào cấu hình để tránh tham số không được hỗ trợ. Nếu tiếng vẫn nghe lạ hoặc méo sau cập nhật, cần nghe đoạn âm thanh mẫu để phân biệt lỗi ngôn ngữ với chất lượng tiếng/đường truyền.
+
+## Yêu cầu AI kết thúc cuộc gọi
+
+Khi AI đang nghe trong cuộc gọi, có thể nói **“ngắt cuộc gọi đi”**, **“cúp máy nhé”**, **“tắt cuộc gọi giúp mình”**. Model hiểu yêu cầu rồi dùng công cụ `end_call`; tiện ích kiểm tra đúng phiên, đúng cửa sổ và kết nối âm thanh trước khi bấm nút kết thúc. Tính năng hoạt động với cả cuộc gọi AI tự nhận và cuộc gọi bạn đã bật AI thủ công. Tự nhận cuộc gọi sau vẫn giữ theo lựa chọn đã lưu.
+
+Câu **“đừng ngắt”**, **“bạn có tự cúp máy được không?”**, giả định hoặc chỉ nói tạm biệt được hướng dẫn là chưa yêu cầu cúp ngay. Đây là phân loại của model, không phải bộ từ khóa và không bảo đảm tuyệt đối khi model nghe nhầm âm thanh.
+
+Nếu nút kết thúc không khớp, phiên đã đổi hoặc lệnh quá hạn thì báo chưa thực hiện được; không báo thành công khi chưa có kết quả từ tiện ích. Không dùng bản chép lời hoặc nội dung AI nói ra làm lệnh cúp. Không bổ sung quyền Chrome hoặc lưu âm thanh/lời nói trong log.
+
+Cần cập nhật **cả host và tiện ích**: chạy `git pull --ff-only`, `.venv/bin/python setup_call_vps.py install`, rồi trong Chrome VPS mở `chrome://extensions`, Reload tiện ích, xác nhận **0.4.0** và tải lại Facebook. Host chỉ khai báo công cụ kết thúc khi tiện ích báo hỗ trợ; bản tiện ích cũ tiếp tục hoạt động theo cách cũ.
+
+Đã thử Google/Gemini 3.8 Live với 9 câu chữ và 2 mẫu âm thanh tổng hợp công khai; cả yêu cầu kết thúc và các câu phủ định/hỏi/giả định trong bộ mẫu đều được phân loại đúng. Chưa kiểm tra thao tác bấm cúp trên Facebook thật sau thay đổi; thử lại một cuộc gọi trên VPS để xác nhận nhãn nút đang dùng. Cơ chế dùng [function calling của Live API](https://ai.google.dev/gemini-api/docs/live-api/tools#function-calling).
 
 ## Dọn cửa sổ gọi, nhường và gọi ra
 

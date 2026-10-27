@@ -1,5 +1,14 @@
 # Kết quả kiểm tra
 
+## Kết thúc cuộc gọi theo yêu cầu — 0.4.0, 27/10/2026
+
+- Thêm công cụ Live API `end_call`, chỉ khai báo khi tiện ích xác nhận hỗ trợ. Yêu cầu model chỉ dùng cho yêu cầu cúp ngay, không dùng cho phủ định, hỏi khả năng, giả định, trích dẫn, chào tạm biệt đơn thuần hoặc câu nghe không rõ. Hướng dẫn được thêm sau persona đã chọn; không đọc thêm hồ sơ hoặc lịch sử.
+- Relay yêu cầu trình duyệt đã sẵn sàng và đã nhận audio, xác thực tên/đối số, chống trùng tool id, dùng request id riêng và hạn 5 giây. Chỉ báo thành công cho Google sau kết quả từ tiện ích; lỗi/timeout không tự báo đã cúp. Bản chép lời, text và inline function part không được biến thành lệnh điều khiển. Tiện ích cũ không được cấp công cụ này.
+- Chrome kiểm tra phiên đang chạy, call id, URL và điều hướng; content kiểm tra lại peer âm thanh đúng phiên, thời hạn và nút kết thúc duy nhất. Lệnh cũ hoặc lookup trả muộn không tác động phiên mới; kiểm tra thất bại không dừng AI. Thành công kết thúc cả gọi thủ công/tự nhận và giữ chế độ tự nhận cho lần sau. Không tăng quyền Chrome, không đưa token, Google tool id hoặc nội dung lời nói vào page command/log.
+- **1.300 kiểm thử offline đạt, 1 fixture Chrome bỏ qua**. Thêm các ca thương lượng khả năng, điều khiển trước ready/audio, đối số sai, request trùng/quá hạn, ack sai/đến muộn, giữ phiên khi nút không khớp, cúp thủ công/tự nhận, đổi call id/peer/session và lookup trả muộn. Node dùng track tổng hợp có `readyState=live` để phản ánh MediaStreamTrack thật. Lint, cú pháp JS/manifest và `git diff --check` đạt.
+- **Google thật / Gemini 3.8 Live:** 9 câu bằng chữ đạt (4 yêu cầu kết thúc, 5 câu phủ định/hỏi/giả định/chào tạm biệt); 2 mẫu giọng nói tổng hợp đạt: yêu cầu ngắt tạo function call đúng đối số/id, câu “đừng ngắt cuộc gọi, mình còn muốn nói” không tạo lệnh. Hai mẫu speech được kiểm nội dung bằng output transcription trước khi chuyển 24 kHz thành 16 kHz để gửi thử. Chỉ dùng system công khai và câu cố định, key nhập ẩn trong bộ nhớ; không gửi persona, âm thanh hoặc cookie thật của người dùng. Không thực thi công cụ lên Messenger trong thử API.
+- Chưa bấm kết thúc trong cuộc gọi Facebook thật sau sửa. Phân loại 11 mẫu không bảo đảm không nhận nhầm mọi giọng nói/nhiễu; nhãn nút Facebook khác vẫn có thể làm thao tác thất bại. Căn cứ giao thức: [Live tools](https://ai.google.dev/gemini-api/docs/live-api/tools), [WebSocket toolCall/toolResponse](https://ai.google.dev/api/live).
+
 ## Ưu tiên tiếng Việt và hỏi lại khi nghe mơ hồ — 27/10/2026
 
 - Bổ sung system instruction giữ tiếng Việt trong suốt cuộc gọi, chỉ đổi khi người gọi yêu cầu rõ; phát âm rõ và tốc độ vừa phải. Với lời nói chưa hiểu thì hỏi lại bằng tiếng Việt, không tự đoán nội dung/ngôn ngữ từ đoạn ngắn hoặc tiếng nền; chờ khi chỉ có im lặng/tiếng nền. Giữ nguyên câu chào người dùng đã chọn và thêm hướng dẫn đọc rõ tiếng Việt.
