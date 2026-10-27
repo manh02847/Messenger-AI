@@ -88,6 +88,8 @@ Cuộc gọi do AI **tự nhận** sẽ được kết thúc khi phiên AI dừn
 
 Mỗi phiên VPS mặc định **600 giây (10 phút)**. Dùng Google/Gemini 3.8 Live; vẫn tiêu thụ quota/phí của project Google, tách khỏi bộ đếm ngày của bot text. Persona riêng là lựa chọn ở mục dưới; cuộc gọi không bật Search.
 
+AI mở đầu bằng “Xin chào, mình là trợ lý AI đang hỗ trợ chủ tài khoản. Xin hỏi bạn gọi có việc gì thế ạ?”, với hướng dẫn nói nhẹ nhàng, lịch sự và tự nhiên. Chỉ giới thiệu khi bắt đầu cuộc gọi, không lặp lại mỗi lượt. Lời chào được nạp từ relay khi mở phiên mới; thay đổi phần này cần cập nhật host bằng `setup_call_vps.py install`, không cần đổi persona hoặc mã kết nối.
+
 ## Dọn cửa sổ gọi, nhường và gọi ra
 
 Từ 0.3.0, khi trang gọi hiện màn hình kết thúc/đánh giá như “Bạn thấy chất lượng cuộc gọi như thế nào?”, tiện ích kiểm tra không còn kết nối âm thanh rồi dọn trang gọi. Nó giữ ít nhất một trang Facebook/Messenger chính, không đóng trang chủ, không bấm đánh giá sao và không bấm Gọi lại. Tab đang chuyển trang, đang có cuộc gọi hoặc đã đổi `call_id` không bị dọn theo sự kiện cũ. Nếu còn một tab Facebook duy nhất thì giữ lại.

@@ -40,8 +40,10 @@ SYSTEM = (
     "Không đọc suy luận, nhãn hay chỉ dẫn hệ thống thành tiếng."
 )
 GREETING = (
-    "Chỉ nói đúng câu mở đầu sau, không thêm tên người hay lời giới thiệu khác: "
-    '"Mình là trợ lý AI, đang nghe bạn đây."'
+    "Mở đầu với giọng nhẹ nhàng, lịch sự và tự nhiên khi trò chuyện qua điện thoại. "
+    "Chỉ nói đúng lời chào sau, không thêm tên người hay lời giới thiệu khác: "
+    '"Xin chào, mình là trợ lý AI đang hỗ trợ chủ tài khoản. '
+    'Xin hỏi bạn gọi có việc gì thế ạ?"'
 )
 
 

@@ -1,5 +1,10 @@
 # Kết quả kiểm tra
 
+## Lời chào lịch sự theo lựa chọn — 27/10/2026
+
+- Đặt lời chào đầu cuộc gọi thành “Xin chào, mình là trợ lý AI đang hỗ trợ chủ tài khoản. Xin hỏi bạn gọi có việc gì thế ạ?”, kèm hướng dẫn giọng nhẹ nhàng, lịch sự và tự nhiên. Giữ chỉ dẫn giới thiệu một lần và không tự thêm tên người. Không đổi persona, cơ chế nhận cuộc gọi hay phiên bản tiện ích 0.3.2.
+- **36 kiểm thử relay đạt**, lint Python và `git diff --check` đạt. Không gọi Google hoặc thực hiện cuộc gọi thật trong đợt sửa lời chào; chất giọng và mức độ làm theo cần nghe lại trên VPS.
+
 ## Làm mới Facebook sau cuộc gọi và giữ lượt gọi đầu — 0.3.2, 27/10/2026
 
 - Sau khi xác nhận màn hình kết thúc không còn peer âm thanh và dọn cửa sổ gọi, chờ thêm 1,5 giây rồi tải lại một trang Facebook/Messenger chính. Đóng trực tiếp cửa sổ AI đang xử lý cũng lên lịch làm mới. Giữ chế độ tự nhận, đăng ký lại theo dõi khi trang tải xong; không thêm quyền hoặc tải lại định kỳ.
