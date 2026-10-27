@@ -14,6 +14,7 @@ from .call_lab import MODELS, CallRelay, LabConfig
 
 STATE = Path("/var/lib/messenger-ai-call")
 RUNTIME = Path("/run/messenger-ai-call")
+VIRTUAL_MIC = "call_input"
 
 
 class HostError(RuntimeError):
@@ -88,6 +89,8 @@ def commands(root: Path, runtime: Path, browser: str) -> list[tuple[str, list[st
                 "--load=module-native-protocol-unix",
                 "--load=module-null-sink sink_name=call_speaker",
                 "--load=module-null-sink sink_name=call_microphone",
+                "--load=module-remap-source master=call_microphone.monitor "
+                f"source_name={VIRTUAL_MIC} source_properties=device.description=Messenger_Virtual_Mic",
                 "--load=module-always-sink",
             ],
         ),
@@ -211,7 +214,7 @@ async def run(root: Path = STATE, runtime: Path = RUNTIME, *, port=8765):
         "XDG_RUNTIME_DIR": str(runtime),
         "PULSE_SERVER": "unix:" + str(runtime / "pulse/native"),
         "PULSE_SINK": "call_speaker",
-        "PULSE_SOURCE": "call_microphone.monitor",
+        "PULSE_SOURCE": VIRTUAL_MIC,
     }
     children, watchers = [], []
     stopped = asyncio.Event()
@@ -257,7 +260,7 @@ async def run(root: Path = STATE, runtime: Path = RUNTIME, *, port=8765):
                     await wait_ready(["pactl", "info"], process, env)
                     for option, value in (
                         ("set-default-sink", "call_speaker"),
-                        ("set-default-source", "call_microphone.monitor"),
+                        ("set-default-source", VIRTUAL_MIC),
                     ):
                         if await quiet("pactl", option, value, env=env):
                             raise HostError("Chưa tạo được thiết bị âm thanh ảo.")

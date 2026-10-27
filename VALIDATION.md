@@ -1,5 +1,11 @@
 # Kết quả kiểm tra
 
+## Mic ảo xuất hiện trong Chrome VPS — 27/10/2026
+
+- Sửa cấu hình chỉ có hai null-sink và chọn `call_microphone.monitor` làm mic mặc định. Chromium lọc nguồn monitor khi liệt kê đầu vào và từ chối mặc định dạng monitor; thêm `module-remap-source` trên monitor im lặng để tạo source riêng `call_input`, tên **Messenger_Virtual_Mic**. Cả `PULSE_SOURCE` và default-source dùng source này; nguồn loa vẫn tách riêng.
+- Kiểm tra hồi quy bảo đảm source remap trỏ vào monitor im lặng, có tên hiển thị và không dùng monitor loa làm mic. Bộ kiểm thử VPS/relay và lint đạt; chưa kiểm chứng mic này trong Chrome/PulseAudio thật ở môi trường phát triển. Cần cập nhật host bằng bộ cài rồi kiểm tra danh sách source và mic trong Chrome VPS.
+- Căn cứ: [Chromium PulseAudio input enumeration và tham số mặc định](https://chromium.googlesource.com/chromium/src.git/+/1c3ae392e0134f2abfb5a4b650b4705c493d9a29/media/audio/pulse/audio_manager_pulse.cc), [PulseAudio remap source](https://github.com/pulseaudio/pulseaudio/blob/master/src/modules/module-remap-source.c).
+
 ## Chrome và âm thanh chạy trên Ubuntu VPS — 0.2.0, 27/10/2026
 
 - Người dùng xác nhận bản cầu nối Chrome Windows 0.1.1 hoạt động. Đây là xác nhận từ người dùng, không phải cuộc gọi do môi trường phát triển thực hiện.

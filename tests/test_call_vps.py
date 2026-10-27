@@ -88,6 +88,19 @@ def test_deployment_keeps_desktop_private_and_chrome_sandbox_enabled(tmp_path):
     )
     assert "--load=module-null-sink sink_name=call_speaker" in commands["Âm thanh"]
     assert "--load=module-null-sink sink_name=call_microphone" in commands["Âm thanh"]
+    # Chromium omits monitor sources and rejects a monitor as the default mic.
+    # A remapped source must exist independently of both output monitors.
+    remapped = next(
+        arg
+        for arg in commands["Âm thanh"]
+        if arg.startswith("--load=module-remap-source ")
+    )
+    assert "master=call_microphone.monitor" in remapped
+    assert f"source_name={host.VIRTUAL_MIC}" in remapped
+    assert "device.description=Messenger_Virtual_Mic" in remapped
+    assert host.VIRTUAL_MIC != "call_speaker.monitor" and not host.VIRTUAL_MIC.endswith(
+        ".monitor"
+    )
     unit = (
         Path(__file__).resolve().parents[1] / "deploy/messenger-ai-call.service"
     ).read_text()

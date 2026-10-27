@@ -69,7 +69,7 @@ Google Chrome mới không được giả định hỗ trợ `--load-extension` 
 ## 4. Thử một cuộc gọi rồi bật tự động
 
 1. Trước tiên **giữ tự động tắt**. Từ tài khoản khác gọi tới tài khoản Facebook trên VPS; nhận bằng noVNC.
-2. Nếu Chrome hỏi quyền micro, chọn **Allow / Cho phép**. VPS đã có micro ảo riêng; máy Windows không cần cấp micro cho noVNC.
+2. Nếu Chrome hỏi quyền micro, chọn **Allow / Cho phép**. VPS không cần mic vật lý: bộ cài tạo mic ảo **Messenger_Virtual_Mic**, chọn mic này hoặc Default trỏ tới mic này trong cài đặt micro của Chrome/Messenger. Máy Windows không cần cấp micro cho noVNC. Tiếng người gọi được lấy trực tiếp từ luồng cuộc gọi, tiếng AI thay track gửi; mic ảo im lặng giúp Messenger mở kết nối ban đầu.
 3. Bấm **Bật AI cho cuộc gọi này**. Nghe/kiểm tra từ điện thoại hoặc máy của người gọi, vì noVNC trong cấu hình này không truyền tiếng desktop về máy bạn.
 4. Sau khi tiếng hai chiều hoạt động, kết thúc cuộc gọi thử.
 5. Trong tiện ích, tích **Tự nhận cuộc gọi thoại và bật AI**, bấm **Lưu chế độ tự động**.
@@ -124,8 +124,17 @@ Bot nhắn tin `messenger-ai` và `messenger-ai-2` có cấu hình/service riên
 - **Chưa đăng nhập/đòi xác minh:** xử lý thủ công trong Chrome VPS. Không tự vượt xác minh.
 - **Không tự nhận:** kiểm tra phiên bản 0.2.0, đã Lưu tự động, Facebook đăng nhập và chỉ một tab/cửa sổ gọi. Vào noVNC xem nút/thông báo đang hiển thị; vẫn có thể nhận rồi bật AI thủ công.
 - **Nhận rồi im lặng:** kiểm tra quyền micro ở Chrome VPS, model/key/quota, trạng thái tiện ích. Kết thúc cuộc gọi, thử lại bước thủ công trước; tránh bật auto khi lượt thủ công chưa hoạt động.
+- **Chrome báo không có mic:** cập nhật repo rồi chạy lại `.venv/bin/python setup_call_vps.py install` để cập nhật bản sao trong `/opt` và restart Chrome. Bản sửa tạo source riêng `call_input` với tên **Messenger_Virtual_Mic**, vì Chrome bỏ qua nguồn monitor của loa khi liệt kê mic. Trong Chrome VPS, kiểm tra `chrome://settings/content/microphone`, chọn mic ảo và cho phép Facebook. Nguồn monitor của loa và mic vẫn tách nhau để tránh vọng tiếng.
 - **Một thành phần chết:** supervisor dừng các tiến trình liên quan và systemd thử lại; giới hạn 5 lần khởi động trong 120 giây. Sửa lỗi rồi chạy `systemctl reset-failed messenger-ai-call` và `systemctl start messenger-ai-call`.
 
 Code public không chứa tài khoản Facebook, API key, mật khẩu noVNC hoặc mã kết nối thật. Desktop/profile/cấu hình nằm trên VPS, cần giữ riêng như cookie bot.
+
+Kiểm tra source âm thanh bằng root (service phải đang chạy):
+
+```bash
+runuser -u messenger-call -- env XDG_RUNTIME_DIR=/run/messenger-ai-call PULSE_SERVER=unix:/run/messenger-ai-call/pulse/native pactl list short sources
+```
+
+Cần có dòng tên `call_input`. Lệnh không in key, cookie hoặc mật khẩu. Nếu thiếu dòng đó, gửi trạng thái service/journal để kiểm tra bước khởi tạo PulseAudio.
 
 Tham khảo: [TigerVNC Xvnc](https://tigervnc.org/doc/Xvnc.html), [noVNC](https://github.com/novnc/noVNC), [systemd services](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html), [Chrome trên Linux](https://support.google.com/chrome/a/answer/7100626).
