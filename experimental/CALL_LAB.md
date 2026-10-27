@@ -4,6 +4,8 @@
 
 Bạn tự gọi/nhận cuộc gọi trong Chrome, rồi bấm **Bật AI cho cuộc gọi này**. Tiện ích lấy tiếng người bên kia, gửi qua relay đến Gemini Live và dùng tiếng AI thay micro của bạn. Bấm **Dừng AI** để trở lại nói bằng micro. Tiện ích không tự nhận cuộc gọi hoặc gọi cho ai.
 
+Từ **0.1.1**, có thể mở tiện ích ở tab Facebook chính: nó tự tìm cuộc gọi đã kết nối trong các tab/cửa sổ Facebook và Messenger, kể cả cửa sổ gọi riêng. Chỉ bật khi tìm thấy đúng một cuộc gọi; nếu có nhiều cuộc gọi hoặc nhiều kết nối âm thanh thì báo để bạn xử lý trước. Việc tìm chỉ chạy khi bấm Bật AI, không gửi âm thanh hay mở Google trong bước tìm.
+
 ## 1. Chạy relay trên VPS
 
 Dùng thư mục bot đã có key Google, ví dụ acc 2:
@@ -56,13 +58,17 @@ Nếu relay và Chrome cùng một máy thì bỏ bước SSH tunnel.
 4. Ghim tiện ích **Messenger AI — Call Lab** để dễ mở.
 5. **Kết thúc cuộc gọi cũ, tải lại trang Facebook/Messenger rồi gọi lại.** Tiện ích cần được nạp trước khi trang tạo kết nối cuộc gọi.
 
+Nếu đang dùng **0.1.0**: tải ZIP mới trên **máy Windows**, thay các file trong thư mục tiện ích cũ, vào `chrome://extensions` bấm **Reload / Tải lại** của Messenger AI — Call Lab và kiểm tra phiên bản **0.1.1**. Nếu giải nén sang thư mục mới, dùng Load unpacked chọn thư mục mới và tắt bản cũ để chỉ giữ một bản đang bật. Sau đó kết thúc cửa sổ gọi cũ, reload Facebook và gọi lại. Cập nhật file trên VPS không cập nhật thư mục tiện ích đã cài trên Windows.
+
+Cho phép quyền truy cập các trang Facebook/Messenger nếu Chrome hỏi sau cập nhật. Quyền host được giới hạn ở các domain đã hỗ trợ để tìm cửa sổ gọi; không cần quyền đọc toàn bộ tab hoặc cookie. [Tài liệu quyền tab của Chrome](https://developer.chrome.com/docs/extensions/reference/api/tabs#permissions).
+
 Không dán Google API key hay cookie vào tiện ích. API key nằm ở VPS; tiện ích chỉ cần mã kết nối của relay. Mã này được giữ trong bộ nhớ phiên của Chrome, không lưu bằng `storage.local` hoặc đưa vào mã trang Facebook.
 
 ## 4. Thử cuộc gọi
 
 1. Dùng tài khoản thử, tự gọi/nhận một cuộc gọi thoại thông thường bằng Chrome.
 2. Bấm vào trang cuộc gọi để trình duyệt cho phép phát âm thanh.
-3. Mở tiện ích ở **đúng tab/cửa sổ Facebook đang xử lý cuộc gọi**.
+3. Mở tiện ích ngay ở **tab Facebook chính** hoặc trang gọi. Bản 0.1.1 tự tìm cửa sổ đang có cuộc gọi đã kết nối.
 4. Giữ địa chỉ `ws://127.0.0.1:8765`, dán **mã kết nối** từ bước 1, rồi bấm **Bật AI cho cuộc gọi này**.
 5. Chờ trạng thái “AI đang nghe và nói…”. Người bên kia sẽ nghe lời giới thiệu AI rồi có thể nói chuyện. Kết nối Google lần đầu có thể mất nhiều giây.
 6. Bấm **Dừng AI** để lấy lại micro. `Ctrl+C` ở VPS dừng relay; đóng tunnel cũng ngắt phiên. Nếu micro chưa hoạt động lại, kết thúc rồi gọi lại.
@@ -93,8 +99,9 @@ Live gọi API trực tiếp, dùng quota của project Google và **không qua 
 
 | Hiện tượng | Cách kiểm tra |
 |---|---|
-| “Chưa thấy cuộc gọi” | Kết thúc cuộc gọi, reload Facebook sau khi cài tiện ích, gọi lại; mở tiện ích ở đúng tab/cửa sổ gọi. Nếu vẫn lỗi, có thể Facebook dùng frame/worker hoặc cơ chế WebRTC bản thử chưa bắt được. |
-| “Có nhiều luồng gọi” | Chỉ giữ một cuộc gọi thoại. Bản thử cần đúng một kết nối WebRTC với một track gửi và một track nhận âm thanh. |
+| “Chưa thấy cuộc gọi” | Kiểm tra tiện ích là 0.1.1, cho phép truy cập Facebook/Messenger, kết thúc cửa sổ gọi cũ và reload Facebook rồi gọi lại; đợi bên kia nhận để cuộc gọi kết nối. Có thể mở tiện ích ở tab Facebook chính. Nếu vẫn lỗi, có thể Facebook dùng frame/worker hoặc cơ chế WebRTC bản thử chưa bắt được. |
+| “Chưa gắn được tiện ích vào cửa sổ gọi” | Cập nhật/reload tiện ích, kết thúc cửa sổ gọi cũ, reload Facebook rồi mở cuộc gọi mới. |
+| “Có nhiều cuộc gọi hoặc luồng âm thanh” | Chỉ giữ một cuộc gọi thoại trong tất cả cửa sổ Facebook/Messenger. Bản thử cần đúng một kết nối WebRTC với một track gửi và một track nhận âm thanh. |
 | “Không vào được relay” | Giữ lệnh `call-lab` và SSH tunnel chạy; tunnel phải mở trên máy đang chạy Chrome. Kiểm tra cùng cổng 8765. |
 | “Mã kết nối chưa đúng” | Copy lại mã từ lần chạy relay hiện tại. Không dùng API key Google. |
 | Google chưa chấp nhận/ngắt phiên | Kiểm tra key có quyền dùng model Live, quota, mạng VPS; thử một model trong danh sách ở trên. |
@@ -107,7 +114,7 @@ Bản thử chỉ hỗ trợ Chrome máy tính với cuộc gọi đã nhận th
 ## Phạm vi kiểm chứng
 
 - Python relay: xác thực Origin/mã kết nối, một phiên đồng thời, gate trước khi bật âm thanh, PCM hai chiều, ngắt lời, timeout, đóng kết nối, lọc suy luận/bản chép lời và thông báo lỗi không lộ key.
-- Node: 18 ca kiểm tra mã PCM, resampling, lấy track người gọi, trả micro, bấm Dừng lúc khởi tạo, bấm Bật hai lần và sự kiện muộn từ phiên cũ. Đây là mô phỏng API trình duyệt.
+- Node: 25 ca kiểm tra mã PCM, resampling, lấy track người gọi, trả micro, bấm Dừng lúc khởi tạo, bấm Bật hai lần, sự kiện muộn từ phiên cũ và tìm cuộc gọi ở cửa sổ riêng. Kiểm tra nhiều cuộc gọi bị từ chối, tab cũ lỗi không che cuộc gọi hợp lệ, tab ngoài domain không được hỏi và hủy lúc đang tìm không mở relay. Đây là mô phỏng API trình duyệt.
 - Google thật qua relay: Gemini 3.8 Live nhận 48 khung âm thanh mẫu và trả âm thanh; không dùng dữ liệu người gọi, persona hoặc cookie thật.
 - Có fixture Chromium/WebRTC dùng hai trang và tiếng mẫu, nhưng **chưa chạy được ở môi trường phát triển** vì runtime chặn socket IPC của Chrome (`Operation not permitted`). Chưa xác nhận giao diện tiện ích, WebRTC trong Chrome thật hoặc cuộc gọi Facebook thật.
 

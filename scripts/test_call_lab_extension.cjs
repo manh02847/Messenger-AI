@@ -9,16 +9,19 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 const root = path.join(__dirname, '../experimental/call-lab-extension');
 
 function background({query, send} = {}) {
-  const sockets = [], page = [], stored = [], timers = new Set();
+  const sockets = [], page = [], stored = [], queries = [], timers = new Set();
   let listener;
   const id = 'a'.repeat(32);
   const chrome = {
     runtime: {id, getURL: name => `chrome-extension://${id}/${name}`, onMessage: {addListener: fn => listener = fn}},
     tabs: {
-      query: query || (async () => [{id: 42, url: 'https://www.facebook.com/call'}]),
+      query: async options => {
+        queries.push(options);
+        return query ? query(options) : [{id: 42, url: 'https://www.facebook.com/call'}];
+      },
       sendMessage: async (tabId, msg) => {
         page.push({tabId, ...msg});
-        return send ? send(msg) : {ok: true, count: 1};
+        return send ? send(msg, tabId) : {ok: true, count: 1};
       },
       onRemoved: {addListener() {}}, onUpdated: {addListener() {}},
     },
@@ -39,11 +42,79 @@ function background({query, send} = {}) {
   function popup(action, details = {}) {
     return new Promise(resolve => listener({from: 'call-lab-popup', action, endpoint: 'ws://127.0.0.1:8765', token: 'LOCAL_TEST_TOKEN_123456789', ...details}, sender, resolve));
   }
-  function audio(session, details = {}) {
-    listener({from: 'call-lab-content', kind: 'audio', session, data: 'AAAA', sampleRate: 16000, ...details}, {id, tab: {id: 42}}, () => {});
+  function audio(session, details = {}, tabId = 42) {
+    listener({from: 'call-lab-content', kind: 'audio', session, data: 'AAAA', sampleRate: 16000, ...details}, {id, tab: {id: tabId}}, () => {});
   }
-  return {sockets, page, stored, timers, popup, audio};
+  return {sockets, page, stored, queries, timers, popup, audio};
 }
+
+test('a call in a separate popup is selected from the Facebook feed and keeps its own audio route', async () => {
+  const f = background({
+    query: async () => [
+      {id: 42, windowId: 1, active: true, url: 'https://www.facebook.com/'},
+      {id: 84, windowId: 2, active: false, url: 'https://www.facebook.com/groupcall/ROOM:TEST'},
+    ],
+    send: async (msg, tabId) => ({ok: true, count: tabId === 84 ? 1 : 0}),
+  });
+  await f.popup('start'); assert.equal(f.sockets.length, 1);
+  assert.ok(Array.isArray(f.queries[0].url));
+  assert.equal(f.queries[0].currentWindow, undefined); assert.equal(f.queries[0].active, undefined);
+  const ws = f.sockets[0]; ws.open(); ws.receive({type: 'google_ready'}); await flush();
+  const started = f.page.find(x => x.command === 'start'); assert.equal(started.tabId, 84);
+  const count = ws.sent.length;
+  f.audio(started.session, {}, 42); assert.equal(ws.sent.length, count);
+  f.audio(started.session, {}, 84); assert.equal(ws.sent.at(-1).type, 'audio');
+  ws.receive({type: 'audio', data: 'AAAA', sampleRate: 24000}); await flush();
+  assert.equal(f.page.at(-1).tabId, 84);
+  await f.popup('stop'); assert.equal(f.page.at(-1).tabId, 84);
+});
+
+test('several live calls across windows are refused before relay authentication', async () => {
+  const f = background({query: async () => [
+    {id: 42, url: 'https://www.facebook.com/call'}, {id: 84, url: 'https://www.messenger.com/call'},
+  ]});
+  const reply = await f.popup('start');
+  assert.match(reply.status, /nhiều cuộc gọi/); assert.equal(f.sockets.length, 0); assert.equal(f.stored.length, 0);
+});
+
+test('multiple peer connections in another popup are also ambiguous', async () => {
+  const f = background({send: async () => ({ok: true, count: 2})});
+  assert.match((await f.popup('start')).status, /nhiều cuộc gọi/);
+  assert.equal(f.sockets.length, 0);
+});
+
+test('an unrelated page or hostname lookalike is never probed', async () => {
+  const f = background({query: async () => [
+    {id: 42, url: 'https://www.facebook.com/call'},
+    {id: 81, url: 'https://www.facebook.com.attacker.example/'},
+    {id: 82, url: 'https://example.com/'},
+    {id: 83, url: 'http://www.facebook.com/'},
+  ]});
+  await f.popup('start'); assert.deepEqual(f.page.map(x => x.tabId), [42]); await f.popup('stop');
+});
+
+test('a closed or uninitialized old tab cannot hide a reachable call popup', async () => {
+  const f = background({
+    query: async () => [{id: 42, url: 'https://www.facebook.com/'}, {id: 84, url: 'https://www.facebook.com/groupcall/test'}],
+    send: async (_, tabId) => {if (tabId === 42) throw Error('tab closed'); return {ok: true, count: 1};},
+  });
+  await f.popup('start'); assert.equal(f.sockets.length, 1);
+  const ws = f.sockets[0]; ws.open(); ws.receive({type: 'google_ready'}); await flush();
+  assert.equal(f.page.find(x => x.command === 'start').tabId, 84); await f.popup('stop');
+});
+
+test('Stop while other windows are being probed prevents a late relay connection', async () => {
+  let resolve;
+  const f = background({send: () => new Promise(done => resolve = done)});
+  const starting = f.popup('start'); await flush();
+  await f.popup('stop'); resolve({ok: true, count: 1}); await starting;
+  assert.equal(f.sockets.length, 0); assert.equal(f.stored.length, 0);
+});
+
+test('missing bridge reports reload instructions without opening Google', async () => {
+  const f = background({send: async () => {throw Error('no receiving end');}});
+  assert.match((await f.popup('start')).status, /Tải lại Facebook/); assert.equal(f.sockets.length, 0);
+});
 
 test('no call or invalid relay never opens a WebSocket or stores a token', async () => {
   const f = background({send: async () => ({ok: true, count: 0})});

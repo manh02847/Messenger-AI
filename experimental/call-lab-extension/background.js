@@ -1,13 +1,14 @@
 let current = null;
 let starting = false;
 let attempt = 0;
-let status = "Chưa bật AI. Nhận cuộc gọi rồi mở tiện ích ở đúng tab gọi.";
+let status = "Chưa bật AI. Nhận cuộc gọi rồi bật AI; tiện ích tự tìm cửa sổ đang gọi.";
+const FACEBOOK_URLS = ["https://www.facebook.com/*", "https://web.facebook.com/*", "https://www.messenger.com/*", "https://messenger.com/*"];
 const ERRORS = {
-  NO_CALL: "Chưa thấy cuộc gọi. Cài tiện ích, tải lại Facebook rồi gọi lại và nhận thủ công.",
-  MULTIPLE_CALLS: "Có nhiều luồng gọi; chỉ để một cuộc gọi trong tab rồi thử lại.",
+  NO_CALL: "Chưa thấy cuộc gọi đã kết nối. Tải lại Facebook sau khi cài/cập nhật tiện ích rồi gọi lại và nhận thủ công.",
+  MULTIPLE_CALLS: "Có nhiều cuộc gọi hoặc luồng âm thanh. Chỉ giữ một cuộc gọi trong các tab/cửa sổ Facebook rồi thử lại.",
   AUDIO_PERMISSION: "Bấm vào trang cuộc gọi để cho phép âm thanh rồi bật lại AI.",
   AUDIO_BACKLOG: "Âm thanh bị dồn; đã dừng AI và trả micro.",
-  BRIDGE_NOT_READY: "Chưa gắn được tiện ích. Tải lại trang Facebook rồi gọi lại.",
+  BRIDGE_NOT_READY: "Chưa gắn được tiện ích vào cửa sổ gọi. Tải lại Facebook rồi mở cuộc gọi mới sau khi cập nhật tiện ích.",
 };
 function label(result) { return ERRORS[result?.code] || "Chưa nối được âm thanh; đã trả lại micro."; }
 function supported(url) {
@@ -21,7 +22,26 @@ function endpointURL(value) {
   return parsed.href;
 }
 async function content(state, command, details = {}) {
-  return chrome.tabs.sendMessage(state.tabId, {to: "call-lab-content", session: state.id, command, ...details});
+  return chrome.tabs.sendMessage(state.tabId, {to: "call-lab-content", session: state.id, command, ...details}, {frameId: 0});
+}
+async function findCall(revision, session) {
+  // Calls may live in a popup window while the action is opened on the feed.
+  // Probe matching Facebook tabs only; do not read titles, chats or caller names.
+  const tabs = await chrome.tabs.query({url: FACEBOOK_URLS});
+  if (attempt !== revision) return {cancelled: true};
+  const eligible = tabs.filter(tab => Number.isInteger(tab.id) && tab.id >= 0 && supported(tab.url));
+  const results = await Promise.all(eligible.map(async tab => {
+    try {
+      const check = await chrome.tabs.sendMessage(tab.id, {to: "call-lab-content", command: "probe", session}, {frameId: 0});
+      return {tab, check};
+    } catch { return {tab, check: {ok: false}}; }
+  }));
+  if (attempt !== revision) return {cancelled: true};
+  const available = results.filter(({check}) => check?.ok === true && Number.isInteger(check.count) && check.count >= 0);
+  const calls = available.filter(({check}) => check.count > 0);
+  if (calls.length > 1 || calls.some(({check}) => check.count > 1)) return {code: "MULTIPLE_CALLS"};
+  if (calls.length === 1) return {tab: calls[0].tab};
+  return {code: results.length > available.length ? "BRIDGE_NOT_READY" : "NO_CALL"};
 }
 async function stop(text = "Đã dừng AI và trả lại micro cho cuộc gọi.") {
   attempt++;
@@ -42,16 +62,12 @@ async function start(msg) {
   const revision = ++attempt;
   starting = true;
   try {
-    const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-    if (attempt !== revision) return;
-    if (!tab?.id || !supported(tab.url)) throw new Error("TAB");
+    status = "Đang tìm cuộc gọi trong các cửa sổ Facebook/Messenger…";
     const id = crypto.randomUUID();
-    const check = await chrome.tabs.sendMessage(tab.id, {to: "call-lab-content", command: "probe", session: id});
-    if (attempt !== revision) return;
-    if (!check?.ok || check.count !== 1) {
-      status = check?.ok ? label({code: check.count ? "MULTIPLE_CALLS" : "NO_CALL"}) : label(check);
-      return;
-    }
+    const found = await findCall(revision, id);
+    if (found.cancelled || attempt !== revision) return;
+    if (!found.tab) { status = label(found); return; }
+    const tab = found.tab;
     await chrome.storage.session.set({endpoint, token: msg.token, monitor: msg.monitor === true});
     if (attempt !== revision) return;
     const ws = new WebSocket(endpoint);
@@ -102,7 +118,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const notes = {
         ENDPOINT: "Địa chỉ cần là ws://127.0.0.1:8765 hoặc localhost qua SSH tunnel.",
         TOKEN: "Dán mã kết nối từ lệnh call-lab, không dán API key.",
-        TAB: "Mở tiện ích ở tab Facebook/Messenger đang có cuộc gọi.",
         ACTIVE: "Đã có phiên thử. Bấm Dừng AI trước.",
       };
       status = notes[error.message] || "Chưa kết nối được tiện ích; tải lại trang Facebook rồi thử lại.";

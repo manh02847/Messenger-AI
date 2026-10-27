@@ -1,5 +1,12 @@
 # Kết quả kiểm tra
 
+## Tìm cửa sổ cuộc gọi — Call Lab 0.1.1, 27/10/2026
+
+- Sửa trường hợp bấm tiện ích ở trang Facebook chính trong khi cuộc gọi nằm ở cửa sổ popup: tìm các tab Facebook/Messenger ở tất cả cửa sổ, hỏi trạng thái WebRTC rồi chỉ chọn một cuộc gọi đã kết nối. Nếu có nhiều cuộc gọi/kết nối thì dừng trước khi mở relay/Google.
+- Quyền host chỉ gồm các domain Facebook/Messenger đã hỗ trợ và loopback; không yêu cầu quyền đọc toàn bộ tab, cookie hoặc debugger. Không dùng URL phòng, tiêu đề hay tên người gọi để quyết định; các URL thật trong ảnh người dùng không được lưu vào repo.
+- Thêm 7 ca Node cho cửa sổ gọi riêng, từ chối nhiều cuộc gọi, bỏ qua tab ngoài domain, tab cũ mất content script và hủy lúc đang tìm. Tổng **25 ca Node đạt**; **1.259 kiểm thử offline đạt, 1 fixture Chrome bỏ qua**, Ruff và `git diff --check` đạt. Fixture Chromium được bổ sung cửa sổ gọi riêng và trang chủ không có cuộc gọi, nhưng chưa chạy được trong runtime hiện tại; chưa xác minh âm thanh Messenger thật sau sửa.
+- Cập nhật tiện ích trên máy Windows lên 0.1.1, reload tiện ích và mở cuộc gọi mới sau khi reload Facebook. Mã Python relay không đổi.
+
 ## Call Lab thử nghiệm — 27/10/2026
 
 - **1.259 kiểm thử offline đạt, 1 kiểm thử Chrome được bỏ qua** vì chưa bật fixture riêng; Ruff E4/E7/E9/F và `git diff --check` đạt.
@@ -178,7 +185,7 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
 - Thêm configure --copy-ai-from THU_MUC: chỉ lấy các thiết lập AI và key đã biết,
   bắt buộc nhập cookie riêng. Không chép danh sách/phạm vi người nhận, persona,
   lịch sử, khóa tiến trình hay thiết bị E2EE; không ghi vào thư mục nguồn.
-- 203 kiểm thử offline đạt, gồm 18 ca mới: khởi tạo Groq/Cloudflare, tạo config
+- 203 kiểm thử offline đạt, gồm 17 ca mới: khởi tạo Groq/Cloudflare, tạo config
   để dùng scope tiếp, giữ model Cloudflare khi thay cookie, cấu hình thiếu không
   ghi file, dùng lại cả chuỗi NVIDIA/Google/Cloudflare/Groq, giữ nguyên dữ liệu
   nguồn/đích, từ chối nguồn sai và phát hiện FACEBOOK_COOKIE ghi đè cookie mới.

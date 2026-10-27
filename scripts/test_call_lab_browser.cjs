@@ -63,11 +63,17 @@ async function tone(page, frequency) {
     });
     context.setDefaultTimeout(10000);
     await context.route('https://www.facebook.com/__call_lab_fixture',route=>route.fulfill({body:html,contentType:'text/html'}));
+    await context.route('https://www.facebook.com/__call_lab_home',route=>route.fulfill({body:'<!doctype html><title>Offline Facebook feed fixture</title><p>No call in this tab.</p>',contentType:'text/html'}));
     await context.route('https://caller.example.test/fixture',route=>route.fulfill({body:html,contentType:'text/html'}));
     let worker=context.serviceWorkers()[0];
     if(!worker)worker=await context.waitForEvent('serviceworker',{timeout:15000});
     const id=new URL(worker.url()).host;
-    const callee=await context.newPage();await callee.goto('https://www.facebook.com/__call_lab_fixture');
+    const home=await context.newPage();await home.goto('https://www.facebook.com/__call_lab_home');
+    const [callee]=await Promise.all([
+      context.waitForEvent('page'),
+      home.evaluate(()=>window.open('/__call_lab_fixture','call-lab-fixture','popup,width=800,height=600')),
+    ]);
+    await callee.waitForLoadState('domcontentloaded');
     const caller=await context.newPage();await caller.goto('https://caller.example.test/fixture');
     await callee.evaluate(()=>fixture.start(220));
     await caller.evaluate(()=>fixture.start(440));
@@ -80,15 +86,15 @@ async function tone(page, frequency) {
     await popup.locator('#endpoint').fill(process.env.CALL_LAB_TEST_URL);
     await popup.locator('#token').fill(process.env.CALL_LAB_TEST_TOKEN);
     await popup.locator('#monitor').uncheck();
-    await callee.bringToFront();
+    await home.bringToFront();
     await popup.evaluate(()=>document.querySelector('#start').click());
     await poll(async()=> (await popup.locator('#status').textContent()).includes('AI đang nghe'), 'Extension did not start');
     await tone(caller,660);
     await tone(caller,880);
-    await callee.bringToFront();await popup.evaluate(()=>document.querySelector('#stop').click());
+    await home.bringToFront();await popup.evaluate(()=>document.querySelector('#stop').click());
     await tone(caller,220);
     await poll(async()=> (await popup.locator('#status').textContent()).includes('Đã dừng'), 'Stop was not reflected in the popup');
-    await callee.bringToFront();await popup.evaluate(()=>document.querySelector('#start').click());
+    await home.bringToFront();await popup.evaluate(()=>document.querySelector('#start').click());
     await poll(async()=> (await popup.locator('#status').textContent()).includes('AI đang nghe'), 'Second session did not start');
     await tone(caller,660);
     await tone(caller,220);
