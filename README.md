@@ -6,6 +6,7 @@ Hỗ trợ **NVIDIA NIM, Google AI Studio, Cloudflare Workers AI và Groq**. Bot
 
 - **Đã cài bot:** xem [lệnh thường dùng](#1-lệnh-thường-dùng) và [kiểm tra nguồn/model](#2-kiểm-tra-ai-nguồn-và-model).
 - **Cài lần đầu:** bắt đầu từ [cài đặt](#3-cài-đặt-lần-đầu), sau đó chọn phạm vi rep và chạy thử.
+- **Thử AI trong cuộc gọi Chrome:** xem [Call Lab](experimental/CALL_LAB.md). Nhận cuộc gọi thủ công rồi bật tiện ích; relay đã thử với Google thật, phần Chrome/Messenger thực tế còn cần xác minh.
 
 ## 1. Lệnh thường dùng
 

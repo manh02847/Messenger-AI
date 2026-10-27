@@ -1,0 +1,5 @@
+body{font:14px/1.5 system-ui,sans-serif;width:340px;margin:18px;color:#192638;background:#f5f8fc}
+h1{font-size:19px;margin:0 0 8px}p{margin:8px 0 14px}label{display:block;font-weight:600;margin:12px 0}
+input:not([type=checkbox]){box-sizing:border-box;width:100%;padding:9px;border:1px solid #a6b7ca;border-radius:6px;margin-top:5px;font:inherit}
+.check{font-weight:400}.buttons{display:flex;gap:8px}button{padding:10px;border:0;border-radius:6px;background:#1764be;color:white;cursor:pointer;font:inherit}#stop{background:#a33336}
+#status{padding:10px;border-radius:6px;background:#e5edf7;min-height:22px;overflow-wrap:anywhere}.note{font-size:12px;color:#4e6074}

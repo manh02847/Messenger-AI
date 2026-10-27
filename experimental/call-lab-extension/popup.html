@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><title>Messenger AI Call Lab</title>
+<link rel="stylesheet" href="popup.css"></head><body>
+<h1>Thử AI trong cuộc gọi</h1>
+<p>Tự nhận cuộc gọi bằng tài khoản thử, rồi bật AI ở đúng tab gọi. Khi bật, âm thanh người gọi được gửi tới Google để AI trả lời.</p>
+<label>Relay trên máy này<input id="endpoint" value="ws://127.0.0.1:8765" autocomplete="off"></label>
+<label>Mã kết nối từ lệnh call-lab<input id="token" type="password" autocomplete="off" placeholder="Mã kết nối, không phải API key"></label>
+<label class="check"><input id="monitor" type="checkbox" checked> Nghe giọng AI trên máy này</label>
+<div class="buttons"><button id="start">Bật AI cho cuộc gọi này</button><button id="stop">Dừng AI</button></div>
+<p id="status" role="status"></p>
+<p class="note">Bản thử không tự nhận hoặc tự gọi cho ai. Dùng Dừng AI để trả micro; tải lại Facebook sau khi cài tiện ích.</p>
+<script src="popup.js"></script></body></html>

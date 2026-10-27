@@ -827,6 +827,17 @@ def main() -> None:
         description="Bot AI trả lời Messenger cá nhân, dùng NVIDIA, Google, Groq hoặc Cloudflare."
     )
     sub = parser.add_subparsers(dest="command", required=True)
+    call_lab = sub.add_parser(
+        "call-lab", help="Thử Gemini Live với tiện ích Chrome; nhận cuộc gọi thủ công."
+    )
+    call_lab.add_argument("--port", type=int, default=8765)
+    call_lab.add_argument("--model", default="gemini-3.8-live")
+    call_lab.add_argument("--max-seconds", type=int, default=180)
+    call_lab.add_argument(
+        "--key-stdin",
+        action="store_true",
+        help="Đọc key Google từ một dòng stdin, không lưu key.",
+    )
     initial_config = sub.add_parser(
         "configure", help="Nhập cookie và AI; có thể dùng lại AI của một bản bot khác."
     )
@@ -983,7 +994,22 @@ def main() -> None:
     )
     args = parser.parse_args()
     try:
-        if args.command == "configure":
+        if args.command == "call-lab":
+            from .call_lab import CallLabError, run_lab
+
+            try:
+                asyncio.run(
+                    run_lab(
+                        ROOT,
+                        port=args.port,
+                        model=args.model,
+                        max_seconds=args.max_seconds,
+                        key_stdin=args.key_stdin,
+                    )
+                )
+            except CallLabError as error:
+                raise ValueError(str(error)) from None
+        elif args.command == "configure":
             configure(provider=args.provider, copy_ai_from=args.copy_ai_from)
         elif args.command == "configure-ai":
             models, keep_key = args.models, args.keep_key

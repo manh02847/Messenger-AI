@@ -1,5 +1,15 @@
 # Kết quả kiểm tra
 
+## Call Lab thử nghiệm — 27/10/2026
+
+- **1.259 kiểm thử offline đạt, 1 kiểm thử Chrome được bỏ qua** vì chưa bật fixture riêng; Ruff E4/E7/E9/F và `git diff --check` đạt.
+
+- Thêm relay chỉ nghe loopback và tiện ích Chrome bật theo từng cuộc gọi đã nhận thủ công. Không thay nguồn/model/config/persona hoặc service của bot text.
+- Kiểm thử mới cho Origin/token, một phiên đồng thời, trạng thái sẵn sàng, PCM hai chiều, ngắt lời, timeout, dọn kết nối và lỗi không lộ key. Node có 18 ca mô phỏng PCM, resampling, track người gọi, trả micro, khởi tạo bị hủy và sự kiện muộn từ phiên cũ.
+- Google thật qua relay, chỉ dùng lời giới thiệu AI công khai làm âm thanh mẫu: Gemini 3.8 Live kết nối/setup 12,93 giây; lời chào 3,80 giây âm thanh; gửi vào 48 khung PCM 16 kHz (4,80 giây, gồm một giây im lặng); nhận thêm 4,24 giây âm thanh trả lời. Không đọc persona/cookie, không dùng dữ liệu cuộc gọi thật. Một ca không đánh giá được độ chính xác hoặc độ trễ trong cuộc gọi thực tế.
+- Fixture Chromium/WebRTC chưa chạy được: runtime từ chối socket IPC khi Chrome khởi động (`Operation not permitted`). Kiểm thử này cần bật riêng bằng `CALL_LAB_CHROME`; các ca Node mô phỏng không thay thế nó. Chưa thử tiện ích bằng Chrome thật hoặc đăng nhập/gọi Messenger thật, chưa triển khai lên VPS.
+- Cách cài và giới hạn nằm trong [experimental/CALL_LAB.md](experimental/CALL_LAB.md).
+
 ## Rà soát tổng thể — 26/10/2026
 
 - **1.222 kiểm thử offline đạt**, tăng 119 ca so với bản trước đợt rà soát;
@@ -168,7 +178,7 @@ lại config sai. Chưa triển khai hay khởi động lại service trên VPS 
 - Thêm configure --copy-ai-from THU_MUC: chỉ lấy các thiết lập AI và key đã biết,
   bắt buộc nhập cookie riêng. Không chép danh sách/phạm vi người nhận, persona,
   lịch sử, khóa tiến trình hay thiết bị E2EE; không ghi vào thư mục nguồn.
-- 203 kiểm thử offline đạt, gồm 17 ca mới: khởi tạo Groq/Cloudflare, tạo config
+- 203 kiểm thử offline đạt, gồm 18 ca mới: khởi tạo Groq/Cloudflare, tạo config
   để dùng scope tiếp, giữ model Cloudflare khi thay cookie, cấu hình thiếu không
   ghi file, dùng lại cả chuỗi NVIDIA/Google/Cloudflare/Groq, giữ nguyên dữ liệu
   nguồn/đích, từ chối nguồn sai và phát hiện FACEBOOK_COOKIE ghi đè cookie mới.
