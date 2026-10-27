@@ -1,5 +1,13 @@
 # Kết quả kiểm tra
 
+## Làm mới Facebook sau cuộc gọi và giữ lượt gọi đầu — 0.3.2, 27/10/2026
+
+- Sau khi xác nhận màn hình kết thúc không còn peer âm thanh và dọn cửa sổ gọi, chờ thêm 1,5 giây rồi tải lại một trang Facebook/Messenger chính. Đóng trực tiếp cửa sổ AI đang xử lý cũng lên lịch làm mới. Giữ chế độ tự nhận, đăng ký lại theo dõi khi trang tải xong; không thêm quyền hoặc tải lại định kỳ.
+- Kiểm tra trạng thái peer, nút gọi/rung, URL và điều hướng trước khi tải lại. Hủy khi có sự kiện cuộc gọi mới, phiên AI mới, peer đang hoạt động, cửa sổ đang kết nối, trạng thái chưa biết hoặc chuyển người thật trên thiết bị khác. Nút chấp nhận kết bạn không bị coi là cuộc gọi; cuộc gọi nhóm/video vẫn chặn tải lại dù không thuộc loại tự nhận.
+- Sửa `watch(true)` gọi lại đã xóa nonce của thông báo đang rung. Khi worker khôi phục chế độ đã lưu trong lúc xử lý sự kiện đầu, nonce mới khiến sự kiện cũ không khớp và bị bỏ qua. Giữ nguyên watcher/nonce khi chế độ không thay đổi. Có ca dùng cả production incoming watcher và background để mô phỏng lần gọi đầu đánh thức worker; không cần gọi lần hai để mở Google trong ca này. Cơ sở về vòng đời worker: [Chrome extension service worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle).
+- Toàn bộ **1.279 kiểm thử Python đạt, 1 fixture Chrome bỏ qua**; sau lượt rà cuối, chạy lại **57 kiểm thử liên quan đạt** và **85 ca Node đạt**. Các ca mới kiểm tra khôi phục lần đầu, một lần reload, giữ tự nhận sau tải trang, hủy khi bận/đổi trang, đóng trực tiếp và chuyển người thật. Cú pháp JS/manifest, lint và `git diff --check` đạt.
+- Đây là kiểm thử offline/mô phỏng, không gửi cuộc gọi hay dữ liệu cá nhân thật. Chưa xác nhận lỗi người dùng thấy chỉ do nonce; mạng Facebook, thay đổi DOM hoặc Google sẵn sàng chậm vẫn có thể làm lỡ cuộc gọi. Cần cập nhật tiện ích rồi để nghỉ 3–5 phút và thử gọi một lần trên VPS thật.
+
 ## Thống nhất lời giới thiệu cuộc gọi — 0.3.1, 27/10/2026
 
 - Bỏ lời giới thiệu cũ “AI đang thử nghiệm” trong system instruction và yêu cầu lời chào. Dùng câu mở đầu “Mình là trợ lý AI, đang nghe bạn đây”, yêu cầu giữ vai trò AI khi có persona và chỉ nhắc lại vai trò khi được hỏi. Không thay dữ liệu persona riêng hoặc cách chọn file.

@@ -8,24 +8,26 @@ const {randomUUID} = require('node:crypto');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const root = path.join(__dirname, '../experimental/call-lab-extension');
 
-function background({query, send, savedAuto, setLocal, getTab, clock=setTimeout} = {}) {
-  const sockets = [], page = [], stored = [], persisted = [], queries = [], removed = [], timers = new Set();
-  let listener;
+function background({query, send, savedAuto, setLocal, getTab, deferRemoval=false, clock=setTimeout} = {}) {
+  const sockets = [], page = [], stored = [], persisted = [], queries = [], removed = [], reloaded = [], timers = new Set();
+  let listener, onRemoved, onUpdated;
   const id = 'a'.repeat(32);
   const chrome = {
     runtime: {id, getURL: name => `chrome-extension://${id}/${name}`, onMessage: {addListener: fn => listener = fn}},
     tabs: {
       query: async options => {
         queries.push(options);
-        return query ? query(options) : [{id: 42, url: 'https://www.facebook.com/call'}];
+        const tabs = query ? await query(options) : [{id: 42, url: 'https://www.facebook.com/call'}];
+        return tabs.filter(tab=>!removed.includes(tab.id));
       },
       sendMessage: async (tabId, msg) => {
         page.push({tabId, ...msg});
         return send ? send(msg, tabId) : {ok: true, count: 1};
       },
       get: async tabId => getTab ? getTab(tabId) : (await chrome.tabs.query({})).find(tab=>tab.id===tabId),
-      remove: async tabId => removed.push(tabId),
-      onRemoved: {addListener() {}}, onUpdated: {addListener() {}},
+      remove: async tabId => {removed.push(tabId);if(!deferRemoval)onRemoved?.(tabId);},
+      reload: async tabId => reloaded.push(tabId),
+      onRemoved: {addListener(fn) {onRemoved=fn;}}, onUpdated: {addListener(fn) {onUpdated=fn;}},
     },
     storage: {session: {set: async data => stored.push(data)}, local: {
       get: async () => ({callAutomation: savedAuto}),
@@ -57,7 +59,11 @@ function background({query, send, savedAuto, setLocal, getTab, clock=setTimeout}
   function ui(tabId,url='https://www.facebook.com/groupcall/TEST?call_id=one') {
     return new Promise(resolve=>listener({from:'call-lab-content',kind:'call-ui'}, {id,tab:{id:tabId,url}},resolve));
   }
-  return {sockets, page, stored, persisted, queries, removed, timers, popup, audio, incoming, ui};
+  function register(tabId=42) {
+    return new Promise(resolve=>listener({from:'call-lab-content',kind:'auto-register'}, {id,tab:{id:tabId,url:'https://www.facebook.com/'}},resolve));
+  }
+  return {sockets, page, stored, persisted, queries, removed, reloaded, timers, popup, audio, incoming, ui, register,
+    remove:tabId=>chrome.tabs.remove(tabId),emitRemoved:tabId=>onRemoved(tabId),update:(tabId,change,tab)=>onUpdated(tabId,change,tab)};
 }
 
 test('a call in a separate popup is selected from the Facebook feed and keeps its own audio route', async () => {
@@ -198,19 +204,20 @@ test('late Stop acknowledgement in content script does not clear a newer session
   await flush(); assert.equal(forwarded.at(-1).session, 'new');
 });
 
-function autoFixture({twoRings=false,handoff=false}={}) {
-  let accepted=false;
+function autoFixture({twoRings=false,handoff=false,clock,deferRemoval}={}) {
+  let accepted=false, ended=false;
   const f=background({
+    clock,deferRemoval,
     query:async()=>[{id:42,url:'https://www.facebook.com/'},...(accepted||twoRings?[{id:84,url:'https://www.facebook.com/groupcall/test'}]:[])],
     send:async(msg,tabId)=>{
-      if(msg.command==='ui-probe')return{ok:true,ended:false,handoff,count:1};
+      if(msg.command==='ui-probe')return{ok:true,ended:tabId===84&&ended,handoff:tabId===84&&handoff,count:tabId===84&&!ended?1:0,busy:tabId===84&&!ended};
       if(msg.command==='auto-probe')return{ok:true,ringId:!accepted&&(tabId===42||twoRings)?'ring-1':null};
       if(msg.command==='auto-accept'){accepted=true;return{ok:true,accepted:true};}
-      if(msg.command==='probe')return{ok:true,count:accepted&&tabId===84?1:0};
+      if(msg.command==='probe')return{ok:true,count:accepted&&!ended&&tabId===84?1:0};
       return{ok:true};
     },
   });
-  return Object.assign(f,{accepted:()=>accepted});
+  return Object.assign(f,{accepted:()=>accepted,finish:()=>ended=true});
 }
 
 test('automation defaults off and never answers or opens Google without opting in',async()=>{
@@ -263,15 +270,16 @@ test('Stop cancels an in-flight persistent opt-in and leaves the saved mode disa
   assert.equal(f.sockets.length,0);
 });
 
-function cleanupFixture({count=0,ended=true,home=true,getTab,send}={}) {
+function cleanupFixture({count=0,ended=true,home=true,getTab,send,clock=fn=>setImmediate(fn)}={}) {
   const call={id:84,url:'https://www.facebook.com/groupcall/TEST?call_id=one'};
   return background({query:async()=>[...(home?[{id:42,url:'https://www.facebook.com/'}]:[]),call],
-    clock:fn=>setImmediate(fn),getTab,
-    send:send || (async msg=>msg.command==='ui-probe'?{ok:true,count,ended}:{ok:true,count:0})});
+    clock,getTab,
+    send:send || (async msg=>msg.command==='ui-probe'?{ok:true,count,ended,busy:false}:{ok:true,count:0})});
 }
 
 test('only a finished disconnected call tab is removed and the Facebook home is kept',async()=>{
   const f=cleanupFixture();await f.ui(84);assert.deepEqual(f.removed,[84]);
+  assert.deepEqual(f.reloaded,[42]);
   assert.equal(f.sockets.length,0);assert.ok(f.page.every(x=>x.command==='ui-probe'));
 });
 
@@ -331,5 +339,121 @@ test('another-device notice from an old call cannot stop a new call in the same 
     send:async msg=>msg.command==='ui-probe'?{ok:true,ended:true,handoff:true,count:0}:{ok:true,count:1}});
   await f.popup('start');const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();
   await f.ui(42,'https://www.facebook.com/groupcall/TEST?call_id=old');assert.equal(ws.readyState,1);
+  await f.popup('stop');
+});
+
+for(const [note,patch] of [
+  ['connected home audio',{count:1}],['ringing call',{busy:true}],
+  ['unreachable home bridge',{ok:false}],['unknown call controls',{busy:undefined}],
+]) test(`finished call cleanup skips reloading with ${note}`,async()=>{
+  const f=cleanupFixture({send:async(_,tabId)=>({ok:true,count:0,ended:true,busy:false,...(tabId===42?patch:{})})});
+  await f.ui(84);assert.deepEqual(f.removed,[84]);assert.equal(f.reloaded.length,0);
+});
+
+for(const patch of [
+  {url:'https://www.facebook.com/messages/test'},
+  {url:'https://www.facebook.com/',pendingUrl:'https://www.facebook.com/messages/test'},
+  {url:'https://www.facebook.com/',status:'loading'},
+]) test(`home navigation is preserved instead of refreshed: ${JSON.stringify(patch)}`,async()=>{
+  const f=cleanupFixture({getTab:async tabId=>tabId===84?{id:84,url:'https://www.facebook.com/groupcall/TEST?call_id=one'}:{id:42,...patch}});
+  await f.ui(84);assert.deepEqual(f.removed,[84]);assert.equal(f.reloaded.length,0);
+});
+
+test('a newly connecting call popup blocks the post-call home refresh even before it has audio',async()=>{
+  const f=background({clock:fn=>setImmediate(fn),query:async()=>[
+    {id:42,url:'https://www.facebook.com/'},
+    {id:84,url:'https://www.facebook.com/groupcall/TEST?call_id=one'},
+    {id:90,url:'https://www.facebook.com/groupcall/NEW?call_id=two'},
+  ],send:async(_,tabId)=>({ok:true,count:0,busy:false,ended:tabId!==90})});
+  await f.ui(84);assert.deepEqual(f.removed,[84]);assert.equal(f.reloaded.length,0);
+});
+
+test('an incoming event cancels a pending post-call reload before its delay completes',async()=>{
+  let release;
+  const f=cleanupFixture({clock:(fn,ms)=>ms===1500?(release=fn):setImmediate(fn)});
+  const ending=f.ui(84);for(let i=0;i<5;i++)await flush();assert.ok(release);
+  await f.incoming(42,'new-ring');release();await ending;
+  assert.deepEqual(f.removed,[84]);assert.equal(f.reloaded.length,0);
+});
+
+test('a new manual AI call cancels an old post-call refresh without losing its session',async()=>{
+  let release, next=false;
+  const f=background({clock:(fn,ms)=>ms===1500?(release=fn):setImmediate(fn),query:async()=>[
+    {id:42,url:'https://www.facebook.com/'},
+    {id:84,url:'https://www.facebook.com/groupcall/TEST?call_id=one'},
+    ...(next?[{id:90,url:'https://www.facebook.com/groupcall/NEW?call_id=two'}]:[]),
+  ],send:async(msg,tabId)=>msg.command==='probe'?{ok:true,count:tabId===90?1:0}:{ok:true,count:0,ended:true,busy:false}});
+  const ending=f.ui(84);for(let i=0;i<5;i++)await flush();assert.ok(release);
+  next=true;await f.popup('start');assert.equal(f.sockets.length,1);
+  release();await ending;assert.equal(f.reloaded.length,0);
+  assert.equal((await f.popup('status')).active,true);await f.popup('stop');
+});
+
+test('closing the active call popup refreshes the home once and keeps automatic answering enabled',async()=>{
+  const f=autoFixture({clock:fn=>setImmediate(fn)});await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});for(let i=0;i<5;i++)await flush();
+  await f.remove(84);for(let i=0;i<8;i++)await flush();
+  assert.equal(ws.readyState,3);assert.deepEqual(f.reloaded,[42]);
+  assert.equal((await f.popup('status')).autoEnabled,true);
+  assert.ok(!f.page.some(msg=>msg.command==='auto-hangup'));
+  await f.popup('stop');
+});
+
+test('automatic cleanup reloads exactly once and the newly loaded home reuses the saved automatic mode',async()=>{
+  const f=autoFixture({clock:fn=>setImmediate(fn)});await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});for(let i=0;i<5;i++)await flush();
+  f.finish();await f.ui(84,'https://www.facebook.com/groupcall/test');for(let i=0;i<5;i++)await flush();
+  assert.deepEqual(f.removed,[84]);assert.deepEqual(f.reloaded,[42]);
+  assert.equal((await f.register()).watch,true);
+  f.update(42,{status:'complete'},{id:42,url:'https://www.facebook.com/'});await flush();
+  assert.equal(f.page.at(-1).command,'auto-watch');assert.equal(f.page.at(-1).enabled,true);
+  await f.popup('stop');
+});
+
+test('finishing on another device closes the old popup without refreshing the home during human takeover',async()=>{
+  const f=autoFixture({handoff:true,clock:fn=>setImmediate(fn)});await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});for(let i=0;i<5;i++)await flush();
+  f.finish();await f.ui(84,'https://www.facebook.com/groupcall/test');
+  assert.deepEqual(f.removed,[84]);assert.equal(f.reloaded.length,0);
+  assert.equal((await f.popup('status')).autoEnabled,true);await f.popup('stop');
+});
+
+test('the first ring waking a dormant worker survives restoring the real incoming watcher',async()=>{
+  let buttons=[], first;
+  const scope={textContent:'Incoming audio call. Someone is calling you',querySelectorAll:()=>buttons};
+  for(const name of ['Accept','Decline']) buttons.push({innerText:name,isConnected:true,disabled:false,
+    getAttribute:()=>null,getBoundingClientRect:()=>({width:50,height:20}),closest:()=>scope,click(){}});
+  const context=vm.createContext({document:{querySelectorAll:()=>buttons,body:{innerText:scope.textContent}},location:{pathname:'/'},
+    getComputedStyle:()=>({display:'block',visibility:'visible'}),crypto:{randomUUID},MutationObserver:class{observe(){}disconnect(){}},
+    setTimeout:fn=>fn,clearTimeout(){},setInterval:fn=>fn,clearInterval(){}});
+  vm.runInContext(fs.readFileSync(path.join(root,'incoming.js'),'utf8'),context);
+  const incoming=context.CallLabIncoming;
+  incoming.watch(true,event=>{if(event.kind==='incoming')first=event.ringId;});assert.ok(first);
+  const f=background({savedAuto:{enabled:true,endpoint:'ws://127.0.0.1:8765',token:'PERSISTED_LOCAL_TOKEN_123456789'},
+    query:async()=>[{id:42,url:'https://www.facebook.com/'}],send:async msg=>{
+      if(msg.command==='auto-watch'){incoming.watch(msg.enabled,()=>{});return{ok:true};}
+      if(msg.command==='auto-probe')return incoming.probe();
+      return{ok:true,count:0};
+    }});
+  await f.incoming(42,first);
+  assert.equal(incoming.probe().ringId,first);
+  assert.equal(f.sockets.length,1,'the first ring should open Google without needing a second call');
+  assert.ok(!f.page.some(msg=>msg.command==='auto-accept'),'Google is not ready yet');
+  await f.popup('stop');
+});
+
+test('closing a handed-over popup later does not reload the home during the human call',async()=>{
+  const f=autoFixture({handoff:true,clock:fn=>setImmediate(fn)});await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});for(let i=0;i<5;i++)await flush();
+  await f.ui(84,'https://www.facebook.com/groupcall/test');assert.equal(ws.readyState,3);
+  await f.remove(84);for(let i=0;i<8;i++)await flush();assert.equal(f.reloaded.length,0);
+  assert.equal((await f.popup('status')).autoEnabled,true);await f.popup('stop');
+});
+
+test('a delayed native tab-removed event cannot reload the home a second time',async()=>{
+  const f=autoFixture({deferRemoval:true,clock:fn=>setImmediate(fn)});await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});for(let i=0;i<5;i++)await flush();
+  f.finish();await f.ui(84,'https://www.facebook.com/groupcall/test');assert.deepEqual(f.reloaded,[42]);
+  f.emitRemoved(84);for(let i=0;i<8;i++)await flush();assert.deepEqual(f.reloaded,[42]);
   await f.popup('stop');
 });

@@ -4,7 +4,7 @@ Chrome, phiên Facebook, thiết bị âm thanh ảo và Google Live relay cùng
 
 **Đây là bản triển khai đầu tiên cần thử trên VPS thật.** Người dùng đã xác nhận cầu nối Chrome trên Windows hoạt động ở bản 0.1.1. Bản 0.2.0 bổ sung desktop Ubuntu và nhận cuộc gọi tự động; phần mới đã kiểm thử offline/mô phỏng, chưa được cài hoặc kiểm chứng với Facebook trên VPS trong môi trường phát triển.
 
-**Bản hiện tại: 0.3.1.** Lời chào thống nhất là “Mình là trợ lý AI, đang nghe bạn đây”, bỏ nhãn thử nghiệm trong lời giới thiệu và giao diện tiện ích. Vẫn có dọn trang gọi đã kết thúc, nút Nhường người thật và chọn persona riêng cho cuộc gọi từ 0.3.0. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
+**Bản hiện tại: 0.3.2.** Tải lại trang Facebook một lần sau khi dọn cuộc gọi đã kết thúc, giữ chế độ tự nhận. Sửa lỗi khôi phục tiện ích làm đổi mã cuộc gọi đến và có thể bỏ lỡ lượt gọi đầu sau lúc nghỉ. Giữ lời chào thống nhất, dọn cửa sổ gọi, nhường người thật và persona riêng từ các bản trước. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
 
 Cấu hình khởi đầu dự kiến: 2 vCPU, khoảng 4 GB RAM cho một phiên Chrome với một tài khoản. Đây là đánh giá theo cấu hình, chưa phải số đo tải thật. Bộ cài giới hạn service ở 2500 MB để dành RAM cho hệ thống và bot text. Chưa tự thêm swap.
 
@@ -62,7 +62,7 @@ Relay 8765, VNC 5977 và noVNC 6080 đều chỉ nghe loopback. Không mở các
 /opt/messenger-ai-call/app/experimental/call-lab-extension
 ```
 
-3. Kiểm tra phiên bản **0.3.1**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
+3. Kiểm tra phiên bản **0.3.2**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
 4. Ghim tiện ích. Tải lại trang Facebook trước khi tạo cuộc gọi mới.
 5. Mở tiện ích, địa chỉ giữ `ws://127.0.0.1:8765`, dán mã kết nối từ bộ cài. Có thể tắt **Nghe giọng AI trên máy này** vì VPS không cần phát loa để bạn nghe qua noVNC.
 
@@ -91,6 +91,10 @@ Mỗi phiên VPS mặc định **600 giây (10 phút)**. Dùng Google/Gemini 3.8
 ## Dọn cửa sổ gọi, nhường và gọi ra
 
 Từ 0.3.0, khi trang gọi hiện màn hình kết thúc/đánh giá như “Bạn thấy chất lượng cuộc gọi như thế nào?”, tiện ích kiểm tra không còn kết nối âm thanh rồi dọn trang gọi. Nó giữ ít nhất một trang Facebook/Messenger chính, không đóng trang chủ, không bấm đánh giá sao và không bấm Gọi lại. Tab đang chuyển trang, đang có cuộc gọi hoặc đã đổi `call_id` không bị dọn theo sự kiện cũ. Nếu còn một tab Facebook duy nhất thì giữ lại.
+
+Từ 0.3.2, sau khi dọn cửa sổ gọi, tiện ích chờ thêm khoảng 1,5 giây rồi tải lại **một** trang Facebook/Messenger chính để làm mới phiên nhận cuộc gọi. Đóng trực tiếp cửa sổ đang được AI xử lý cũng lên lịch tải lại. Tự nhận vẫn giữ theo lựa chọn đã lưu và được nạp lại khi trang tải xong. Nếu có cuộc gọi đến, gọi ra, peer đang kết nối, tab đang điều hướng hoặc chưa kiểm tra được trạng thái thì bỏ lần tải lại đó. Chuyển người thật trên thiết bị khác không kích hoạt tải lại. Không tải lại định kỳ khi đang để máy nghỉ hoặc đang gọi.
+
+Phần theo dõi cuộc gọi đến giữ nguyên mã của thông báo đang rung khi tiện ích khôi phục. Trước đây việc bật lại cùng chế độ theo dõi đã tạo mã mới, khiến sự kiện vừa đánh thức tiện ích không còn khớp; cuộc gọi đó có thể bị bỏ qua. Bản sửa có kiểm thử mô phỏng khôi phục worker với cuộc gọi đầu tiên. Sau cập nhật, nên để nghỉ 3–5 phút rồi thử gọi một lần; kết quả thật còn phụ thuộc phiên Facebook, giao diện và thời gian Google sẵn sàng.
 
 | Tình huống | Hành vi |
 |---|---|

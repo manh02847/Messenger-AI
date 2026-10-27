@@ -31,6 +31,25 @@ test('incoming call detection is passive until armed and accepts a validated non
   assert.equal(f.api.accept(id).ok,false);
 });
 
+test('restoring the saved watch mode keeps the first ringing nonce valid and does not emit a duplicate',()=>{
+  const f=fixture();f.enable();const first=f.events[0].ringId, restored=[];
+  f.api.watch(true,event=>restored.push(event));f.scan();
+  assert.equal(f.api.probe().ringId,first);
+  assert.equal(f.events.length,1);assert.equal(restored.length,0);
+  assert.equal(f.api.accept(first).accepted,true);
+  assert.equal(f.api.accept(first).ok,false);
+});
+
+test('a restored watcher still reports the next call to its latest callback',()=>{
+  const f=fixture();f.enable();const first=f.events[0].ringId, restored=[];
+  f.api.watch(true,event=>restored.push(event));
+  f.remove(f.yes);f.scan();f.button('Accept');f.scan();
+  assert.equal(f.events.length,1);assert.equal(restored.length,1);
+  assert.notEqual(restored[0].ringId,first);
+  assert.equal(f.api.accept(first).ok,false);
+  assert.equal(f.api.accept(restored[0].ringId).accepted,true);
+});
+
 test('Vietnamese call labels are recognized without passing caller names or text',()=>{
   const f=fixture({text:'Cuộc gọi thoại đến. Ai đó đang gọi cho bạn',answer:'Trả lời',decline:'Từ chối'});f.enable();
   assert.equal(f.events.length,1);assert.deepEqual(Object.keys(f.events[0]).sort(),['kind','ringId']);
@@ -70,6 +89,24 @@ test('the rating screen in a call popup is reported even when auto answering is 
 test('a rating phrase on the Facebook feed cannot trigger call cleanup',()=>{
   const f=fixture({pathname:'/',text:'Bạn thấy chất lượng cuộc gọi như thế nào?',answer:'Đóng',decline:'Gọi lại'});
   assert.equal(f.api.endState().ended,false);
+});
+
+test('a ringing or outgoing call on the home page blocks refreshing before audio connects',()=>{
+  const f=fixture();assert.equal(f.api.endState().busy,true);
+  const outgoing=fixture({answer:'End call',decline:'Mute microphone',text:'Calling someone'});
+  assert.equal(outgoing.api.endState().busy,true);
+  const idle=fixture({answer:'Like',decline:'Comment',text:'Facebook home'});
+  assert.equal(idle.api.endState().busy,false);
+});
+
+test('friend request buttons do not block the home refresh',()=>{
+  const f=fixture({text:'Friend request',answer:'Accept',decline:'Decline'});
+  assert.equal(f.api.endState().busy,false);
+});
+
+for(const text of ['Incoming video call','Incoming audio call. Group call']) test(`${text} blocks refresh without being auto answered`,()=>{
+  const f=fixture({text});f.enable();assert.equal(f.events.length,0);
+  assert.equal(f.api.endState().busy,true);
 });
 
 for(const control of ['End call','Accept','Decline']) test(`a visible ${control} control suppresses cleanup of a stale rating panel`,()=>{

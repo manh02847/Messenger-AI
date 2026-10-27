@@ -15,32 +15,37 @@
   function buttons(root = document) {
     return [...root.querySelectorAll('button, [role="button"]')].filter(visible);
   }
-  function candidate() {
-    const found = buttons().filter(button => {
+  function candidates(forAnswer = true) {
+    return buttons().filter(button => {
       const name = label(button);
       if (!ANSWER.has(name)) return false;
       const scope = button.closest('[role="dialog"], [role="alertdialog"]') || button.parentElement?.parentElement;
       if (!scope) return false;
       const text = normalize(String(scope.textContent || "").slice(0, 4000));
       if (!INCOMING.test(text) || !buttons(scope).some(other => DECLINE.has(label(other)))) return false;
-      if (/group call|cuộc gọi nhóm/.test(text)) return false;
-      if (/video/.test(text) && !/audio|âm thanh/.test(name)) return false;
+      if (forAnswer && /group call|cuộc gọi nhóm/.test(text)) return false;
+      if (forAnswer && /video/.test(text) && !/audio|âm thanh/.test(name)) return false;
       return true;
     });
+  }
+  function candidate() {
+    const found = candidates();
     return found.length === 1 ? found[0] : null;
   }
   function endState() {
     const path = globalThis.location?.pathname || "";
-    if (!/^\/(?:groupcall|call|calls)(?:\/|$)/.test(path)) return {ended: false, handoff: false};
+    const callPage = /^\/(?:groupcall|call|calls)(?:\/|$)/.test(path);
     const names = buttons().map(label);
+    const busy = names.some(name => END.has(name)) || candidates(false).length > 0
+      || (callPage && names.some(name => ANSWER.has(name) || DECLINE.has(name)));
     // A stale rating panel must not close a new active or ringing call.
-    if (names.some(name => END.has(name) || ANSWER.has(name) || DECLINE.has(name))) return {ended: false, handoff: false};
+    if (!callPage || busy) return {ended: false, handoff: false, busy};
     const text = normalize(String(document.body?.innerText || "").slice(0, 20000));
     const handoff = /answered (?:this call )?on another device|đã (?:được )?trả lời (?:cuộc gọi này )?trên thiết bị khác/.test(text);
     const close = names.some(name => ["close", "đóng"].includes(name));
     const redial = names.some(name => ["call again", "call back", "redial", "gọi lại"].includes(name));
     const ended = close && (redial || handoff || /bạn thấy chất lượng cuộc gọi|how was (?:the quality of )?your call|cuộc gọi (?:đã )?kết thúc|call (?:has )?ended/.test(text));
-    return {ended, handoff};
+    return {ended, handoff, busy};
   }
   let observed = null, ring = null, callback = null, observer = null, timer = null, interval = null;
   let autoEnabled = false, lastUI = "";
@@ -61,9 +66,13 @@
     callback?.({kind: "incoming", ringId: ring});
   }
   function watch(enabled, notify) {
+    callback = notify;
+    // A dormant worker restores its saved mode while the first incoming event
+    // is still being handled. Keep that event's nonce valid across rearming.
+    if (observer && autoEnabled === enabled) return;
     observer?.disconnect(); observer = null;
     clearTimeout(timer); clearInterval(interval); timer = interval = null;
-    observed = ring = null; callback = notify; autoEnabled = enabled; lastUI = "";
+    observed = ring = null; autoEnabled = enabled; lastUI = "";
     observer = new MutationObserver(() => { if (!timer) timer = setTimeout(scan, 350); });
     observer.observe(document, {subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "title", "style", "disabled", "aria-disabled"]});
     interval = setInterval(scan, 2500);

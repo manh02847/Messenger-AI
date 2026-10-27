@@ -6,6 +6,8 @@ let explicitlyStopped = false;
 let autoRevision = 0;
 const triedRings = new Set();
 const cleaning = new Map();
+const callTabs = new Map();
+let refreshRevision = 0;
 let status = "Chưa bật AI. Nhận cuộc gọi rồi bật AI; tiện ích tự tìm cửa sổ đang gọi.";
 const FACEBOOK_URLS = ["https://www.facebook.com/*", "https://web.facebook.com/*", "https://www.messenger.com/*", "https://messenger.com/*"];
 const ERRORS = {
@@ -35,17 +37,52 @@ function callIdentity(value) {
 async function takeover() {
   await stop("Đã nhường cuộc gọi cho người thật; AI dừng, tự nhận cuộc gọi sau vẫn giữ theo lựa chọn.", {hangup: false});
 }
+async function refreshHome(preferredTabId) {
+  const revision = ++refreshRevision;
+  const idle = () => revision === refreshRevision && !current && !starting;
+  const quiet = (tab, ui) => ui?.ok === true && ui.count === 0 && ui.busy === false
+    && !ui.handoff && (!callIdentity(tab.url) || ui.ended === true);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    if (!idle()) return;
+    const tabs = (await chrome.tabs.query({url: FACEBOOK_URLS})).filter(tab => supported(tab.url));
+    const homes = tabs.filter(tab => !callIdentity(tab.url));
+    const home = homes.find(tab => tab.id === preferredTabId) || homes.find(tab => tab.active) || homes[0];
+    if (!home || tabs.some(tab => tab.pendingUrl || tab.status === "loading")) return;
+    // Both peer state and visible controls matter: a ringing/outgoing call can
+    // have no connected audio peer yet. Unknown pages cancel this refresh.
+    const checks = await Promise.all(tabs.map(async tab => quiet(tab,
+      await chrome.tabs.sendMessage(tab.id, {to: "call-lab-content", command: "ui-probe"}, {frameId: 0}))));
+    if (!idle() || checks.some(ok => !ok)) return;
+    const latest = (await chrome.tabs.query({url: FACEBOOK_URLS})).filter(tab => supported(tab.url));
+    if (!idle() || latest.length !== tabs.length || latest.some(tab => tab.pendingUrl || tab.status === "loading"
+        || !tabs.some(old => old.id === tab.id && old.url === tab.url))) return;
+    const ui = await chrome.tabs.sendMessage(home.id, {to: "call-lab-content", command: "ui-probe"}, {frameId: 0});
+    const final = await chrome.tabs.get(home.id);
+    if (!idle() || !quiet(home, ui) || final.pendingUrl || final.status === "loading" || final.url !== home.url) return;
+    await chrome.tabs.reload(home.id);
+    if (idle()) status = "Đã kết thúc cuộc gọi và tải lại trang Facebook; tự nhận giữ theo lựa chọn.";
+  } catch { /* Keep the home page when a probe fails, navigates or disappears. */ }
+}
 async function onCallUI(tab) {
   const identity = callIdentity(tab.url);
   if (!identity || cleaning.has(tab.id)) return;
   const marker = {};
   cleaning.set(tab.id, marker);
   try {
+    if (callTabs.get(tab.id)?.callKey && callTabs.get(tab.id).callKey !== identity) return;
     if (current?.tabId === tab.id && current.callKey && current.callKey !== identity) return;
     let ui = await chrome.tabs.sendMessage(tab.id, {to: "call-lab-content", command: "ui-probe"}, {frameId: 0});
+    if (callTabs.get(tab.id)?.callKey && callTabs.get(tab.id).callKey !== identity) return;
     if (current?.tabId === tab.id && current.callKey && current.callKey !== identity) return;
-    if (ui?.ok && ui.handoff && current?.tabId === tab.id) await takeover();
+    if (ui?.ok && ui.handoff) {
+      const tracked = callTabs.get(tab.id);
+      if (tracked) tracked.handedOff = true;
+      if (current?.tabId === tab.id) await takeover();
+    }
     if (!ui?.ok || ui.ended !== true || ui.count !== 0) return;
+    const homeTabId = callTabs.get(tab.id)?.homeTabId ?? current?.automatic?.tabId;
+    const handedOff = ui.handoff === true;
     if (current?.tabId === tab.id) await stop("Cuộc gọi đã kết thúc; AI dừng.", {hangup: false});
     await new Promise(resolve => setTimeout(resolve, 1000));
     if (cleaning.get(tab.id) !== marker) return;
@@ -59,7 +96,9 @@ async function onCallUI(tab) {
     const closing = await chrome.tabs.get(tab.id);
     if (cleaning.get(tab.id) !== marker || closing.pendingUrl || callIdentity(closing.url) !== identity) return;
     await chrome.tabs.remove(tab.id);
+    callTabs.delete(tab.id);
     if (!current) status = "Đã dọn cửa sổ cuộc gọi đã kết thúc; giữ trang Facebook chính.";
+    if (!handedOff && !ui.handoff) await refreshHome(homeTabId);
   } catch { /* A missing, navigated or closed tab is never removed speculatively. */ }
   finally { if (cleaning.get(tab.id) === marker) cleaning.delete(tab.id); }
 }
@@ -150,6 +189,7 @@ async function prepareAutomatic(state, requested, revision) {
   throw new Error("NO_CALL");
 }
 async function onIncoming(tabId, ringId) {
+  refreshRevision++;
   await automationReady;
   const key = String(tabId) + ":" + ringId;
   if (!automation.enabled || current || starting || typeof ringId !== "string" || ringId.length > 100 || triedRings.has(key)) return;
@@ -197,6 +237,7 @@ async function stop(text = "Đã dừng AI và trả lại micro cho cuộc gọ
 }
 async function start(msg, automatic = null) {
   if (current || starting) throw new Error("ACTIVE");
+  refreshRevision++;
   const {endpoint} = options(msg);
   const revision = ++attempt;
   starting = true;
@@ -240,6 +281,7 @@ async function start(msg, automatic = null) {
           const result = await content(state, "start", {monitor: msg.monitor === true});
           if (current !== state) return;
           if (!result?.ok) { await stop(label(result)); return; }
+          if (state.callKey) callTabs.set(state.tabId, {callKey: state.callKey, homeTabId: automatic?.tabId});
           state.ready = true;
           ws.send(JSON.stringify({type: "ready"}));
           status = "AI đang nghe và nói trong cuộc gọi này. Bấm Dừng AI để trả micro.";
@@ -302,9 +344,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ok: true});
   }
 });
-chrome.tabs.onRemoved.addListener(tabId => { cleaning.delete(tabId); if (current?.tabId === tabId) void stop("Tab gọi đã đóng; AI dừng.", {hangup: false}); });
-chrome.tabs.onUpdated.addListener((tabId, change) => {
+chrome.tabs.onRemoved.addListener(tabId => {
+  const wasCleaning = cleaning.has(tabId);
+  cleaning.delete(tabId);
+  const tracked = callTabs.get(tabId);
+  callTabs.delete(tabId);
+  const state = current?.tabId === tabId ? current : null;
+  const ending = state ? stop("Tab gọi đã đóng; AI dừng.", {hangup: false}) : Promise.resolve();
+  if (!wasCleaning && !tracked?.handedOff && (tracked || state?.callKey)) {
+    void ending.then(() => refreshHome(tracked?.homeTabId ?? state?.automatic?.tabId));
+  }
+});
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
   if (change.url || change.status === "loading") cleaning.delete(tabId);
+  if (change.url || change.status === "loading") callTabs.delete(tabId);
+  if ((change.url || change.status === "loading") && (supported(change.url) || supported(tab?.url))) refreshRevision++;
   if (current?.tabId === tabId && change.status === "loading") void stop("Trang đang tải lại; AI đã dừng.", {hangup: false});
+  if (change.status === "complete" && supported(tab?.url)) {
+    void automationReady.then(() => chrome.tabs.sendMessage(tabId,
+      {to: "call-lab-content", command: "auto-watch", enabled: automation.enabled}, {frameId: 0})).catch(() => {});
+  }
 });
 const automationReady = restoreAutomation();
