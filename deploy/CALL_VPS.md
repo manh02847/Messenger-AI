@@ -4,6 +4,8 @@ Chrome, phiên Facebook, thiết bị âm thanh ảo và Google Live relay cùng
 
 **Đây là bản triển khai đầu tiên cần thử trên VPS thật.** Người dùng đã xác nhận cầu nối Chrome trên Windows hoạt động ở bản 0.1.1. Bản 0.2.0 bổ sung desktop Ubuntu và nhận cuộc gọi tự động; phần mới đã kiểm thử offline/mô phỏng, chưa được cài hoặc kiểm chứng với Facebook trên VPS trong môi trường phát triển.
 
+**Bản hiện tại: 0.3.0.** Thêm dọn trang gọi đã kết thúc, nút Nhường người thật và chọn persona riêng cho cuộc gọi. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
+
 Cấu hình khởi đầu dự kiến: 2 vCPU, khoảng 4 GB RAM cho một phiên Chrome với một tài khoản. Đây là đánh giá theo cấu hình, chưa phải số đo tải thật. Bộ cài giới hạn service ở 2500 MB để dành RAM cho hệ thống và bot text. Chưa tự thêm swap.
 
 ## 1. Cài bằng root trên VPS
@@ -60,7 +62,7 @@ Relay 8765, VNC 5977 và noVNC 6080 đều chỉ nghe loopback. Không mở các
 /opt/messenger-ai-call/app/experimental/call-lab-extension
 ```
 
-3. Kiểm tra phiên bản **0.2.0**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
+3. Kiểm tra phiên bản **0.3.0**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
 4. Ghim tiện ích. Tải lại trang Facebook trước khi tạo cuộc gọi mới.
 5. Mở tiện ích, địa chỉ giữ `ws://127.0.0.1:8765`, dán mã kết nối từ bộ cài. Có thể tắt **Nghe giọng AI trên máy này** vì VPS không cần phát loa để bạn nghe qua noVNC.
 
@@ -84,7 +86,46 @@ Nếu Google lỗi trước khi nhận, không bấm nhận cuộc gọi. Không
 
 Cuộc gọi do AI **tự nhận** sẽ được kết thúc khi phiên AI dừng nếu nút kết thúc khớp và phiên vẫn đúng; nếu Facebook đổi nút thì cần vào noVNC kết thúc thủ công. Cuộc gọi bạn tự nhận rồi bật AI thủ công vẫn trả micro khi dừng, theo cách cũ. Không tự nối lại giữa một cuộc gọi khi Google mất kết nối.
 
-Mỗi phiên VPS mặc định **600 giây (10 phút)**. Dùng Google/Gemini 3.8 Live; vẫn tiêu thụ quota/phí của project Google, tách khỏi bộ đếm ngày của bot text. Chưa gửi persona riêng hoặc bật Search cho cuộc gọi.
+Mỗi phiên VPS mặc định **600 giây (10 phút)**. Dùng Google/Gemini 3.8 Live; vẫn tiêu thụ quota/phí của project Google, tách khỏi bộ đếm ngày của bot text. Persona riêng là lựa chọn ở mục dưới; cuộc gọi không bật Search.
+
+## Dọn cửa sổ gọi, nhường và gọi ra
+
+Từ 0.3.0, khi trang gọi hiện màn hình kết thúc/đánh giá như “Bạn thấy chất lượng cuộc gọi như thế nào?”, tiện ích kiểm tra không còn kết nối âm thanh rồi dọn trang gọi. Nó giữ ít nhất một trang Facebook/Messenger chính, không đóng trang chủ, không bấm đánh giá sao và không bấm Gọi lại. Tab đang chuyển trang, đang có cuộc gọi hoặc đã đổi `call_id` không bị dọn theo sự kiện cũ. Nếu còn một tab Facebook duy nhất thì giữ lại.
+
+| Tình huống | Hành vi |
+|---|---|
+| Có cuộc gọi mới trong lúc AI đang xử lý một cuộc gọi | Giữ cuộc gọi hiện tại, không tự nhảy sang cuộc khác. |
+| Bạn bấm **Nhường người thật, giữ cuộc gọi** | Dừng nghe/nói bằng AI, không bấm cúp máy, giữ lựa chọn tự nhận cho cuộc gọi sau. |
+| Messenger báo rõ cuộc gọi đã trả lời trên thiết bị khác | AI nhường mà không cúp cuộc gọi; chỉ dọn trang cũ khi trang đó đã kết thúc và không còn peer đang gọi. |
+| Bạn tham gia từ điện thoại nhưng VPS vẫn còn trong cuộc gọi, không có thông báo chuyển thiết bị | AI chưa biết chắc bạn là chủ tài khoản và có thể tiếp tục trả lời; dùng nút Nhường để dừng AI. Không dùng nhận diện giọng chủ tài khoản. |
+| Bạn gọi ra trong Chrome của VPS | Không tự bật AI cho cuộc gọi ra. Có thể bấm **Bật AI cho cuộc gọi này** sau khi cuộc gọi kết nối và không có phiên AI khác đang chạy. |
+| Bạn gọi ra trên điện thoại/máy khác | Tiện ích trên VPS không có luồng âm thanh của cuộc gọi đó, không tự chèn AI vào. |
+
+Nhường chỉ dừng AI: noVNC vẫn không chuyển micro máy cá nhân tới VPS. Muốn nói tiếp, thiết bị của bạn phải đang tham gia/được Messenger chuyển cuộc gọi. **Dừng AI** tiếp tục có nghĩa tắt tự động; với cuộc gọi AI đã tự nhận, nó còn thử kết thúc cuộc gọi như mục trước.
+
+## Persona riêng cho cuộc gọi
+
+Mặc định cuộc gọi dùng lời hướng dẫn chung. Muốn dùng cách nói/thông tin trong persona của acc đang đăng nhập ở **Chrome VPS**, chọn rõ file khi cài/cập nhật:
+
+```bash
+cd ~/messenger-ai-bot
+git pull --ff-only
+.venv/bin/python setup_call_vps.py install --persona persona.local.txt
+```
+
+Nếu cần dùng persona của acc 2 đang nằm ở thư mục khác, thay đường dẫn sau `--persona`, ví dụ `/root/messenger-ai-bot-2/persona.local.txt`. Không tự đoán persona theo key API hoặc tài khoản Facebook. File phải tồn tại, mã hóa UTF-8, từ 1 đến 12000 ký tự.
+
+**Nội dung file đã chọn được gửi tới Google trong mỗi phiên gọi.** Bộ cài tạo bản sao riêng 0600 tại `/var/lib/messenger-ai-call/call-persona.local.txt`, không đưa vào repo hoặc tiện ích. Chỉ chọn thông tin bạn muốn AI sử dụng cho cuộc gọi. Các chỉ dẫn giới thiệu là AI và không tự nhận lời thay chủ tài khoản vẫn được giữ.
+
+Sau lần chọn đầu, chạy install không có `--persona` sẽ giữ lựa chọn hiện tại. Sửa file persona nguồn cần chạy lại install với `--persona` để cập nhật bản sao. Hoặc sửa trực tiếp bản sao riêng trên VPS rồi restart `messenger-ai-call` để nạp lại. Không in persona vào log.
+
+Muốn ngừng dùng persona riêng:
+
+```bash
+.venv/bin/python setup_call_vps.py install --no-persona
+```
+
+Cờ này ngừng gửi persona trong phiên mới và dùng mẫu chung; không xóa bản sao riêng khỏi VPS. Lịch sử/ngữ cảnh cuộc gọi vẫn mới cho từng phiên, không lấy lịch sử nhắn tin hoặc lịch sử người khác. Chế độ suy luận/Search của bot text không tự áp dụng cho gọi.
 
 ## Quản lý
 
@@ -122,7 +163,7 @@ Bot nhắn tin `messenger-ai` và `messenger-ai-2` có cấu hình/service riên
 - **noVNC không mở:** kiểm tra SSH tunnel đang chạy trên máy bạn, service đang active; không dùng IP VPS kèm cổng 6080 trực tiếp.
 - **Service khởi động lại rồi failed:** xem journal phía trên. Kiểm tra gói Chrome/TigerVNC/PulseAudio, quyền file và RAM. Bộ cài không tắt sandbox Chrome; không thêm `--no-sandbox` để che lỗi.
 - **Chưa đăng nhập/đòi xác minh:** xử lý thủ công trong Chrome VPS. Không tự vượt xác minh.
-- **Không tự nhận:** kiểm tra phiên bản 0.2.0, đã Lưu tự động, Facebook đăng nhập và chỉ một tab/cửa sổ gọi. Vào noVNC xem nút/thông báo đang hiển thị; vẫn có thể nhận rồi bật AI thủ công.
+- **Không tự nhận:** kiểm tra phiên bản 0.3.0, đã Lưu tự động, Facebook đăng nhập và chỉ một tab/cửa sổ gọi. Vào noVNC xem nút/thông báo đang hiển thị; vẫn có thể nhận rồi bật AI thủ công.
 - **Nhận rồi im lặng:** kiểm tra quyền micro ở Chrome VPS, model/key/quota, trạng thái tiện ích. Kết thúc cuộc gọi, thử lại bước thủ công trước; tránh bật auto khi lượt thủ công chưa hoạt động.
 - **Chrome báo không có mic:** cập nhật repo rồi chạy lại `.venv/bin/python setup_call_vps.py install` để cập nhật bản sao trong `/opt` và restart Chrome. Bản sửa tạo source riêng `call_input` với tên **Messenger_Virtual_Mic**, vì Chrome bỏ qua nguồn monitor của loa khi liệt kê mic. Trong Chrome VPS, kiểm tra `chrome://settings/content/microphone`, chọn mic ảo và cho phép Facebook. Nguồn monitor của loa và mic vẫn tách nhau để tránh vọng tiếng.
 - **Một thành phần chết:** supervisor dừng các tiến trình liên quan và systemd thử lại; giới hạn 5 lần khởi động trong 120 giây. Sửa lỗi rồi chạy `systemctl reset-failed messenger-ai-call` và `systemctl start messenger-ai-call`.

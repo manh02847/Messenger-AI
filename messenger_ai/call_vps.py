@@ -10,11 +10,13 @@ import signal
 import sys
 from pathlib import Path
 
-from .call_lab import MODELS, CallRelay, LabConfig
+from .call_lab import MODELS, SYSTEM, CallRelay, LabConfig
 
 STATE = Path("/var/lib/messenger-ai-call")
 RUNTIME = Path("/run/messenger-ai-call")
 VIRTUAL_MIC = "call_input"
+PERSONA_NAME = "call-persona.local.txt"
+PERSONA_MAX_CHARS = 12000
 
 
 class HostError(RuntimeError):
@@ -43,9 +45,33 @@ def read_settings(root: Path) -> dict:
         or not 32 <= len(data["relay_token"]) <= 200
         or not isinstance(data.get("browser"), str)
         or not Path(data["browser"]).is_absolute()
+        or type(data.get("use_persona", False)) is not bool
     ):
         raise HostError("Cấu hình gọi VPS chưa hợp lệ.")
     return data
+
+
+def read_persona(path: Path) -> str:
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(PERSONA_MAX_CHARS * 4 + 1)
+        text = raw.decode("utf-8-sig").strip()
+    except (OSError, UnicodeError):
+        raise HostError("Chưa đọc được persona cuộc gọi dạng UTF-8.") from None
+    if not text or len(text) > PERSONA_MAX_CHARS or "\x00" in text:
+        raise HostError("Persona cuộc gọi cần từ 1 đến 12000 ký tự, không chứa NUL.")
+    return text
+
+
+def call_instruction(root: Path, data: dict) -> str:
+    if not data.get("use_persona", False):
+        return SYSTEM
+    persona = read_persona(root / PERSONA_NAME)
+    return (
+        SYSTEM
+        + "\n\nHồ sơ và cách trò chuyện riêng do chủ tài khoản chọn cho cuộc gọi:\n"
+        + persona
+    )
 
 
 def commands(root: Path, runtime: Path, browser: str) -> list[tuple[str, list[str]]]:
@@ -227,6 +253,7 @@ async def run(root: Path = STATE, runtime: Path = RUNTIME, *, port=8765):
             data["relay_token"],
             data["model"],
             data["max_seconds"],
+            system_instruction=call_instruction(root, data),
         )
     )
     try:

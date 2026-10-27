@@ -17,7 +17,7 @@ import venv
 from pathlib import Path
 
 from messenger_ai.call_lab import MODELS, google_key
-from messenger_ai.call_vps import read_settings
+from messenger_ai.call_vps import PERSONA_NAME, read_persona, read_settings
 
 ROOT = Path(__file__).resolve().parent
 APP = Path("/opt/messenger-ai-call")
@@ -56,7 +56,14 @@ def private_write(path: Path, content: bytes, uid: int, gid: int):
             os.unlink(name)
 
 
-def settings(old: dict | None, key: str, browser: str, model=None, max_seconds=None):
+def settings(
+    old: dict | None,
+    key: str,
+    browser: str,
+    model=None,
+    max_seconds=None,
+    use_persona=None,
+):
     data = dict(old or {})
     return {
         "google_api_key": key,
@@ -66,6 +73,9 @@ def settings(old: dict | None, key: str, browser: str, model=None, max_seconds=N
         "max_seconds": max_seconds
         if max_seconds is not None
         else data.get("max_seconds", 600),
+        "use_persona": data.get("use_persona", False)
+        if use_persona is None
+        else use_persona,
     }
 
 
@@ -115,6 +125,9 @@ def preflight():
 
 def install(args):
     preflight()
+    chosen_persona = (
+        read_persona(Path(args.persona).expanduser()) if args.persona else None
+    )
     old = read_settings(STATE) if (STATE / "settings.json").exists() else None
     key = google_key(ROOT) if not old or args.update_key else old["google_api_key"]
     if not key.isascii() or any(c.isspace() for c in key):
@@ -211,7 +224,17 @@ def install(args):
         "-r",
         str(ROOT / "requirements-call-lab.txt"),
     )
-    data = settings(old, key, browser, args.model, args.max_seconds)
+    use_persona = (
+        True if chosen_persona is not None else False if args.no_persona else None
+    )
+    data = settings(old, key, browser, args.model, args.max_seconds, use_persona)
+    if chosen_persona is not None:
+        private_write(
+            STATE / PERSONA_NAME,
+            chosen_persona.encode("utf-8"),
+            account.pw_uid,
+            account.pw_gid,
+        )
     private_write(
         STATE / "settings.json",
         json.dumps(data).encode(),
@@ -228,6 +251,14 @@ def install(args):
     command("systemctl", "daemon-reload")
     command("systemctl", "enable", "--now", SERVICE)
     print("Đã cài service messenger-ai-call. Google model: " + data["model"])
+    print(
+        "Persona cuộc gọi: "
+        + (
+            "bản riêng đã chọn; nội dung được gửi Google trong mỗi phiên"
+            if data["use_persona"]
+            else "mẫu chung"
+        )
+    )
     print("Mã kết nối để dán vào tiện ích trên Chrome VPS: " + data["relay_token"])
     print(
         "Mở SSH tunnel 6080 từ máy bạn rồi vào http://127.0.0.1:6080/vnc.html để đăng nhập Facebook."
@@ -245,6 +276,17 @@ def main():
         "--max-seconds", type=int, choices=range(15, 901), metavar="15..900"
     )
     parser.add_argument("--update-key", action="store_true")
+    persona = parser.add_mutually_exclusive_group()
+    persona.add_argument(
+        "--persona",
+        metavar="FILE",
+        help="Dùng bản sao riêng của file UTF-8 cho cuộc gọi; nội dung được gửi Google.",
+    )
+    persona.add_argument(
+        "--no-persona",
+        action="store_true",
+        help="Dùng mẫu chung, ngừng gửi persona riêng.",
+    )
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise ValueError("Lệnh này cần chạy bằng root.")

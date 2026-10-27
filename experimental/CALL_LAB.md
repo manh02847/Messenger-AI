@@ -60,7 +60,7 @@ Nếu relay và Chrome cùng một máy thì bỏ bước SSH tunnel.
 4. Ghim tiện ích **Messenger AI — Call Lab** để dễ mở.
 5. **Kết thúc cuộc gọi cũ, tải lại trang Facebook/Messenger rồi gọi lại.** Tiện ích cần được nạp trước khi trang tạo kết nối cuộc gọi.
 
-Nếu đang dùng **0.1.0/0.1.1**: tải ZIP mới trên **máy Windows**, thay các file trong thư mục tiện ích cũ, vào `chrome://extensions` bấm **Reload / Tải lại** của Messenger AI — Call Lab và kiểm tra phiên bản **0.2.0**. Nếu giải nén sang thư mục mới, dùng Load unpacked chọn thư mục mới và tắt bản cũ để chỉ giữ một bản đang bật. Sau đó kết thúc cửa sổ gọi cũ, reload Facebook và gọi lại. Cập nhật file trên VPS không cập nhật thư mục tiện ích đã cài trên Windows.
+Nếu đang dùng **0.1.0/0.1.1**: tải ZIP mới trên **máy Windows**, thay các file trong thư mục tiện ích cũ, vào `chrome://extensions` bấm **Reload / Tải lại** của Messenger AI — Call Lab và kiểm tra phiên bản **0.3.0**. Nếu giải nén sang thư mục mới, dùng Load unpacked chọn thư mục mới và tắt bản cũ để chỉ giữ một bản đang bật. Sau đó kết thúc cửa sổ gọi cũ, reload Facebook và gọi lại. Cập nhật file trên VPS không cập nhật thư mục tiện ích đã cài trên Windows.
 
 Cho phép quyền truy cập các trang Facebook/Messenger nếu Chrome hỏi sau cập nhật. Quyền host được giới hạn ở các domain đã hỗ trợ để tìm cửa sổ gọi; không cần quyền đọc toàn bộ tab hoặc cookie. [Tài liệu quyền tab của Chrome](https://developer.chrome.com/docs/extensions/reference/api/tabs#permissions).
 
@@ -70,7 +70,7 @@ Không dán Google API key hay cookie vào tiện ích. API key nằm ở VPS; t
 
 1. Dùng tài khoản thử, tự gọi/nhận một cuộc gọi thoại thông thường bằng Chrome.
 2. Bấm vào trang cuộc gọi để trình duyệt cho phép phát âm thanh.
-3. Mở tiện ích ngay ở **tab Facebook chính** hoặc trang gọi. Bản 0.2.0 tiếp tục tự tìm cửa sổ đang có cuộc gọi đã kết nối.
+3. Mở tiện ích ngay ở **tab Facebook chính** hoặc trang gọi. Bản hiện tại tiếp tục tự tìm cửa sổ đang có cuộc gọi đã kết nối.
 4. Giữ địa chỉ `ws://127.0.0.1:8765`, dán **mã kết nối** từ bước 1, rồi bấm **Bật AI cho cuộc gọi này**.
 5. Chờ trạng thái “AI đang nghe và nói…”. Người bên kia sẽ nghe lời giới thiệu AI rồi có thể nói chuyện. Kết nối Google lần đầu có thể mất nhiều giây.
 6. Bấm **Dừng AI** để lấy lại micro. `Ctrl+C` ở VPS dừng relay; đóng tunnel cũng ngắt phiên. Nếu micro chưa hoạt động lại, kết thúc rồi gọi lại.
@@ -101,7 +101,7 @@ Live gọi API trực tiếp, dùng quota của project Google và **không qua 
 
 | Hiện tượng | Cách kiểm tra |
 |---|---|
-| “Chưa thấy cuộc gọi” | Kiểm tra tiện ích là 0.2.0, cho phép truy cập Facebook/Messenger, kết thúc cửa sổ gọi cũ và reload Facebook rồi gọi lại; đợi bên kia nhận để cuộc gọi kết nối. Có thể mở tiện ích ở tab Facebook chính. Nếu vẫn lỗi, có thể Facebook dùng frame/worker hoặc cơ chế WebRTC bản thử chưa bắt được. |
+| “Chưa thấy cuộc gọi” | Kiểm tra tiện ích là 0.3.0, cho phép truy cập Facebook/Messenger, kết thúc cửa sổ gọi cũ và reload Facebook rồi gọi lại; đợi bên kia nhận để cuộc gọi kết nối. Có thể mở tiện ích ở tab Facebook chính. Nếu vẫn lỗi, có thể Facebook dùng frame/worker hoặc cơ chế WebRTC bản thử chưa bắt được. |
 | “Chưa gắn được tiện ích vào cửa sổ gọi” | Cập nhật/reload tiện ích, kết thúc cửa sổ gọi cũ, reload Facebook rồi mở cuộc gọi mới. |
 | “Có nhiều cuộc gọi hoặc luồng âm thanh” | Chỉ giữ một cuộc gọi thoại trong tất cả cửa sổ Facebook/Messenger. Bản thử cần đúng một kết nối WebRTC với một track gửi và một track nhận âm thanh. |
 | “Không vào được relay” | Giữ lệnh `call-lab` và SSH tunnel chạy; tunnel phải mở trên máy đang chạy Chrome. Kiểm tra cùng cổng 8765. |

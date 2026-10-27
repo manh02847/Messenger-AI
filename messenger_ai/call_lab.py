@@ -52,6 +52,7 @@ class LabConfig:
     token: str = field(repr=False)
     model: str = MODELS[0]
     max_seconds: float = 180
+    system_instruction: str = field(default=SYSTEM, repr=False)
 
 
 def google_key(root: Path, *, stdin: bool = False) -> str:
@@ -110,7 +111,7 @@ def setup(config: LabConfig) -> dict:
                 "responseModalities": ["AUDIO"],
                 "maxOutputTokens": 2048,
             },
-            "systemInstruction": {"parts": [{"text": SYSTEM}]},
+            "systemInstruction": {"parts": [{"text": config.system_instruction}]},
         }
     }
 

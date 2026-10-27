@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {randomUUID} = require('node:crypto');
 
-function fixture({text='Incoming audio call. Someone is calling you', answer='Accept', decline='Decline'}={}) {
+function fixture({text='Incoming audio call. Someone is calling you', answer='Accept', decline='Decline', pathname='/'}={}) {
   let list=[], interval;
   const scope={textContent:text,querySelectorAll:()=>list};
   function button(name) {
@@ -15,7 +15,7 @@ function fixture({text='Incoming audio call. Someone is calling you', answer='Ac
     list.push(item);return item;
   }
   const yes=button(answer), no=button(decline), events=[];
-  const context=vm.createContext({document:{querySelectorAll:()=>list},getComputedStyle:button=>button.style,
+  const context=vm.createContext({document:{querySelectorAll:()=>list,body:{innerText:text}},location:{pathname},getComputedStyle:button=>button.style,
     crypto:{randomUUID},MutationObserver:class{observe(){}disconnect(){}},
     setTimeout:fn=>fn,clearTimeout(){},setInterval:fn=>{interval=fn;return fn;},clearInterval:()=>interval=null});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../experimental/call-lab-extension/incoming.js'),'utf8'),context);
@@ -59,4 +59,27 @@ test('disarming prevents acceptance and hangup only uses a unique exact call con
   assert.equal(f.api.accept(id).ok,false);
   assert.equal(f.api.hangup().ok,false);const end=f.button('End call');assert.equal(f.api.hangup().ok,true);assert.equal(end.clicked,1);
   f.button('End call');assert.equal(f.api.hangup().ok,false);
+});
+
+test('the rating screen in a call popup is reported even when auto answering is off',()=>{
+  const f=fixture({pathname:'/groupcall/ROOM:TEST',text:'Bạn thấy chất lượng cuộc gọi như thế nào?',answer:'Đóng',decline:'Gọi lại'});
+  assert.equal(f.api.endState().ended,true);f.api.watch(false,event=>f.events.push(event));
+  assert.equal(f.events[0].kind,'call-ui');f.scan();assert.equal(f.events.length,2,'retry if the peer closes slightly later than the UI');
+});
+
+test('a rating phrase on the Facebook feed cannot trigger call cleanup',()=>{
+  const f=fixture({pathname:'/',text:'Bạn thấy chất lượng cuộc gọi như thế nào?',answer:'Đóng',decline:'Gọi lại'});
+  assert.equal(f.api.endState().ended,false);
+});
+
+for(const control of ['End call','Accept','Decline']) test(`a visible ${control} control suppresses cleanup of a stale rating panel`,()=>{
+  const f=fixture({pathname:'/groupcall/test',text:'How was your call?',answer:'Close',decline:'Call again'});
+  f.button(control);assert.equal(f.api.endState().ended,false);
+});
+
+test('handover requires an explicit another-device notice, not merely more speech',()=>{
+  const f=fixture({pathname:'/groupcall/test',text:'This call was answered on another device',answer:'Close',decline:'Call again'});
+  assert.equal(f.api.endState().handoff,true);
+  const other=fixture({pathname:'/groupcall/test',text:'Someone is speaking',answer:'Close',decline:'Call again'});
+  assert.equal(other.api.endState().handoff,false);
 });

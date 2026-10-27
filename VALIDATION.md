@@ -1,5 +1,13 @@
 # Kết quả kiểm tra
 
+## Dọn trang gọi, nhường người thật và persona — 0.3.0, 27/10/2026
+
+- Dọn trang gọi có màn hình kết thúc/đánh giá bằng nhãn Việt/Anh, sau khi xác nhận không còn peer âm thanh. Giữ trang Facebook chính, kiểm tra lại trạng thái và `call_id` trước khi đóng; không đóng tab đang điều hướng/đã dùng cho cuộc gọi mới, không bấm sao hoặc gọi lại.
+- Nút Nhường dừng AI mà không bấm cúp hoặc tắt tự nhận cho lần sau. Chỉ tự nhường theo thông báo rõ về thiết bị khác; không suy đoán chủ tài khoản theo giọng. Sự kiện peer cũ kết thúc không bấm cúp cuộc gọi mới. Cuộc gọi ra vẫn chỉ bật AI thủ công khi có âm thanh ở Chrome của host.
+- Persona riêng chỉ dùng khi chọn file qua `--persona`; giới hạn UTF-8/12000 ký tự, bản sao 0600 ngoài repo, nội dung được gửi Google trong setup mỗi phiên. Không đọc persona/lịch sử bot text mặc định, không in vào log/repr. `--no-persona` trở về mẫu chung; giữ lựa chọn cũ khi cập nhật không chỉ định lại.
+- **1.279 kiểm thử offline đạt, 1 fixture Chrome bỏ qua**. Node **63 ca mô phỏng đạt**, gồm trường hợp màn hình như ảnh, cuộc gọi mới trong tab cũ, giữ tab chính, hủy dọn khi có peer, nhường không cúp và giữ tự động. Python thêm ca chọn/tắt persona, file hỏng/quá dài và ẩn nội dung trong repr. Ruff, cú pháp JS/manifest và `git diff --check` đạt.
+- Không gọi Google thật với persona riêng, không đọc file persona thật của người dùng trong đợt này. Chưa xác minh DOM dọn/nhường trên Chrome Facebook thật ở VPS sau sửa; nhãn giao diện khác có thể cần cập nhật. Ảnh người dùng chỉ được dùng để nhận diện màn hình đánh giá, không lưu URL phòng/nonce thật vào repo.
+
 ## Mic ảo xuất hiện trong Chrome VPS — 27/10/2026
 
 - Sửa cấu hình chỉ có hai null-sink và chọn `call_microphone.monitor` làm mic mặc định. Chromium lọc nguồn monitor khi liệt kê đầu vào và từ chối mặc định dạng monitor; thêm `module-remap-source` trên monitor im lặng để tạo source riêng `call_input`, tên **Messenger_Virtual_Mic**. Cả `PULSE_SOURCE` và default-source dùng source này; nguồn loa vẫn tách riêng.

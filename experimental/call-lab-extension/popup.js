@@ -29,5 +29,6 @@ chrome.storage.session.get(fields).then(saved => {
 });
 document.getElementById("start").addEventListener("click", () => request("start"));
 document.getElementById("stop").addEventListener("click", () => request("stop"));
+document.getElementById("takeover").addEventListener("click", () => request("takeover"));
 document.getElementById("saveAuto").addEventListener("click", () => request("auto"));
 setInterval(() => request("status"), 1500);

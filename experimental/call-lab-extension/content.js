@@ -28,6 +28,12 @@
   });
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id || msg?.to !== "call-lab-content") return;
+    if (msg.command === "ui-probe") {
+      main("probe", {}).then(result => sendResponse({ok: result.ok === true,
+        count: result.count, ...globalThis.CallLabIncoming?.endState()}));
+      return true;
+    }
+    if (typeof msg.command !== "string") return;
     if (msg.command.startsWith("auto-")) {
       const incoming = globalThis.CallLabIncoming;
       if (!incoming) { sendResponse({ok: false, code: "AUTO_NOT_READY"}); return; }

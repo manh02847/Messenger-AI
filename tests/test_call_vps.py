@@ -38,6 +38,43 @@ def test_settings_preserve_token_but_never_copy_facebook_or_persona():
     assert len(installer.settings(None, "KEY", "/usr/bin/chrome")["relay_token"]) >= 32
 
 
+def test_persona_is_only_read_when_explicitly_enabled_and_never_shown_in_repr(tmp_path):
+    from messenger_ai.call_lab import SYSTEM, LabConfig, setup
+
+    path = tmp_path / host.PERSONA_NAME
+    path.write_text("SYNTHETIC_PRIVATE_PERSONA: thích câu trả lời tự nhiên.")
+    assert host.call_instruction(tmp_path, configuration()) == SYSTEM
+    selected = host.call_instruction(tmp_path, {**configuration(), "use_persona": True})
+    assert selected.startswith(SYSTEM) and "SYNTHETIC_PRIVATE_PERSONA" in selected
+    config = LabConfig("PRIVATE_KEY", "PRIVATE_TOKEN", system_instruction=selected)
+    assert "PRIVATE" not in repr(config)
+    assert (
+        "SYNTHETIC_PRIVATE_PERSONA"
+        in setup(config)["setup"]["systemInstruction"]["parts"][0]["text"]
+    )
+    old = {**configuration(), "use_persona": True}
+    assert installer.settings(old, "KEY", "/usr/bin/chrome")["use_persona"] is True
+    assert (
+        installer.settings(old, "KEY", "/usr/bin/chrome", use_persona=False)[
+            "use_persona"
+        ]
+        is False
+    )
+    path.unlink()
+    assert host.call_instruction(tmp_path, configuration()) == SYSTEM
+    with pytest.raises(host.HostError):
+        host.call_instruction(tmp_path, {**configuration(), "use_persona": True})
+
+
+@pytest.mark.parametrize("value", [b"", b"\x00BAD", b"\xff", b"a" * 12001])
+def test_invalid_persona_does_not_echo_contents(tmp_path, value):
+    path = tmp_path / "selected.txt"
+    path.write_bytes(value)
+    with pytest.raises(host.HostError) as error:
+        host.read_persona(path)
+    assert "BAD" not in str(error.value)
+
+
 def test_private_config_write_is_atomic_and_does_not_follow_symlinks(tmp_path):
     target = tmp_path / "settings.json"
     installer.private_write(target, b"PRIVATE", os.getuid(), os.getgid())

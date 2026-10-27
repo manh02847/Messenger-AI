@@ -29,9 +29,30 @@
     });
     return found.length === 1 ? found[0] : null;
   }
+  function endState() {
+    const path = globalThis.location?.pathname || "";
+    if (!/^\/(?:groupcall|call|calls)(?:\/|$)/.test(path)) return {ended: false, handoff: false};
+    const names = buttons().map(label);
+    // A stale rating panel must not close a new active or ringing call.
+    if (names.some(name => END.has(name) || ANSWER.has(name) || DECLINE.has(name))) return {ended: false, handoff: false};
+    const text = normalize(String(document.body?.innerText || "").slice(0, 20000));
+    const handoff = /answered (?:this call )?on another device|đã (?:được )?trả lời (?:cuộc gọi này )?trên thiết bị khác/.test(text);
+    const close = names.some(name => ["close", "đóng"].includes(name));
+    const redial = names.some(name => ["call again", "call back", "redial", "gọi lại"].includes(name));
+    const ended = close && (redial || handoff || /bạn thấy chất lượng cuộc gọi|how was (?:the quality of )?your call|cuộc gọi (?:đã )?kết thúc|call (?:has )?ended/.test(text));
+    return {ended, handoff};
+  }
   let observed = null, ring = null, callback = null, observer = null, timer = null, interval = null;
+  let autoEnabled = false, lastUI = "";
   function scan() {
     timer = null;
+    const ui = endState();
+    const marker = JSON.stringify(ui);
+    if (marker !== lastUI || ui.ended) {
+      lastUI = marker;
+      if (ui.ended || ui.handoff) callback?.({kind: "call-ui"});
+    }
+    if (!autoEnabled) return;
     const button = candidate();
     if (!button) { observed = null; ring = null; return; }
     if (button === observed) return;
@@ -42,8 +63,7 @@
   function watch(enabled, notify) {
     observer?.disconnect(); observer = null;
     clearTimeout(timer); clearInterval(interval); timer = interval = null;
-    observed = ring = null; callback = enabled ? notify : null;
-    if (!enabled) return;
+    observed = ring = null; callback = notify; autoEnabled = enabled; lastUI = "";
     observer = new MutationObserver(() => { if (!timer) timer = setTimeout(scan, 350); });
     observer.observe(document, {subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "title", "style", "disabled", "aria-disabled"]});
     interval = setInterval(scan, 2500);
@@ -66,5 +86,5 @@
     found[0].click();
     return {ok: true};
   }
-  globalThis.CallLabIncoming = Object.freeze({watch, probe, accept, hangup});
+  globalThis.CallLabIncoming = Object.freeze({watch, probe, accept, hangup, endState});
 })();
