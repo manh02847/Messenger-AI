@@ -1,0 +1,32 @@
+[Unit]
+Description=Messenger AI calls with a dedicated Chrome desktop
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=messenger-call
+Group=messenger-call
+WorkingDirectory=/opt/messenger-ai-call/app
+ExecStart=/usr/bin/dbus-run-session -- /opt/messenger-ai-call/.venv/bin/python -m messenger_ai.call_vps
+Environment=PYTHONUNBUFFERED=1
+Environment=XDG_RUNTIME_DIR=/run/messenger-ai-call
+StateDirectory=messenger-ai-call
+StateDirectoryMode=0700
+RuntimeDirectory=messenger-ai-call
+RuntimeDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+KillMode=control-group
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+MemoryAccounting=true
+MemoryMax=2500M
+
+[Install]
+WantedBy=multi-user.target

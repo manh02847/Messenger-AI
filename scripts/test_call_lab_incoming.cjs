@@ -1,0 +1,62 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const {randomUUID} = require('node:crypto');
+
+function fixture({text='Incoming audio call. Someone is calling you', answer='Accept', decline='Decline'}={}) {
+  let list=[], interval;
+  const scope={textContent:text,querySelectorAll:()=>list};
+  function button(name) {
+    const item={innerText:name,isConnected:true,disabled:false,clicked:0,attrs:{},style:{display:'block',visibility:'visible'},
+      getAttribute(key){return this.attrs[key] || null;},getBoundingClientRect(){return {width:50,height:20};},
+      closest:()=>scope,click(){this.clicked++;}};
+    list.push(item);return item;
+  }
+  const yes=button(answer), no=button(decline), events=[];
+  const context=vm.createContext({document:{querySelectorAll:()=>list},getComputedStyle:button=>button.style,
+    crypto:{randomUUID},MutationObserver:class{observe(){}disconnect(){}},
+    setTimeout:fn=>fn,clearTimeout(){},setInterval:fn=>{interval=fn;return fn;},clearInterval:()=>interval=null});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../experimental/call-lab-extension/incoming.js'),'utf8'),context);
+  return {api:context.CallLabIncoming,yes,no,events,button,scope,scan:()=>interval?.(),
+    enable(){this.api.watch(true,event=>events.push(event));},remove(item){list=list.filter(x=>x!==item);}};
+}
+
+test('incoming call detection is passive until armed and accepts a validated nonce once',()=>{
+  const f=fixture();assert.equal(f.api.probe().ringId,null);assert.equal(f.yes.clicked,0);
+  f.enable();assert.equal(f.events.length,1);const id=f.events[0].ringId;
+  assert.equal(f.api.accept('wrong').ok,false);assert.equal(f.yes.clicked,0);
+  assert.equal(f.api.accept(id).accepted,true);assert.equal(f.yes.clicked,1);
+  assert.equal(f.api.accept(id).ok,false);
+});
+
+test('Vietnamese call labels are recognized without passing caller names or text',()=>{
+  const f=fixture({text:'Cuộc gọi thoại đến. Ai đó đang gọi cho bạn',answer:'Trả lời',decline:'Từ chối'});f.enable();
+  assert.equal(f.events.length,1);assert.deepEqual(Object.keys(f.events[0]).sort(),['kind','ringId']);
+});
+
+for(const [name,patch] of [
+  ['friend request',{text:'Friend request',answer:'Accept',decline:'Decline'}],
+  ['outgoing call',{text:'Calling someone',answer:'Accept',decline:'Decline'}],
+  ['generic reply',{text:'Reply to this message',answer:'Trả lời',decline:'Từ chối'}],
+  ['video call',{text:'Incoming video call',answer:'Accept',decline:'Decline'}],
+  ['labelled group call',{text:'Incoming audio call. Group call',answer:'Accept',decline:'Decline'}],
+]) test(`does not answer ${name}`,()=>{const f=fixture(patch);f.enable();assert.equal(f.events.length,0);assert.equal(f.yes.clicked,0);});
+
+for(const state of ['hidden','disabled','detached']) test(`does not click a ${state} answer button`,()=>{
+  const f=fixture();if(state==='hidden')f.yes.style.display='none';if(state==='disabled')f.yes.disabled=true;if(state==='detached')f.yes.isConnected=false;
+  f.enable();assert.equal(f.events.length,0);
+});
+
+test('changed or duplicated incoming buttons invalidate the previous nonce',()=>{
+  const f=fixture();f.enable();const id=f.events[0].ringId;
+  f.button('Accept');assert.equal(f.api.probe().ringId,null);assert.equal(f.api.accept(id).ok,false);
+});
+
+test('disarming prevents acceptance and hangup only uses a unique exact call control',()=>{
+  const f=fixture();f.enable();const id=f.events[0].ringId;f.api.watch(false);
+  assert.equal(f.api.accept(id).ok,false);
+  assert.equal(f.api.hangup().ok,false);const end=f.button('End call');assert.equal(f.api.hangup().ok,true);assert.equal(end.clicked,1);
+  f.button('End call');assert.equal(f.api.hangup().ok,false);
+});

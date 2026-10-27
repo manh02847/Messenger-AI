@@ -8,8 +8,8 @@ const {randomUUID} = require('node:crypto');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const root = path.join(__dirname, '../experimental/call-lab-extension');
 
-function background({query, send} = {}) {
-  const sockets = [], page = [], stored = [], queries = [], timers = new Set();
+function background({query, send, savedAuto, setLocal} = {}) {
+  const sockets = [], page = [], stored = [], persisted = [], queries = [], timers = new Set();
   let listener;
   const id = 'a'.repeat(32);
   const chrome = {
@@ -25,7 +25,11 @@ function background({query, send} = {}) {
       },
       onRemoved: {addListener() {}}, onUpdated: {addListener() {}},
     },
-    storage: {session: {set: async data => stored.push(data)}},
+    storage: {session: {set: async data => stored.push(data)}, local: {
+      get: async () => ({callAutomation: savedAuto}),
+      set: async data => {if(setLocal)await setLocal(data);savedAuto = data.callAutomation; persisted.push(data);},
+      setAccessLevel: async () => {},
+    }},
   };
   class Socket {
     static OPEN = 1;
@@ -35,7 +39,7 @@ function background({query, send} = {}) {
     receive(data) {this.onmessage({data: JSON.stringify(data)});}
     close() {this.readyState = 3; this.onclose?.();}
   }
-  const context = vm.createContext({chrome, WebSocket: Socket, URL, crypto: {randomUUID},
+  const context = vm.createContext({chrome, WebSocket: Socket, URL, crypto: {randomUUID}, setTimeout,
     setInterval: fn => {timers.add(fn); return fn;}, clearInterval: fn => timers.delete(fn)});
   vm.runInContext(fs.readFileSync(path.join(root, 'background.js'), 'utf8'), context);
   const sender = {id, url: chrome.runtime.getURL('popup.html')};
@@ -45,7 +49,10 @@ function background({query, send} = {}) {
   function audio(session, details = {}, tabId = 42) {
     listener({from: 'call-lab-content', kind: 'audio', session, data: 'AAAA', sampleRate: 16000, ...details}, {id, tab: {id: tabId}}, () => {});
   }
-  return {sockets, page, stored, queries, timers, popup, audio};
+  function incoming(tabId, ringId='ring-1') {
+    return new Promise(resolve => listener({from:'call-lab-content',kind:'incoming',ringId}, {id,tab:{id:tabId,url:'https://www.facebook.com/'}}, resolve));
+  }
+  return {sockets, page, stored, persisted, queries, timers, popup, audio, incoming};
 }
 
 test('a call in a separate popup is selected from the Facebook feed and keeps its own audio route', async () => {
@@ -184,4 +191,68 @@ test('late Stop acknowledgement in content script does not clear a newer session
   reply(oldStop); await stopping;
   for (const listener of listeners) listener({source: window, data: {channel: oldStop.channel, direction: 'event', kind: 'audio', session: 'new', data: 'AAAA', sampleRate: 16000}});
   await flush(); assert.equal(forwarded.at(-1).session, 'new');
+});
+
+function autoFixture({twoRings=false}={}) {
+  let accepted=false;
+  const f=background({
+    query:async()=>[{id:42,url:'https://www.facebook.com/'},...(accepted||twoRings?[{id:84,url:'https://www.facebook.com/groupcall/test'}]:[])],
+    send:async(msg,tabId)=>{
+      if(msg.command==='auto-probe')return{ok:true,ringId:!accepted&&(tabId===42||twoRings)?'ring-1':null};
+      if(msg.command==='auto-accept'){accepted=true;return{ok:true,accepted:true};}
+      if(msg.command==='probe')return{ok:true,count:accepted&&tabId===84?1:0};
+      return{ok:true};
+    },
+  });
+  return Object.assign(f,{accepted:()=>accepted});
+}
+
+test('automation defaults off and never answers or opens Google without opting in',async()=>{
+  const f=autoFixture();await f.incoming(42);assert.equal(f.sockets.length,0);assert.equal(f.accepted(),false);
+});
+
+test('automatic call warms Google before accepting and routes audio to the resulting popup',async()=>{
+  const f=autoFixture();await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];assert.ok(ws);assert.equal(f.accepted(),false);
+  ws.open();assert.equal(f.accepted(),false);ws.receive({type:'google_ready'});
+  for(let i=0;i<5;i++)await flush();
+  assert.equal(f.accepted(),true);assert.equal(f.page.find(x=>x.command==='start').tabId,84);
+  assert.ok(ws.sent.some(x=>x.type==='ready'));
+  ws.receive({type:'google_ready'});await flush();assert.equal(f.page.filter(x=>x.command==='auto-accept').length,1);
+  await f.popup('stop');assert.ok(f.page.some(x=>x.command==='auto-hangup'&&x.tabId===84));
+  assert.equal((await f.popup('status')).autoEnabled,false);
+});
+
+test('Google failure leaves the incoming call unaccepted and does not retry the same ring',async()=>{
+  const f=autoFixture();await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'error',message:'Synthetic failure'});await flush();
+  assert.equal(f.accepted(),false);await f.incoming(42);assert.equal(f.sockets.length,1);
+  await f.popup('stop');
+});
+
+test('Stop during warmup prevents a late Google ready event from answering',async()=>{
+  const f=autoFixture();await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();await f.popup('stop');ws.receive({type:'google_ready'});await flush();
+  assert.equal(f.accepted(),false);assert.equal(ws.readyState,3);
+});
+
+test('two incoming windows are refused before Google connection or acceptance',async()=>{
+  const f=autoFixture({twoRings:true});await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  assert.equal(f.sockets.length,0);assert.equal(f.accepted(),false);await f.popup('stop');
+});
+
+test('persisted opt-in is restored when the service worker starts again',async()=>{
+  const f=background({savedAuto:{enabled:true,endpoint:'ws://127.0.0.1:8765',token:'PERSISTED_LOCAL_TOKEN_123456789'}});
+  const status=await f.popup('status');assert.equal(status.autoEnabled,true);
+  assert.ok(f.page.some(x=>x.command==='auto-watch'&&x.enabled));await f.popup('stop');
+});
+
+test('Stop cancels an in-flight persistent opt-in and leaves the saved mode disabled',async()=>{
+  let resolve;
+  const f=background({setLocal:data=>data.callAutomation.enabled?new Promise(done=>resolve=done):Promise.resolve()});
+  const enabling=f.popup('auto',{autoEnabled:true});await flush();
+  await f.popup('stop');resolve();await enabling;
+  assert.equal((await f.popup('status')).autoEnabled,false);
+  assert.equal(f.persisted.at(-1).callAutomation.enabled,false);
+  assert.equal(f.sockets.length,0);
 });

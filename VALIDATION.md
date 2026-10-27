@@ -1,5 +1,14 @@
 # Kết quả kiểm tra
 
+## Chrome và âm thanh chạy trên Ubuntu VPS — 0.2.0, 27/10/2026
+
+- Người dùng xác nhận bản cầu nối Chrome Windows 0.1.1 hoạt động. Đây là xác nhận từ người dùng, không phải cuộc gọi do môi trường phát triển thực hiện.
+- Thêm bộ cài Ubuntu/Debian x86-64 và service riêng: user không phải root, desktop TigerVNC/Openbox, PulseAudio với micro im lặng tách loa, noVNC loopback và Chrome profile riêng. Chỉ sao chép key Google; giữ token qua restart, cấu hình 0600, không lấy Facebook cookie/persona/lịch sử từ bot text.
+- Tự nhận mặc định tắt, phải bật và lưu trong tiện ích. Khởi tạo Google trước khi nhận; xác minh lại nonce của thông báo đang hiện, từ chối nhiều cuộc gọi, nhận diện nhãn Việt/Anh và bỏ qua các nút khác. Dừng AI hủy warmup và thao tác lưu bật tự động còn chờ. Trạng thái bật/tắt được lưu trong profile riêng. Kết thúc tự động chỉ thử nút kết thúc đúng phiên đã nối; UI không khớp cần thao tác thủ công.
+- **1.274 kiểm thử offline đạt, 1 fixture Chrome bỏ qua**; Node có **44 ca** mô phỏng codec, cầu nối, lựa chọn cửa sổ, nhận diện thông báo và chế độ tự động. Kiểm tra supervisor bằng subprocess thật: một worker chết thì worker còn lại được dừng/reap và relay đóng. Không gọi Google hoặc Facebook trong các kiểm thử mới.
+- Ruff, cú pháp JS/manifest, `systemd-analyze verify` và `git diff --check` đạt. Bộ cài mới chưa chạy apt/cài Chrome trên VPS thật trong môi trường phát triển. Chưa xác minh Chrome/PulseAudio trên VPS hoặc DOM nút nhận cuộc gọi Facebook thật ở bản 0.2.0; vẫn cần thử một cuộc gọi thủ công rồi tự động trên VPS sau đăng nhập. Không tuyên bố tự động nhận mọi biến thể giao diện, phân biệt mọi cuộc gọi nhóm hoặc đã triển khai thành công.
+- Hướng dẫn cài, đăng nhập qua màn hình từ xa và giới hạn: [deploy/CALL_VPS.md](deploy/CALL_VPS.md).
+
 ## Tìm cửa sổ cuộc gọi — Call Lab 0.1.1, 27/10/2026
 
 - Sửa trường hợp bấm tiện ích ở trang Facebook chính trong khi cuộc gọi nằm ở cửa sổ popup: tìm các tab Facebook/Messenger ở tất cả cửa sổ, hỏi trạng thái WebRTC rồi chỉ chọn một cuộc gọi đã kết nối. Nếu có nhiều cuộc gọi/kết nối thì dừng trước khi mở relay/Google.

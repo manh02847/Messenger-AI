@@ -27,6 +27,7 @@ def test_extension_audio_and_session_protocols():
             str(ROOT / "scripts/test_call_lab_pcm.cjs"),
             str(ROOT / "scripts/test_call_lab_bridge.cjs"),
             str(ROOT / "scripts/test_call_lab_extension.cjs"),
+            str(ROOT / "scripts/test_call_lab_incoming.cjs"),
         ],
         check=True,
         capture_output=True,

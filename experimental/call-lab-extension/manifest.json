@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Messenger AI — Call Lab",
-  "version": "0.1.1",
-  "description": "Thử nối một cuộc gọi đã nhận thủ công với Gemini Live qua relay riêng.",
+  "version": "0.2.0",
+  "description": "Gemini Live cho cuộc gọi Messenger, bật thủ công hoặc tự nhận theo lựa chọn.",
   "minimum_chrome_version": "116",
   "permissions": ["storage"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*", "https://www.facebook.com/*", "https://web.facebook.com/*", "https://www.messenger.com/*", "https://messenger.com/*"],
@@ -20,7 +20,7 @@
     },
     {
       "matches": ["https://www.facebook.com/*", "https://web.facebook.com/*", "https://www.messenger.com/*", "https://messenger.com/*"],
-      "js": ["content.js"],
+      "js": ["incoming.js", "content.js"],
       "run_at": "document_start"
     }
   ]

@@ -1,6 +1,10 @@
 let current = null;
 let starting = false;
 let attempt = 0;
+let automation = {enabled: false};
+let explicitlyStopped = false;
+let autoRevision = 0;
+const triedRings = new Set();
 let status = "Chưa bật AI. Nhận cuộc gọi rồi bật AI; tiện ích tự tìm cửa sổ đang gọi.";
 const FACEBOOK_URLS = ["https://www.facebook.com/*", "https://web.facebook.com/*", "https://www.messenger.com/*", "https://messenger.com/*"];
 const ERRORS = {
@@ -20,6 +24,101 @@ function endpointURL(value) {
   if (parsed.protocol !== "ws:" || !["127.0.0.1", "localhost"].includes(parsed.hostname)
       || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== "/") throw new Error("ENDPOINT");
   return parsed.href;
+}
+function options(msg) {
+  const endpoint = endpointURL(msg.endpoint);
+  if (typeof msg.token !== "string" || msg.token.length < 20 || msg.token.length > 200) throw new Error("TOKEN");
+  return {endpoint, token: msg.token, monitor: msg.monitor === true};
+}
+async function watchTabs(enabled) {
+  const tabs = await chrome.tabs.query({url: FACEBOOK_URLS});
+  await Promise.allSettled(tabs.filter(tab => supported(tab.url)).map(tab =>
+    chrome.tabs.sendMessage(tab.id, {to: "call-lab-content", command: "auto-watch", enabled}, {frameId: 0})));
+}
+async function restoreAutomation() {
+  try {
+    await chrome.storage.local.setAccessLevel?.({accessLevel: "TRUSTED_CONTEXTS"});
+    const saved = (await chrome.storage.local.get("callAutomation")).callAutomation;
+    if (saved?.enabled === true && !explicitlyStopped) {
+      automation = {...options(saved), enabled: true};
+      await watchTabs(true);
+      status = "Đã khôi phục chế độ tự nhận cuộc gọi thoại và bật AI.";
+    }
+  } catch { automation = {enabled: false}; }
+}
+async function saveAutomation(msg) {
+  const revision = ++autoRevision;
+  await automationReady;
+  if (revision !== autoRevision) return;
+  const next = msg.autoEnabled === true ? {...options(msg), enabled: true} : {...automation, enabled: false};
+  if (!next.enabled) {
+    explicitlyStopped = true;
+    automation = next;
+    if (current?.automatic) await stop();
+  }
+  await chrome.storage.local.set({callAutomation: next});
+  if (revision !== autoRevision) {
+    if (explicitlyStopped) await chrome.storage.local.set({callAutomation: {...automation, enabled: false}});
+    return;
+  }
+  automation = next;
+  explicitlyStopped = !next.enabled;
+  await watchTabs(next.enabled);
+  if (!next.enabled && current?.automatic) await stop();
+  if (!current) status = next.enabled ? "Đã bật tự nhận cuộc gọi thoại và tự nối AI. Giữ Chrome chạy trên VPS." : "Đã tắt tự nhận cuộc gọi.";
+}
+async function stopAutomation() {
+  const revision = ++autoRevision;
+  explicitlyStopped = true;
+  const enabled = automation.enabled;
+  automation = {...automation, enabled: false};
+  // Restore the microphone immediately even if persistent storage is broken.
+  const ending = stop();
+  await automationReady;
+  if (revision === autoRevision) {
+    try { await chrome.storage.local.set({callAutomation: automation}); }
+    catch { status = "Đã dừng AI nhưng chưa lưu được tắt tự động; kiểm tra lại trước khi mở lại Chrome."; }
+  }
+  if (enabled) {
+    try { await watchTabs(false); } catch {}
+  }
+  await ending;
+}
+async function incomingCalls() {
+  const tabs = await chrome.tabs.query({url: FACEBOOK_URLS});
+  const checks = await Promise.all(tabs.filter(tab => supported(tab.url)).map(async tab => {
+    try {
+      const result = await chrome.tabs.sendMessage(tab.id, {to: "call-lab-content", command: "auto-probe"}, {frameId: 0});
+      return result?.ok && typeof result.ringId === "string" ? {tabId: tab.id, ringId: result.ringId} : null;
+    } catch { return null; }
+  }));
+  return checks.filter(Boolean);
+}
+async function prepareAutomatic(state, requested, revision) {
+  const rings = await incomingCalls();
+  if (current !== state || !automation.enabled || rings.length !== 1
+      || rings[0].tabId !== requested.tabId || rings[0].ringId !== requested.ringId) throw new Error("RING_CHANGED");
+  const accepted = await chrome.tabs.sendMessage(requested.tabId,
+    {to: "call-lab-content", command: "auto-accept", ringId: requested.ringId}, {frameId: 0});
+  if (!accepted?.accepted) throw new Error("RING_CHANGED");
+  state.accepted = true;
+  for (let i = 0; i < 25; i++) {
+    if (current !== state || !automation.enabled) throw new Error("CANCELLED");
+    const found = await findCall(revision, state.id);
+    if (found.tab) { state.tabId = found.tab.id; return; }
+    if (found.code === "MULTIPLE_CALLS") throw new Error("MULTIPLE_CALLS");
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  throw new Error("NO_CALL");
+}
+async function onIncoming(tabId, ringId) {
+  await automationReady;
+  const key = String(tabId) + ":" + ringId;
+  if (!automation.enabled || current || starting || typeof ringId !== "string" || ringId.length > 100 || triedRings.has(key)) return;
+  triedRings.add(key);
+  if (triedRings.size > 100) triedRings.delete(triedRings.values().next().value);
+  try { await start(automation, {tabId, ringId}); }
+  catch { status = "Chưa tự nối được cuộc gọi; kiểm tra relay và thử thủ công."; }
 }
 async function content(state, command, details = {}) {
   return chrome.tabs.sendMessage(state.tabId, {to: "call-lab-content", session: state.id, command, ...details}, {frameId: 0});
@@ -53,12 +152,14 @@ async function stop(text = "Đã dừng AI và trả lại micro cho cuộc gọ
   clearInterval(state.keepalive);
   try { if (state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify({type: "stop"})); } catch {}
   try { state.ws.close(); } catch {}
+  if (state.automatic && state.accepted) {
+    try { await content(state, "auto-hangup"); } catch {}
+  }
   try { await content(state, "stop"); } catch {}
 }
-async function start(msg) {
+async function start(msg, automatic = null) {
   if (current || starting) throw new Error("ACTIVE");
-  const endpoint = endpointURL(msg.endpoint);
-  if (typeof msg.token !== "string" || msg.token.length < 20 || msg.token.length > 200) throw new Error("TOKEN");
+  const {endpoint} = options(msg);
   const revision = ++attempt;
   starting = true;
   try {
@@ -66,12 +167,18 @@ async function start(msg) {
     const id = crypto.randomUUID();
     const found = await findCall(revision, id);
     if (found.cancelled || attempt !== revision) return;
-    if (!found.tab) { status = label(found); return; }
-    const tab = found.tab;
+    if (automatic && (found.tab || found.code === "MULTIPLE_CALLS")) { status = "Đang có cuộc gọi khác; không tự nhận thêm."; return; }
+    if (!automatic && !found.tab) { status = label(found); return; }
+    if (automatic) {
+      const rings = await incomingCalls();
+      if (attempt !== revision || !automation.enabled || rings.length !== 1
+          || rings[0].tabId !== automatic.tabId || rings[0].ringId !== automatic.ringId) return;
+    }
+    const tab = automatic ? {id: automatic.tabId} : found.tab;
     await chrome.storage.session.set({endpoint, token: msg.token, monitor: msg.monitor === true});
     if (attempt !== revision) return;
     const ws = new WebSocket(endpoint);
-    const state = {id, tabId: tab.id, ws, ready: false, keepalive: null, delivery: Promise.resolve()};
+    const state = {id, tabId: tab.id, ws, ready: false, preparing: false, automatic, accepted: false, keepalive: null, delivery: Promise.resolve()};
     current = state;
     status = "Đang kết nối relay và Google Live…";
     ws.onopen = () => {
@@ -86,7 +193,11 @@ async function start(msg) {
       let data;
       try { data = JSON.parse(event.data); } catch { void stop("Relay trả dữ liệu chưa hợp lệ."); return; }
       if (data.type === "google_ready") {
+        if (state.preparing) return;
+        state.preparing = true;
         state.delivery = state.delivery.then(async () => {
+          if (current !== state) return;
+          if (automatic) await prepareAutomatic(state, automatic, revision);
           if (current !== state) return;
           const result = await content(state, "start", {monitor: msg.monitor === true});
           if (current !== state) return;
@@ -113,8 +224,9 @@ async function start(msg) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id) return;
   if (msg?.from === "call-lab-popup" && sender.url === chrome.runtime.getURL("popup.html")) {
-    const action = msg.action === "start" ? start(msg) : msg.action === "stop" ? stop() : Promise.resolve();
-    action.then(() => sendResponse({ok: true, status, active: !!current || starting})).catch(error => {
+    const action = msg.action === "start" ? start(msg) : msg.action === "auto" ? saveAutomation(msg)
+      : msg.action === "stop" ? stopAutomation() : automationReady;
+    action.then(() => sendResponse({ok: true, status, active: !!current || starting, autoEnabled: automation.enabled})).catch(error => {
       const notes = {
         ENDPOINT: "Địa chỉ cần là ws://127.0.0.1:8765 hoặc localhost qua SSH tunnel.",
         TOKEN: "Dán mã kết nối từ lệnh call-lab, không dán API key.",
@@ -124,6 +236,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ok: false, status, active: !!current || starting});
     });
     return true;
+  }
+  if (msg?.from === "call-lab-content" && sender.tab && supported(sender.tab.url)) {
+    if (msg.kind === "auto-register") {
+      automationReady.then(() => sendResponse({watch: automation.enabled}));
+      return true;
+    }
+    if (msg.kind === "incoming") {
+      onIncoming(sender.tab.id, msg.ringId).then(() => sendResponse({ok: true})).catch(() => sendResponse({ok: false}));
+      return true;
+    }
   }
   if (msg?.from === "call-lab-content" && current && sender.tab?.id === current.tabId && msg.session === current.id) {
     if (msg.kind === "audio" && current.ready) {
@@ -140,3 +262,4 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 chrome.tabs.onRemoved.addListener(tabId => { if (current?.tabId === tabId) void stop("Tab gọi đã đóng; AI dừng."); });
 chrome.tabs.onUpdated.addListener((tabId, change) => { if (current?.tabId === tabId && change.status === "loading") void stop("Trang đang tải lại; AI đã dừng."); });
+const automationReady = restoreAutomation();

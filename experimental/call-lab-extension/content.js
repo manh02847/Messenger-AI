@@ -28,6 +28,18 @@
   });
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id || msg?.to !== "call-lab-content") return;
+    if (msg.command.startsWith("auto-")) {
+      const incoming = globalThis.CallLabIncoming;
+      if (!incoming) { sendResponse({ok: false, code: "AUTO_NOT_READY"}); return; }
+      if (msg.command === "auto-watch") {
+        incoming.watch(msg.enabled === true, details => chrome.runtime.sendMessage({from: "call-lab-content", ...details}).catch(() => {}));
+        sendResponse({ok: true});
+      } else if (msg.command === "auto-probe") sendResponse(incoming.probe());
+      else if (msg.command === "auto-accept") sendResponse(incoming.accept(msg.ringId));
+      else if (msg.command === "auto-hangup" && session === msg.session) sendResponse(incoming.hangup());
+      else sendResponse({ok: false});
+      return;
+    }
     if (msg.command === "start") session = msg.session;
     if (msg.command !== "probe" && msg.session !== session) {
       sendResponse({ok: false, code: "SESSION_CHANGED"});
@@ -39,4 +51,9 @@
     });
     return true;
   });
+  if (globalThis.CallLabIncoming) {
+    chrome.runtime.sendMessage({from: "call-lab-content", kind: "auto-register"}).then(result => {
+      globalThis.CallLabIncoming.watch(result?.watch === true, details => chrome.runtime.sendMessage({from: "call-lab-content", ...details}).catch(() => {}));
+    }).catch(() => {});
+  }
 })();
