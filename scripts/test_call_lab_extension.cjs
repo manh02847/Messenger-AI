@@ -8,7 +8,7 @@ const {randomUUID} = require('node:crypto');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const root = path.join(__dirname, '../experimental/call-lab-extension');
 
-function background({query, send, savedAuto, setLocal, getTab, deferRemoval=false, clock=setTimeout} = {}) {
+function background({query, send, savedAuto, setLocal, getTab, deferRemoval=false, clock=setTimeout, cancelClock=clearTimeout, now} = {}) {
   const sockets = [], page = [], stored = [], persisted = [], queries = [], removed = [], reloaded = [], timers = new Set();
   let listener, onRemoved, onUpdated;
   const id = 'a'.repeat(32);
@@ -43,12 +43,14 @@ function background({query, send, savedAuto, setLocal, getTab, deferRemoval=fals
     receive(data) {this.onmessage({data: JSON.stringify(data)});}
     close() {this.readyState = 3; this.onclose?.();}
   }
-  const context = vm.createContext({chrome, WebSocket: Socket, URL, crypto: {randomUUID}, setTimeout:clock,
+  const context = vm.createContext({chrome, WebSocket: Socket, URL, crypto: {randomUUID}, setTimeout:clock, clearTimeout:cancelClock,
+    performance:{now:now || (()=>Date.now())},
+    ...(now ? {Date: class extends Date {static now() {return now();}}} : {}),
     setInterval: fn => {timers.add(fn); return fn;}, clearInterval: fn => timers.delete(fn)});
   vm.runInContext(fs.readFileSync(path.join(root, 'background.js'), 'utf8'), context);
   const sender = {id, url: chrome.runtime.getURL('popup.html')};
   function popup(action, details = {}) {
-    return new Promise(resolve => listener({from: 'call-lab-popup', action, endpoint: 'ws://127.0.0.1:8765', token: 'LOCAL_TEST_TOKEN_123456789', ...details}, sender, resolve));
+    return new Promise(resolve => listener({from: 'call-lab-popup', action, endpoint: 'ws://127.0.0.1:8765', token: 'LOCAL_TEST_TOKEN_123456789', answerDelaySeconds:0, ...details}, sender, resolve));
   }
   function audio(session, details = {}, tabId = 42) {
     listener({from: 'call-lab-content', kind: 'audio', session, data: 'AAAA', sampleRate: 16000, ...details}, {id, tab: {id: tabId}}, () => {});
@@ -204,21 +206,166 @@ test('late Stop acknowledgement in content script does not clear a newer session
   await flush(); assert.equal(forwarded.at(-1).session, 'new');
 });
 
-function autoFixture({twoRings=false,handoff=false,clock,deferRemoval}={}) {
-  let accepted=false, ended=false;
+function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAuto,deferRemoval}={}) {
+  let accepted=false, ended=false, ringing=true, human=false, ringId='ring-1';
   const f=background({
-    clock,deferRemoval,
-    query:async()=>[{id:42,url:'https://www.facebook.com/'},...(accepted||twoRings?[{id:84,url:'https://www.facebook.com/groupcall/test'}]:[])],
+    clock,cancelClock,now,savedAuto,deferRemoval,
+    query:async()=>[{id:42,url:'https://www.facebook.com/'},...(accepted||human||twoRings?[{id:84,url:'https://www.facebook.com/groupcall/test'}]:[])],
     send:async(msg,tabId)=>{
       if(msg.command==='ui-probe')return{ok:true,ended:tabId===84&&ended,handoff:tabId===84&&handoff,count:tabId===84&&!ended?1:0,busy:tabId===84&&!ended};
-      if(msg.command==='auto-probe')return{ok:true,ringId:!accepted&&(tabId===42||twoRings)?'ring-1':null};
+      if(msg.command==='auto-probe')return{ok:true,ringId:ringing&&!accepted&&(tabId===42||twoRings)?ringId:null};
       if(msg.command==='auto-accept'){accepted=true;return{ok:true,accepted:true};}
-      if(msg.command==='probe')return{ok:true,count:accepted&&!ended&&tabId===84?1:0};
+      if(msg.command==='probe')return{ok:true,count:(accepted||human)&&!ended&&tabId===84?1:0};
       return{ok:true};
     },
   });
-  return Object.assign(f,{accepted:()=>accepted,finish:()=>ended=true});
+  return Object.assign(f,{accepted:()=>accepted,finish:()=>ended=true,
+    cancelRing:()=>ringing=false, humanAnswer:()=>{human=true;ringing=false;},
+    replaceRing:id=>{ringId=id;ringing=true;}});
 }
+
+function answerClock() {
+  let now=100000, next=0;
+  const tasks=new Map();
+  return {
+    now:()=>now,
+    clock:(fn,ms)=>{const id=++next;tasks.set(id,{fn,at:now+ms});return id;},
+    cancelClock:id=>tasks.delete(id),
+    async advance(ms) {
+      const target=now+ms;
+      await flush();
+      while(true) {
+        const task=[...tasks.entries()].filter(([,job])=>job.at<=target).sort((a,b)=>a[1].at-b[1].at)[0];
+        if(!task)break;
+        now=task[1].at;tasks.delete(task[0]);task[1].fn();await flush();
+      }
+      now=target;await flush();
+    },
+    pending:()=>tasks.size,
+  };
+}
+
+test('old saved opt-in uses a 25 second human window and never accepts before its deadline',async()=>{
+  const clock=answerClock(),f=autoFixture({...clock,savedAuto:{enabled:true,endpoint:'ws://127.0.0.1:8765',token:'PERSISTED_LOCAL_TOKEN_123456789'}});
+  assert.equal((await f.popup('status')).answerDelaySeconds,25);
+  await f.incoming(42);const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();
+  await clock.advance(24999);assert.equal(f.accepted(),false);assert.ok(!ws.sent.some(msg=>msg.type==='ready'));
+  await clock.advance(1);assert.equal(f.accepted(),true);assert.equal(f.page.find(msg=>msg.command==='start').tabId,84);
+  await f.popup('stop');assert.equal(clock.pending(),0);
+});
+
+test('the configured waiting time survives a worker restart',async()=>{
+  const initial=autoFixture();await initial.popup('auto',{autoEnabled:true,answerDelaySeconds:45});
+  const savedAuto=initial.persisted.at(-1).callAutomation;assert.equal(savedAuto.answerDelaySeconds,45);
+  await initial.popup('stop');
+  const clock=answerClock(),f=autoFixture({...clock,savedAuto});
+  assert.equal((await f.popup('status')).answerDelaySeconds,45);
+  await f.incoming(42);const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();
+  await clock.advance(44999);assert.equal(f.accepted(),false);
+  await clock.advance(1);assert.equal(f.accepted(),true);await f.popup('stop');
+});
+
+for(const readyAt of [10000,30000]) test(`Google warmup at ${readyAt}ms overlaps the human window instead of adding to it`,async()=>{
+  const clock=answerClock(),f=autoFixture(clock);await f.popup('auto',{autoEnabled:true,answerDelaySeconds:25});
+  await f.incoming(42);const ws=f.sockets[0];ws.open();await clock.advance(readyAt);
+  assert.equal(f.accepted(),false);ws.receive({type:'google_ready'});await flush();
+  if(readyAt<25000){await clock.advance(25000-readyAt-1);assert.equal(f.accepted(),false);await clock.advance(1);}
+  assert.equal(f.accepted(),true);await f.popup('stop');
+});
+
+for(const where of ['other device','VPS']) test(`a human answering on ${where} during warmup cancels AI without hanging up`,async()=>{
+  const clock=answerClock(),f=autoFixture(clock);await f.popup('auto',{autoEnabled:true,answerDelaySeconds:25});
+  await f.incoming(42);const ws=f.sockets[0];ws.open();await clock.advance(5000);
+  if(where==='VPS')f.humanAnswer();else f.cancelRing();
+  await clock.advance(1000);assert.equal(ws.readyState,3);ws.receive({type:'google_ready'});
+  await clock.advance(30000);assert.equal(f.accepted(),false);
+  assert.ok(!f.page.some(msg=>['start','auto-accept','auto-hangup'].includes(msg.command)));
+  assert.equal((await f.popup('status')).autoEnabled,true);await f.popup('stop');
+});
+
+test('a caller hanging up after Google is ready cancels the waiting timer and leaves future auto calls enabled',async()=>{
+  const clock=answerClock(),f=autoFixture(clock);await f.popup('auto',{autoEnabled:true,answerDelaySeconds:25});
+  await f.incoming(42);const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();
+  await clock.advance(5000);f.cancelRing();await clock.advance(1000);
+  assert.equal(ws.readyState,3);assert.equal(f.accepted(),false);assert.equal(clock.pending(),0);
+  assert.equal((await f.popup('status')).autoEnabled,true);await f.popup('stop');
+});
+
+for(const action of ['stop','takeover','auto']) test(`${action} cancels a pending answer and its old deadline cannot restart AI`,async()=>{
+  const clock=answerClock(),f=autoFixture(clock);await f.popup('auto',{autoEnabled:true,answerDelaySeconds:25});
+  await f.incoming(42);const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();
+  await clock.advance(5000);await f.popup(action,{autoEnabled:false});await clock.advance(30000);
+  assert.equal(f.accepted(),false);assert.equal(clock.pending(),0);
+  assert.equal((await f.popup('status')).autoEnabled,action==='takeover');
+  assert.ok(!f.page.some(msg=>msg.command==='auto-hangup'));await f.popup('stop');
+});
+
+test('a replacement ring gets its own full delay and never reuses the old ready event or deadline',async()=>{
+  const clock=answerClock(),f=autoFixture(clock);await f.popup('auto',{autoEnabled:true,answerDelaySeconds:25});
+  await f.incoming(42);const old=f.sockets[0];old.open();old.receive({type:'google_ready'});await flush();
+  await clock.advance(10000);f.replaceRing('ring-2');await f.incoming(42,'ring-2');
+  assert.equal(old.readyState,3);assert.equal(f.sockets.length,2);
+  const ws=f.sockets[1];ws.open();ws.receive({type:'google_ready'});old.receive({type:'google_ready'});await flush();
+  await clock.advance(15000);assert.equal(f.accepted(),false);
+  await clock.advance(10000);assert.equal(f.accepted(),true);
+  assert.equal(f.page.filter(msg=>msg.command==='auto-accept').length,1);await f.popup('stop');
+});
+
+for(const value of [-1,91,1.5,'25',null,true]) test(`invalid waiting time ${JSON.stringify(value)} is rejected before saving or opening Google`,async()=>{
+  const f=autoFixture();const result=await f.popup('auto',{autoEnabled:true,answerDelaySeconds:value});
+  assert.equal(result.ok,false);assert.match(result.status,/0 đến 90/);
+  assert.equal(f.persisted.length,0);assert.equal(f.sockets.length,0);assert.equal((await f.popup('status')).autoEnabled,false);
+});
+
+test('manual Start does not inherit an automatic answer delay',async()=>{
+  const f=background();await f.popup('start',{answerDelaySeconds:90});
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();
+  assert.ok(f.page.some(msg=>msg.command==='start'));assert.ok(ws.sent.some(msg=>msg.type==='ready'));await f.popup('stop');
+});
+
+test('a human joining at the end of the wait is checked again before the accept click',async()=>{
+  const clock=answerClock();let human=false, checks=0, accepted=0;
+  const f=background({...clock,query:async()=>[{id:42,url:'https://www.facebook.com/'},{id:84,url:'https://www.facebook.com/call'}],
+    send:async(msg,tabId)=>{
+      if(msg.command==='probe')return{ok:true,count:human&&tabId===84?1:0};
+      if(msg.command==='auto-probe'){
+        if(tabId===42&&++checks===2)human=true;
+        return{ok:true,ringId:tabId===42?'ring-1':null};
+      }
+      if(msg.command==='auto-accept'){accepted++;return{ok:true,accepted:true};}
+      return{ok:true};
+    }});
+  await f.popup('auto',{autoEnabled:true,answerDelaySeconds:0});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();
+  assert.equal(human,true);assert.equal(accepted,0);assert.equal(ws.readyState,3);
+  assert.ok(!f.page.some(msg=>msg.command==='auto-hangup'));await f.popup('stop');
+});
+
+test('the maximum 90 second delay is accepted and keeps its full waiting window',async()=>{
+  const clock=answerClock(),f=autoFixture(clock);await f.popup('auto',{autoEnabled:true,answerDelaySeconds:90});
+  await f.incoming(42);const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();
+  await clock.advance(89999);assert.equal(f.accepted(),false);
+  await clock.advance(1);assert.equal(f.accepted(),true);await f.popup('stop');
+});
+
+test('popup restores and saves the chosen delay without replacing an unsaved draft during status polling',async()=>{
+  const elements=new Map(),sent=[];let poll;
+  function element(id) {
+    if(!elements.has(id))elements.set(id,{value:id==='answerDelaySeconds'?'25':'',checked:false,listeners:{},
+      get valueAsNumber(){return String(this.value).trim()===''?NaN:Number(this.value);},
+      addEventListener(action,fn){this.listeners[action]=fn;}});
+    return elements.get(id);
+  }
+  const saved={enabled:true,endpoint:'ws://127.0.0.1:8765',token:'LOCAL_TEST_TOKEN_123456789',answerDelaySeconds:45};
+  const chrome={storage:{session:{get:async()=>({})},local:{get:async()=>({callAutomation:saved})}},
+    runtime:{sendMessage:async msg=>{sent.push(msg);return{status:'Synthetic status'};}}};
+  vm.runInContext(fs.readFileSync(path.join(root,'popup.js'),'utf8'),vm.createContext({chrome,
+    document:{getElementById:element},setInterval:fn=>poll=fn}));
+  await flush();assert.equal(element('answerDelaySeconds').value,45);assert.equal(element('autoEnabled').checked,true);
+  element('answerDelaySeconds').value='35';element('saveAuto').listeners.click();await flush();
+  assert.equal(sent.at(-1).action,'auto');assert.equal(sent.at(-1).answerDelaySeconds,35);
+  element('answerDelaySeconds').value='12';poll();await flush();assert.equal(element('answerDelaySeconds').value,'12');
+});
 
 test('automation defaults off and never answers or opens Google without opting in',async()=>{
   const f=autoFixture();await f.incoming(42);assert.equal(f.sockets.length,0);assert.equal(f.accepted(),false);

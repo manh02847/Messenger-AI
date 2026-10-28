@@ -1,7 +1,8 @@
 let current = null;
 let starting = false;
 let attempt = 0;
-let automation = {enabled: false};
+const DEFAULT_ANSWER_DELAY = 25;
+let automation = {enabled: false, answerDelaySeconds: DEFAULT_ANSWER_DELAY};
 let explicitlyStopped = false;
 let autoRevision = 0;
 const triedRings = new Set();
@@ -132,6 +133,10 @@ function options(msg) {
   if (typeof msg.token !== "string" || msg.token.length < 20 || msg.token.length > 200) throw new Error("TOKEN");
   return {endpoint, token: msg.token, monitor: msg.monitor === true};
 }
+function answerDelay(value = DEFAULT_ANSWER_DELAY) {
+  if (!Number.isInteger(value) || value < 0 || value > 90) throw new Error("ANSWER_DELAY");
+  return value;
+}
 async function watchTabs(enabled) {
   const tabs = await chrome.tabs.query({url: FACEBOOK_URLS});
   await Promise.allSettled(tabs.filter(tab => supported(tab.url)).map(tab =>
@@ -142,17 +147,19 @@ async function restoreAutomation() {
     await chrome.storage.local.setAccessLevel?.({accessLevel: "TRUSTED_CONTEXTS"});
     const saved = (await chrome.storage.local.get("callAutomation")).callAutomation;
     if (saved?.enabled === true && !explicitlyStopped) {
-      automation = {...options(saved), enabled: true};
+      automation = {...options(saved), answerDelaySeconds: answerDelay(saved.answerDelaySeconds), enabled: true};
       await watchTabs(true);
       status = "Đã khôi phục chế độ tự nhận cuộc gọi thoại và bật AI.";
     }
-  } catch { automation = {enabled: false}; }
+  } catch { automation = {enabled: false, answerDelaySeconds: DEFAULT_ANSWER_DELAY}; }
 }
 async function saveAutomation(msg) {
   const revision = ++autoRevision;
   await automationReady;
   if (revision !== autoRevision) return;
-  const next = msg.autoEnabled === true ? {...options(msg), enabled: true} : {...automation, enabled: false};
+  const next = msg.autoEnabled === true
+    ? {...options(msg), answerDelaySeconds: answerDelay(msg.answerDelaySeconds), enabled: true}
+    : {...automation, enabled: false};
   if (!next.enabled) {
     explicitlyStopped = true;
     automation = next;
@@ -167,7 +174,7 @@ async function saveAutomation(msg) {
   explicitlyStopped = !next.enabled;
   await watchTabs(next.enabled);
   if (!next.enabled && current?.automatic) await stop();
-  if (!current) status = next.enabled ? "Đã bật tự nhận cuộc gọi thoại và tự nối AI. Giữ Chrome chạy trên VPS." : "Đã tắt tự nhận cuộc gọi.";
+  if (!current) status = next.enabled ? `Đã bật tự nhận sau ít nhất ${next.answerDelaySeconds} giây nếu chưa có người nghe. Giữ Chrome chạy trên VPS.` : "Đã tắt tự nhận cuộc gọi.";
 }
 async function stopAutomation() {
   const revision = ++autoRevision;
@@ -196,10 +203,47 @@ async function incomingCalls() {
   }));
   return checks.filter(Boolean);
 }
+function wakeAnswer(state) {
+  clearTimeout(state.answerTimer);
+  state.answerTimer = null;
+  const resolve = state.answerWake;
+  state.answerWake = null;
+  resolve?.();
+}
+async function waitForAutomatic(state, requested, revision) {
+  while (current === state && automation.enabled && attempt === revision) {
+    const found = await findCall(revision, state.id);
+    if (current !== state || attempt !== revision) return false;
+    if (found.tab || found.code === "MULTIPLE_CALLS") {
+      await stop("Đã có người nhận hoặc đang có cuộc gọi khác; AI không tự tham gia.", {hangup: false});
+      return false;
+    }
+    const rings = await incomingCalls();
+    if (current !== state || attempt !== revision) return false;
+    if (!automation.enabled || rings.length !== 1
+        || rings[0].tabId !== requested.tabId || rings[0].ringId !== requested.ringId) {
+      await stop("Cuộc gọi không còn chờ nhận; AI không tham gia.", {hangup: false});
+      return false;
+    }
+    const remaining = Math.max(0, requested.answerAt - performance.now());
+    if (state.googleReady && remaining === 0) return true;
+    status = remaining > 0
+      ? `Ưu tiên bạn nghe trước; AI chờ thêm ${Math.ceil(remaining / 1000)} giây nếu cuộc gọi vẫn đổ chuông.`
+      : "Đã hết thời gian chờ; đang chờ Google sẵn sàng, chưa nhận cuộc gọi.";
+    await new Promise(resolve => {
+      state.answerWake = resolve;
+      state.answerTimer = setTimeout(() => wakeAnswer(state), Math.min(1000, remaining || 1000));
+    });
+  }
+  return false;
+}
 async function prepareAutomatic(state, requested, revision) {
+  const found = await findCall(revision, state.id);
+  if (current !== state || attempt !== revision || found.tab || found.code === "MULTIPLE_CALLS") throw new Error("RING_CHANGED");
   const rings = await incomingCalls();
   if (current !== state || !automation.enabled || rings.length !== 1
-      || rings[0].tabId !== requested.tabId || rings[0].ringId !== requested.ringId) throw new Error("RING_CHANGED");
+      || rings[0].tabId !== requested.tabId || rings[0].ringId !== requested.ringId
+      || performance.now() < requested.answerAt) throw new Error("RING_CHANGED");
   const accepted = await chrome.tabs.sendMessage(requested.tabId,
     {to: "call-lab-content", command: "auto-accept", ringId: requested.ringId}, {frameId: 0});
   if (!accepted?.accepted) throw new Error("RING_CHANGED");
@@ -214,13 +258,22 @@ async function prepareAutomatic(state, requested, revision) {
   throw new Error("NO_CALL");
 }
 async function onIncoming(tabId, ringId) {
+  const observedAt = performance.now();
   refreshRevision++;
   await automationReady;
   const key = String(tabId) + ":" + ringId;
-  if (!automation.enabled || current || starting || typeof ringId !== "string" || ringId.length > 100 || triedRings.has(key)) return;
+  if (!automation.enabled || typeof ringId !== "string" || !ringId || ringId.length > 100 || triedRings.has(key)) return;
+  const pending = current;
+  if (pending?.automatic && !pending.accepted) {
+    const rings = await incomingCalls();
+    if (rings.length !== 1 || rings[0].tabId !== tabId || rings[0].ringId !== ringId) return;
+    if (current === pending) await stop("Lượt gọi cũ không còn; đang kiểm tra lượt gọi mới.", {hangup: false});
+    else if (current || starting) return;
+  }
+  if (!automation.enabled || current || starting) return;
   triedRings.add(key);
   if (triedRings.size > 100) triedRings.delete(triedRings.values().next().value);
-  try { await start(automation, {tabId, ringId}); }
+  try { await start(automation, {tabId, ringId, answerAt: observedAt + automation.answerDelaySeconds * 1000}); }
   catch { status = "Chưa tự nối được cuộc gọi; kiểm tra relay và thử thủ công."; }
 }
 async function content(state, command, details = {}) {
@@ -252,6 +305,7 @@ async function stop(text = "Đã dừng AI và trả lại micro cho cuộc gọ
   current = null;
   status = text;
   if (!state) return;
+  wakeAnswer(state);
   clearInterval(state.keepalive);
   try { if (state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify({type: "stop"})); } catch {}
   try { state.ws.close(); } catch {}
@@ -282,7 +336,7 @@ async function start(msg, automatic = null) {
     await chrome.storage.session.set({endpoint, token: msg.token, monitor: msg.monitor === true});
     if (attempt !== revision) return;
     const ws = new WebSocket(endpoint);
-    const state = {id, tabId: tab.id, callKey: callIdentity(tab.url), ws, ready: false, preparing: false, ending: false, endRequests: new Set(), automatic, accepted: false, keepalive: null, delivery: Promise.resolve()};
+    const state = {id, tabId: tab.id, callKey: callIdentity(tab.url), ws, ready: false, googleReady: false, preparing: false, ending: false, endRequests: new Set(), automatic, accepted: false, keepalive: null, answerTimer: null, answerWake: null, answerWait: null, delivery: Promise.resolve()};
     current = state;
     status = "Đang kết nối relay và Google Live…";
     ws.onopen = () => {
@@ -298,10 +352,15 @@ async function start(msg, automatic = null) {
       try { data = JSON.parse(event.data); } catch { void stop("Relay trả dữ liệu chưa hợp lệ."); return; }
       if (data.type === "google_ready") {
         if (state.preparing) return;
+        state.googleReady = true;
+        wakeAnswer(state);
         state.preparing = true;
         state.delivery = state.delivery.then(async () => {
           if (current !== state) return;
-          if (automatic) await prepareAutomatic(state, automatic, revision);
+          if (automatic) {
+            if (!(await state.answerWait) || current !== state) return;
+            await prepareAutomatic(state, automatic, revision);
+          }
           if (current !== state) return;
           const result = await content(state, "start", {monitor: msg.monitor === true});
           if (current !== state) return;
@@ -326,6 +385,10 @@ async function start(msg, automatic = null) {
     };
     ws.onerror = () => { if (current === state) void stop("Không vào được relay. Kiểm tra lệnh call-lab và SSH tunnel."); };
     ws.onclose = () => { if (current === state) void stop("Relay đã đóng phiên; AI dừng và micro được trả lại."); };
+    if (automatic) state.answerWait = waitForAutomatic(state, automatic, revision).catch(() => {
+      if (current === state) return stop("Chưa xác nhận được cuộc gọi còn đổ chuông; AI không tự nhận.", {hangup: false}).then(() => false);
+      return false;
+    });
   } finally { if (attempt === revision) starting = false; }
 }
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -333,11 +396,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.from === "call-lab-popup" && sender.url === chrome.runtime.getURL("popup.html")) {
     const action = msg.action === "start" ? start(msg) : msg.action === "takeover" ? takeover() : msg.action === "auto" ? saveAutomation(msg)
       : msg.action === "stop" ? stopAutomation() : automationReady;
-    action.then(() => sendResponse({ok: true, status, active: !!current || starting, autoEnabled: automation.enabled})).catch(error => {
+    action.then(() => sendResponse({ok: true, status, active: !!current || starting, autoEnabled: automation.enabled,
+      answerDelaySeconds: automation.answerDelaySeconds})).catch(error => {
       const notes = {
         ENDPOINT: "Địa chỉ cần là ws://127.0.0.1:8765 hoặc localhost qua SSH tunnel.",
         TOKEN: "Dán mã kết nối từ lệnh call-lab, không dán API key.",
         ACTIVE: "Đã có phiên AI. Bấm Dừng AI trước.",
+        ANSWER_DELAY: "Thời gian chờ cần là số nguyên từ 0 đến 90 giây.",
       };
       status = notes[error.message] || "Chưa kết nối được tiện ích; tải lại trang Facebook rồi thử lại.";
       sendResponse({ok: false, status, active: !!current || starting});

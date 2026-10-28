@@ -4,7 +4,7 @@ Chrome, phiên Facebook, thiết bị âm thanh ảo và Google Live relay cùng
 
 **Đây là bản triển khai đầu tiên cần thử trên VPS thật.** Người dùng đã xác nhận cầu nối Chrome trên Windows hoạt động ở bản 0.1.1. Bản 0.2.0 bổ sung desktop Ubuntu và nhận cuộc gọi tự động; phần mới đã kiểm thử offline/mô phỏng, chưa được cài hoặc kiểm chứng với Facebook trên VPS trong môi trường phát triển.
 
-**Bản hiện tại: 0.4.0.** AI có thể kết thúc cuộc gọi đang xử lý khi người gọi yêu cầu rõ ràng, giữ chế độ tự nhận cho lần sau. Tiếp tục giữ lời chào, làm mới Facebook sau cuộc gọi, nhường người thật và persona riêng. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
+**Bản hiện tại: 0.5.0.** Có thời gian chờ trước khi AI tự nhận để ưu tiên bạn nghe trước, mặc định 25 giây và chỉnh được trong popup. Tiếp tục giữ kết thúc theo yêu cầu, lựa chọn giọng, lời chào, làm mới Facebook sau cuộc gọi, nhường người thật và persona riêng. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
 
 Cấu hình khởi đầu dự kiến: 2 vCPU, khoảng 4 GB RAM cho một phiên Chrome với một tài khoản. Đây là đánh giá theo cấu hình, chưa phải số đo tải thật. Bộ cài giới hạn service ở 2500 MB để dành RAM cho hệ thống và bot text. Chưa tự thêm swap.
 
@@ -62,7 +62,7 @@ Relay 8765, VNC 5977 và noVNC 6080 đều chỉ nghe loopback. Không mở các
 /opt/messenger-ai-call/app/experimental/call-lab-extension
 ```
 
-3. Kiểm tra phiên bản **0.4.0**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
+3. Kiểm tra phiên bản **0.5.0**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
 4. Ghim tiện ích. Tải lại trang Facebook trước khi tạo cuộc gọi mới.
 5. Mở tiện ích, địa chỉ giữ `ws://127.0.0.1:8765`, dán mã kết nối từ bộ cài. Có thể tắt **Nghe giọng AI trên máy này** vì VPS không cần phát loa để bạn nghe qua noVNC.
 
@@ -74,8 +74,8 @@ Google Chrome mới không được giả định hỗ trợ `--load-extension` 
 2. Nếu Chrome hỏi quyền micro, chọn **Allow / Cho phép**. VPS không cần mic vật lý: bộ cài tạo mic ảo **Messenger_Virtual_Mic**, chọn mic này hoặc Default trỏ tới mic này trong cài đặt micro của Chrome/Messenger. Máy Windows không cần cấp micro cho noVNC. Tiếng người gọi được lấy trực tiếp từ luồng cuộc gọi, tiếng AI thay track gửi; mic ảo im lặng giúp Messenger mở kết nối ban đầu.
 3. Bấm **Bật AI cho cuộc gọi này**. Nghe/kiểm tra từ điện thoại hoặc máy của người gọi, vì noVNC trong cấu hình này không truyền tiếng desktop về máy bạn.
 4. Sau khi tiếng hai chiều hoạt động, kết thúc cuộc gọi thử.
-5. Trong tiện ích, tích **Tự nhận cuộc gọi thoại và bật AI**, bấm **Lưu chế độ tự động**.
-6. Gọi thử lần nữa. AI sẽ mở Google trước; chỉ bấm nhận khi Google đã chấp nhận phiên và thông báo cuộc gọi vẫn còn đúng. Sau đó tự tìm cửa sổ gọi và nối âm thanh.
+5. Trong tiện ích, tích **Tự nhận cuộc gọi thoại và bật AI**, đặt **Chờ trước khi AI nhận (giây)** rồi bấm **Lưu chế độ tự động**. Mặc định **25 giây**, nhận số nguyên **0–90**; `0` là nhận ngay khi Google sẵn sàng.
+6. Gọi thử lần nữa. Google được khởi tạo song song với thời gian chờ; chưa nhận hoặc nối âm thanh khi đang chờ. Hết thời gian, chỉ bấm nhận khi Google đã sẵn sàng và thông báo vẫn là đúng lượt gọi đó. Sau đó tự tìm cửa sổ gọi và nối âm thanh.
 7. Khi bước 6 đã hoạt động, có thể đóng tab noVNC và cửa sổ SSH/Windows. VPS vẫn giữ Chrome và âm thanh chạy.
 
 **Dừng AI** cũng tắt chế độ tự động. Tự động mặc định tắt khi mới cài; lựa chọn đã lưu cùng mã kết nối nằm trong profile Chrome riêng, nên có thể được khôi phục khi Chrome khởi động lại. Mật khẩu noVNC và Google key không được đưa vào tiện ích.
@@ -83,6 +83,12 @@ Google Chrome mới không được giả định hỗ trợ `--load-extension` 
 Nhận diện tự động hiện dựa trên nút nhận/từ chối và thông báo cuộc gọi đến bằng tiếng Việt/Anh. Nó bỏ qua nút không khớp, yêu cầu kết bạn, tin nhắn thường, video và nhóm có nhãn nhận diện được; nếu giao diện Facebook thay đổi có thể không tự nhận. Đây chưa phải API xác nhận loại cuộc gọi, nên chưa bảo đảm phân biệt mọi giao diện nhóm. Chỉ dùng cho thử cuộc gọi riêng; chưa hỗ trợ cuộc gọi nhóm/video. Không có chức năng tự gọi ra.
 
 Nếu Google lỗi trước khi nhận, không bấm nhận cuộc gọi. Không retry liên tục cùng một thông báo đến. Nếu nhiều cửa sổ cùng có cuộc gọi, không tự chọn tùy ý. Sau khi nhận, nếu chưa tìm được kết nối sau khoảng 25 giây thì dừng thử; kiểm tra cuộc gọi trên noVNC.
+
+Thời gian chờ tính từ lúc tiện ích nhận thông báo cuộc gọi trên VPS, không phải lúc người gọi bắt đầu bấm gọi. Google khởi tạo chậm hơn mốc này thì tiếp tục chờ Google; không cộng lại toàn bộ thời gian đã chọn. Trong khi chờ, tiện ích kiểm tra khoảng mỗi giây và kiểm tra lại trước khi nhận. Nếu thông báo mất, đổi lượt gọi hoặc đã thấy cuộc gọi được người thật nhận trên VPS, hủy phiên chờ mà không cúp cuộc gọi của người thật. Nhận trên điện thoại cần Facebook đồng bộ trạng thái về VPS; chưa bảo đảm tránh mọi race khi trạng thái này cập nhật chậm.
+
+Lựa chọn được lưu qua lần mở Chrome/service worker sau, áp dụng cho lượt gọi mới. Cấu hình tự nhận cũ chưa có mục này dùng mặc định 25 giây. **Dừng AI**, bỏ chọn tự động rồi lưu, hoặc **Nhường người thật** đều hủy lượt chờ; Nhường giữ tự nhận cho các lượt sau. Gọi thủ công rồi bấm Bật AI không phải chờ thêm mốc tự nhận này.
+
+Không dựa vào một số giây đổ chuông cố định của Messenger để canh sát cuối: chưa xác nhận được mốc thống nhất từ Meta, và người gọi có thể tự ngắt sớm. Thử một cuộc không ai nhận trên thiết bị của bạn để chọn thời gian có khoảng đệm phù hợp. Nếu thử được chuông kéo dài khoảng 60 giây, có thể đặt 45–50 giây; đây là ví dụ theo kết quả thử, không phải giới hạn được Messenger bảo đảm.
 
 Cuộc gọi do AI **tự nhận** sẽ được kết thúc khi phiên AI dừng nếu nút kết thúc khớp và phiên vẫn đúng; nếu Facebook đổi nút thì cần vào noVNC kết thúc thủ công. Cuộc gọi bạn tự nhận rồi bật AI thủ công vẫn trả micro khi dừng, theo cách cũ. Không tự nối lại giữa một cuộc gọi khi Google mất kết nối.
 
@@ -102,7 +108,7 @@ git pull --ff-only
 .venv/bin/python setup_call_vps.py install --voice Aoede
 ```
 
-Bộ cài lưu lựa chọn và khởi động lại host gọi; áp dụng từ cuộc gọi mới. Các lần cập nhật không có `--voice` giữ giọng đã chọn. Cấu hình cũ chưa chọn giọng tiếp tục dùng mặc định của Google. Không cần đổi mã kết nối hoặc reload tiện ích 0.4.0 chỉ để đổi giọng.
+Bộ cài lưu lựa chọn và khởi động lại host gọi; áp dụng từ cuộc gọi mới. Các lần cập nhật không có `--voice` giữ giọng đã chọn. Cấu hình cũ chưa chọn giọng tiếp tục dùng mặc định của Google. Không cần đổi mã kết nối hoặc reload tiện ích chỉ để đổi giọng.
 
 Một số giọng có thể thử; mô tả là phong cách trong [danh sách giọng Google](https://ai.google.dev/gemini-api/docs/speech-generation#prebuilt-voices), không phải cam kết về giọng vùng miền tiếng Việt:
 
@@ -130,9 +136,9 @@ Câu **“đừng ngắt”**, **“ok thôi, nói tiếp đi”**, **“bạn c
 
 Nếu nút kết thúc không khớp, phiên đã đổi hoặc lệnh quá hạn thì báo chưa thực hiện được; không báo thành công khi chưa có kết quả từ tiện ích. Không dùng bản chép lời hoặc nội dung AI nói ra làm lệnh cúp. Không bổ sung quyền Chrome hoặc lưu âm thanh/lời nói trong log.
 
-Cần cập nhật **cả host và tiện ích**: chạy `git pull --ff-only`, `.venv/bin/python setup_call_vps.py install`, rồi trong Chrome VPS mở `chrome://extensions`, Reload tiện ích, xác nhận **0.4.0** và tải lại Facebook. Host chỉ khai báo công cụ kết thúc khi tiện ích báo hỗ trợ; bản tiện ích cũ tiếp tục hoạt động theo cách cũ.
+Cần cập nhật **cả host và tiện ích**: chạy `git pull --ff-only`, `.venv/bin/python setup_call_vps.py install`, rồi trong Chrome VPS mở `chrome://extensions`, Reload tiện ích, xác nhận **0.5.0** và tải lại Facebook. Host chỉ khai báo công cụ kết thúc khi tiện ích báo hỗ trợ; bản tiện ích cũ tiếp tục hoạt động theo cách cũ.
 
-Nếu đã có tiện ích **0.4.0**, các điều chỉnh cách nói/hiểu ý ở relay chỉ cần cập nhật host bằng hai lệnh trên rồi mở cuộc gọi mới; phiên bản tiện ích vẫn giữ 0.4.0.
+Các điều chỉnh cách nói/hiểu ý hoặc đổi giọng chỉ cần cập nhật host rồi mở cuộc gọi mới. Riêng thời gian chờ tự nhận ở **0.5.0** cần Reload tiện ích như trên để nạp mã mới.
 
 Đã thử Google/Gemini 3.8 Live với 20 tình huống chữ có ngữ cảnh, 4 mẫu giọng nói tổng hợp và 1 hội thoại nhiều lượt liên tục: câu kết thúc rút gọn, phủ định, xác nhận “ok”, hỏi khả năng, giả định/trích dẫn, đổi chủ đề, ngắt việc khác và hỏi thông tin chủ tài khoản; các mẫu đều được xử lý đúng và không giới thiệu lại ở lượt thông thường. Giọng “ok thôi nhá”/“ok ngắt đi” tạo lệnh, giọng muốn nói tiếp không tạo lệnh. Chưa kiểm tra thao tác bấm cúp trên Facebook thật sau thay đổi; thử lại một cuộc gọi trên VPS để xác nhận nhãn nút đang dùng. Cơ chế dùng [function calling của Live API](https://ai.google.dev/gemini-api/docs/live-api/tools#function-calling).
 

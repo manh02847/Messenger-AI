@@ -7,7 +7,7 @@ Hỗ trợ **NVIDIA NIM, Google AI Studio, Cloudflare Workers AI và Groq**. Bot
 - **Đã cài bot:** xem [lệnh thường dùng](#1-lệnh-thường-dùng) và [kiểm tra nguồn/model](#2-kiểm-tra-ai-nguồn-và-model).
 - **Cài lần đầu:** bắt đầu từ [cài đặt](#3-cài-đặt-lần-đầu), sau đó chọn phạm vi rep và chạy thử.
 - **AI trong cuộc gọi Chrome máy tính:** xem [Call Lab](experimental/CALL_LAB.md). Relay đã thử với Google thật; người dùng xác nhận cầu nối 0.1.1 hoạt động trên Chrome Windows. Các phần mới ở bản VPS cần kiểm tra riêng.
-- **Gọi AI chạy hoàn toàn trên Ubuntu VPS:** xem [cài Chrome, âm thanh ảo và tự nhận cuộc gọi](deploy/CALL_VPS.md). Bản 0.2.0 có công tắc tự động riêng; cần đăng nhập Facebook và kiểm tra cuộc gọi trên VPS trước khi bật.
+- **Gọi AI chạy hoàn toàn trên Ubuntu VPS:** xem [cài Chrome, âm thanh ảo và tự nhận cuộc gọi](deploy/CALL_VPS.md). Bản 0.5.0 cho chọn thời gian chờ để bạn nghe trước, mặc định 25 giây; cần đăng nhập Facebook và kiểm tra cuộc gọi trên VPS trước khi bật tự động.
 
 ## 1. Lệnh thường dùng
 

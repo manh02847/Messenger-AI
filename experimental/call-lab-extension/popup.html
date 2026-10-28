@@ -11,8 +11,9 @@
 <p class="note">Nhường người thật chỉ dừng tiếng AI. Trên VPS, bạn tiếp tục nói bằng thiết bị đã tham gia cuộc gọi; noVNC không truyền micro của máy bạn.</p>
 <p class="note">Khi AI đang nghe, có thể nói “ngắt cuộc gọi đi” để kết thúc. Chế độ tự nhận cho cuộc gọi sau vẫn giữ theo lựa chọn.</p>
 <label class="check"><input id="autoEnabled" type="checkbox"> Tự nhận cuộc gọi thoại và bật AI</label>
+<label>Chờ trước khi AI nhận (giây)<input id="answerDelaySeconds" type="number" min="0" max="90" step="1" value="25"></label>
 <button id="saveAuto">Lưu chế độ tự động</button>
-<p class="note">Chỉ bật khi muốn AI tự nhận cuộc gọi đến. Google phải sẵn sàng trước khi nhận. Dừng AI cũng tắt tự động; cuộc gọi do AI tự nhận sẽ được kết thúc khi phiên AI dừng.</p>
+<p class="note">Ưu tiên bạn nghe trước. AI chỉ nhận sau thời gian chờ nếu cuộc gọi vẫn đổ chuông và Google đã sẵn sàng. Nhập 0 để nhận ngay khi sẵn sàng. Dừng AI cũng tắt tự động.</p>
 <p id="status" role="status"></p>
 <p class="note">Chế độ tự động đã lưu được giữ khi mở lại Chrome. Tải lại Facebook sau khi cài/cập nhật tiện ích.</p>
 <script src="popup.js"></script></body></html>

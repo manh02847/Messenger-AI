@@ -5,6 +5,7 @@ function request(action) {
     token: document.getElementById("token").value.trim(),
     monitor: document.getElementById("monitor").checked,
     autoEnabled: document.getElementById("autoEnabled").checked,
+    answerDelaySeconds: document.getElementById("answerDelaySeconds").valueAsNumber,
   }).then(result => {
     document.getElementById("status").textContent = result?.status || "Chưa có trạng thái.";
     if (action === "stop") document.getElementById("autoEnabled").checked = false;
@@ -19,6 +20,9 @@ chrome.storage.session.get(fields).then(saved => {
   return chrome.storage.local.get("callAutomation").then(({callAutomation}) => {
     if (callAutomation) {
       document.getElementById("autoEnabled").checked = callAutomation.enabled === true;
+      if (Number.isInteger(callAutomation.answerDelaySeconds)) {
+        document.getElementById("answerDelaySeconds").value = callAutomation.answerDelaySeconds;
+      }
       for (const field of fields) {
         if (saved[field] !== undefined || callAutomation[field] === undefined) continue;
         document.getElementById(field)[field === "monitor" ? "checked" : "value"] = callAutomation[field];

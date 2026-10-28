@@ -1,5 +1,14 @@
 # Kết quả kiểm tra
 
+## Chờ người thật trước khi AI nhận — tiện ích 0.5.0, 28/10/2026
+
+- Thêm mục **Chờ trước khi AI nhận (giây)** trong popup, mặc định **25**, nhận số nguyên **0–90**. Lưu cùng chế độ tự nhận trong profile Chrome; cấu hình cũ chưa có mục này dùng 25 giây. `0` giữ cách nhận ngay khi Google sẵn sàng. Bật AI thủ công không bị trì hoãn theo cấu hình tự nhận.
+- Đếm từ lúc background nhận thông báo trên VPS bằng đồng hồ đơn điệu. Chuẩn bị Google song song, chưa nhận/nối âm thanh hoặc gửi `ready` trước khi cả deadline và Google đều sẵn sàng. Google chậm hơn mốc chờ thì không cộng thêm cả mốc đó. Kiểm tra khoảng mỗi giây và kiểm tra lại ngay trước thao tác nhận: vẫn đúng nonce, một thông báo đến và chưa thấy cuộc gọi đã được người thật nhận.
+- Thông báo mất, người thật nhận trên VPS, Dừng AI, Nhường hoặc tắt tự động đều hủy lượt chờ, đóng phiên relay và dọn timer; không cúp cuộc gọi của người thật. Nhường và mất thông báo giữ lựa chọn tự động cho lượt sau. Lượt gọi mới thay lượt cũ khi đang chờ có deadline riêng; event hoặc timer cũ không tự bật AI vào lượt mới.
+- **87 kiểm thử relay/VPS/tiện ích đạt, 1 fixture Chrome thật bỏ qua**. Thêm **21 tình huống Node** với thời gian mô phỏng: deadline chính xác, khôi phục 25 giây từ cấu hình cũ, lưu/khôi phục 45 giây, giới hạn 90 giây, Google sẵn sàng trước/sau deadline, nhận trên VPS/thiết bị khác, caller ngắt, hủy bằng ba thao tác, đổi nonce, nhận sát mốc, giá trị sai, bắt đầu thủ công và lưu form popup không ghi đè giá trị đang sửa khi polling. Các kiểm thử audio/peer/control hiện có tiếp tục đạt.
+- Cú pháp JS, manifest và `git diff --check` đạt. Giữ quyền `storage` và tập host permission hiện có. Không gọi Google hoặc thực hiện cuộc gọi Facebook thật trong đợt này. Chưa kiểm chứng thời gian đổ chuông thực tế, chất lượng đồng bộ giữa các thiết bị hoặc thao tác nhận trên VPS sau thay đổi; Facebook đồng bộ chậm vẫn có thể gây race. Không tuyên bố một mốc đổ chuông cố định của Messenger.
+- Cần cập nhật host để chép tiện ích mới, Reload **0.5.0** trên Chrome VPS rồi tải lại Facebook. Hướng dẫn và giới hạn trong [deploy/CALL_VPS.md](deploy/CALL_VPS.md).
+
 ## Chọn giọng gọi và lưu trên VPS — 27/10/2026
 
 - Thêm `--voice NAME` cho bộ cài host VPS và lệnh `call-lab`, với 30 tên giọng có sẵn trong tài liệu Google. Cấu hình cũ chưa chọn giọng tiếp tục dùng mặc định; cập nhật không truyền cờ giữ lựa chọn, `--voice default` xóa lựa chọn riêng. Host truyền giọng vào `generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` khi mở phiên mới. Tiện ích vẫn ở 0.4.0.
