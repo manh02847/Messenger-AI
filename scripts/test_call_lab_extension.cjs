@@ -206,7 +206,7 @@ test('late Stop acknowledgement in content script does not clear a newer session
   await flush(); assert.equal(forwarded.at(-1).session, 'new');
 });
 
-function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAuto,deferRemoval,summaryPeer}={}) {
+function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAuto,deferRemoval,summaryPeer,lookupIdentity}={}) {
   let accepted=false, ended=false, ringing=true, human=false, ringId='ring-1';
   const f=background({
     clock,cancelClock,now,savedAuto,deferRemoval,
@@ -214,6 +214,7 @@ function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAu
     send:async(msg,tabId)=>{
       if(msg.command==='ui-probe')return{ok:true,ended:tabId===84&&ended,handoff:tabId===84&&handoff,count:tabId===84&&!ended?1:0,busy:tabId===84&&!ended};
       if(msg.command==='auto-probe')return{ok:true,ringId:ringing&&!accepted&&(tabId===42||twoRings)?ringId:null};
+      if(msg.command==='auto-identity'&&lookupIdentity)return lookupIdentity(msg);
       if(msg.command==='auto-accept'){accepted=true;return{ok:true,accepted:true,...(summaryPeer?{summaryPeer}:{})};}
       if(msg.command==='probe')return{ok:true,count:(accepted||human)&&!ended&&tabId===84?1:0};
       return{ok:true};
@@ -232,6 +233,33 @@ test('only the accepted incoming call supplies a summary recipient at ready, not
   ws.receive({type:'google_ready'});for(let i=0;i<5;i++)await flush();
   assert.deepEqual(ws.sent.find(msg=>msg.type==='ready').summaryPeer,{ownerId:'111',callerId:'222'});
   assert.ok(!f.page.some(msg=>JSON.stringify(msg).includes('callerId')));
+  await f.popup('stop');
+});
+
+test('a metadata-only caller lookup is bound to the accepted ring and included in ready',async()=>{
+  const f=autoFixture({lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,
+    summaryPeer:{ownerId:'111',callerId:'222'},summaryIdentity:{version:'0.6.1',code:'RESOLVED'}})});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+  for(let i=0;i<8;i++)await flush();
+  assert.equal(f.accepted(),true);
+  assert.deepEqual(ws.sent.find(msg=>msg.type==='ready').summaryPeer,{ownerId:'111',callerId:'222'});
+  await f.popup('stop');
+});
+
+for(const action of ['stop','human','new-ring']) test(`${action} during caller lookup prevents a late automatic acceptance`,async()=>{
+  let release;
+  const f=autoFixture({lookupIdentity:()=>new Promise(resolve=>release=resolve)});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});await flush();
+  assert.equal(typeof release,'function');assert.equal(f.accepted(),false);
+  if(action==='stop')await f.popup('stop');
+  else if(action==='human')f.humanAnswer();
+  else f.replaceRing('new-ring');
+  release({ok:true,ringId:'ring-1',summaryPeer:{ownerId:'111',callerId:'222'}});
+  for(let i=0;i<8;i++)await flush();
+  assert.equal(f.accepted(),false);
+  assert.ok(!f.page.some(msg=>msg.command==='auto-accept'));
   await f.popup('stop');
 });
 

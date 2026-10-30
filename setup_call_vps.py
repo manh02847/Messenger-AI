@@ -30,6 +30,7 @@ EXTENSION_FILES = (
     "manifest.json",
     "background.js",
     "bridge-main.js",
+    "caller-main.js",
     "pcm.js",
     "content.js",
     "incoming.js",

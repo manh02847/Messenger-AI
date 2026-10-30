@@ -18,6 +18,21 @@
       window.postMessage({channel: CHANNEL, direction: "command", command, requestId, session: session || "probe", ...details}, location.origin);
     });
   }
+  async function incomingIdentity(incoming, ringId) {
+    if (!incoming.mark || !incoming.mark(ringId)) return {ok: false};
+    const captured = await main("incoming-peer", {ringId});
+    if (incoming.probe().ringId !== ringId) return {ok: false};
+    const known = new Set(["RESOLVED", "RING_CHANGED", "GROUP_CALL", "OWNER_ID_MISSING",
+      "CALL_CARD_TOO_LARGE", "CALLER_AMBIGUOUS", "CALLER_ID_MISSING", "MAIN_BRIDGE_MISSING"]);
+    const code = known.has(captured.identity?.code) ? captured.identity.code : "MAIN_BRIDGE_MISSING";
+    const peer = code === "RESOLVED" ? captured.identity.peer : null;
+    // Return only bounded numeric identifiers; never forward page objects.
+    const valid = peer && Object.keys(peer).length === 2
+      && [peer.ownerId, peer.callerId].every(value => typeof value === "string" && /^[1-9][0-9]{0,24}$/.test(value))
+      && peer.ownerId !== peer.callerId;
+    return {ok: true, ringId, ...(valid ? {summaryPeer: {ownerId: peer.ownerId, callerId: peer.callerId}} : {}),
+      summaryIdentity: {version: "0.6.1", code: valid ? "RESOLVED" : code === "RESOLVED" ? "INVALID_PEER" : code}};
+  }
   window.addEventListener("message", event => {
     const msg = event.data;
     if (event.source !== window || !msg || msg.channel !== CHANNEL || msg.direction !== "event") return;
@@ -46,6 +61,10 @@
         incoming.watch(msg.enabled === true, details => chrome.runtime.sendMessage({from: "call-lab-content", ...details}).catch(() => {}));
         sendResponse({ok: true});
       } else if (msg.command === "auto-probe") sendResponse(incoming.probe());
+      else if (msg.command === "auto-identity") {
+        incomingIdentity(incoming, msg.ringId).then(sendResponse).catch(() => sendResponse({ok: false}));
+        return true;
+      }
       else if (msg.command === "auto-accept") sendResponse(incoming.accept(msg.ringId));
       else if (msg.command === "auto-hangup" && session === msg.session) sendResponse(incoming.hangup());
       else sendResponse({ok: false});

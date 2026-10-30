@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
 
-from .call_reports import CallReporter, CallTranscript, SummaryOptions, call_peer
+from .call_reports import CallReporter, CallTranscript, SummaryOptions, call_peer, identity_failure, IDENTITY_NOTES
 
 ENDPOINT = (
     "wss://generativelanguage.googleapis.com/ws/"
@@ -405,6 +405,11 @@ class CallRelay:
                         control.transcript.peer = call_peer(
                             data.get("summaryPeer"), self.config.summary.owner_id
                         )
+                        if control.transcript.peer is None:
+                            control.transcript.identity_reason = identity_failure(data, self.config.summary.owner_id)
+                            self.log("Tóm tắt: chưa gắn được người gọi — " + IDENTITY_NOTES[control.transcript.identity_reason])
+                        else:
+                            self.log("Tóm tắt: đã gắn người gọi của đúng lượt tự nhận; không log ID.")
                     control.transcript.start()
                 await google.send(
                     json.dumps(

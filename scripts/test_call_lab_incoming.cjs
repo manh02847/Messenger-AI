@@ -13,6 +13,7 @@ function fixture({text='Incoming audio call. Someone is calling you', answer='Ac
   function button(name) {
     const item={innerText:name,isConnected:true,disabled:false,clicked:0,attrs:{},style:{display:'block',visibility:'visible'},
       getAttribute(key){return this.attrs[key] || null;},getBoundingClientRect(){return {width:50,height:20};},
+      setAttribute(key,value){this.attrs[key]=value;},removeAttribute(key){delete this.attrs[key];},
       closest:()=>scope,click(){this.clicked++;}};
     list.push(item);return item;
   }
@@ -34,6 +35,16 @@ test('incoming call detection is passive until armed and accepts a validated non
   assert.equal(f.api.accept('wrong').ok,false);assert.equal(f.yes.clicked,0);
   assert.equal(f.api.accept(id).accepted,true);assert.equal(f.yes.clicked,1);
   assert.equal(f.api.accept(id).ok,false);
+});
+
+test('a read-only identity marker is bound to the same card text and removed on stop',()=>{
+  const f=fixture();f.enable();const id=f.events[0].ringId;
+  assert.equal(f.api.mark(id),true);assert.equal(f.yes.attrs['data-messenger-ai-ring'],id);
+  f.scope.textContent='Incoming audio call. A different person is calling you';
+  assert.equal(f.api.probe().ringId,null);assert.equal(f.api.accept(id).ok,false);
+  f.scan();const next=f.events.at(-1).ringId;assert.notEqual(id,next);
+  assert.equal(f.api.mark(next),true);f.api.watch(false);
+  assert.equal(f.yes.attrs['data-messenger-ai-ring'],undefined);assert.equal(f.api.mark(next),false);
 });
 
 test('the accepted ring carries only its numeric owner and unique caller profile',()=>{

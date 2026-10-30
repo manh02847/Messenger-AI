@@ -20,6 +20,7 @@ from messenger_ai.call_reports import (
     read_report,
     write_report,
     call_peer,
+    identity_failure,
     MAX_TRANSCRIPT,
 )
 from messenger_ai.config import Settings
@@ -362,6 +363,30 @@ def test_installer_creates_isolated_delivery_route_without_copying_cookie(
     {"ownerId": "111", "callerId": "222", "group": True}])
 def test_call_identity_never_accepts_wrong_account_or_inferred_thread_jid(value):
     assert call_peer(value, "111") is None
+
+
+@pytest.mark.parametrize("data,expected", [
+    ({}, "EXTENSION_METADATA_MISSING"),
+    ({"summaryIdentity": {"code": "CALLER_ID_MISSING"}}, "CALLER_ID_MISSING"),
+    ({"summaryIdentity": {"code": "OWNER_ID_MISSING"}}, "OWNER_ID_MISSING"),
+    ({"summaryIdentity": {"code": "PRIVATE_NAME_OR_SECRET"}}, "EXTENSION_METADATA_MISSING"),
+    ({"summaryPeer": {"ownerId": "333", "callerId": "222"}}, "OWNER_MISMATCH"),
+    ({"summaryPeer": {"ownerId": "111", "callerId": "222@g.us"}}, "INVALID_PEER"),
+])
+def test_identity_diagnostics_only_use_fixed_safe_reason_codes(data, expected):
+    assert identity_failure(data, "111") == expected
+
+
+def test_unrouted_summary_keeps_a_safe_reason_without_exposing_body_in_logs(tmp_path):
+    memory = transcript()
+    memory.identity_reason = "CALLER_ID_MISSING"
+    logs = []
+    reporter = CallReporter(SummaryOptions(tmp_path, target="caller", owner_id="111"), "KEY", log=logs.append)
+    reporter._save(memory, 2, "PRIVATE_SUMMARY")
+    stored = json.loads(next(tmp_path.glob("*.unrouted.json")).read_text())
+    assert stored["body"].find("PRIVATE_SUMMARY") >= 0
+    assert stored["identity_reason"] == "CALLER_ID_MISSING"
+    assert "bảng gọi đến" in logs[0] and "PRIVATE_SUMMARY" not in logs[0]
 
 
 @pytest.mark.asyncio

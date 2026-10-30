@@ -19,6 +19,18 @@ from zoneinfo import ZoneInfo
 DEFAULT_SUMMARY_MODEL = "gemini-3.5-flash-lite"
 MAX_TRANSCRIPT = 24000
 MAX_BODY = 5000
+IDENTITY_NOTES = {
+    "EXTENSION_METADATA_MISSING": "tiện ích chưa gửi metadata; kiểm tra tự nhận, Reload 0.6.1 và tải lại Facebook",
+    "MAIN_BRIDGE_MISSING": "chưa nạp bộ đọc danh tính; Reload tiện ích 0.6.1 rồi tải lại Facebook",
+    "OWNER_ID_MISSING": "chưa đọc được ID tài khoản đang đăng nhập Chrome",
+    "OWNER_MISMATCH": "tài khoản Chrome khác tài khoản bot đã chọn ở bộ cài",
+    "CALLER_ID_MISSING": "bảng gọi đến chưa có ID người gọi trong các nguồn được hỗ trợ",
+    "CALLER_AMBIGUOUS": "bảng gọi đến chứa nhiều ID người gọi, không chọn thay",
+    "GROUP_CALL": "metadata cho biết là cuộc gọi nhóm",
+    "RING_CHANGED": "bảng cuộc gọi đã đổi trong lúc kiểm tra danh tính",
+    "CALL_CARD_TOO_LARGE": "metadata bảng gọi vượt giới hạn đọc",
+    "INVALID_PEER": "metadata người gọi chưa hợp lệ",
+}
 REPORT_NAME = re.compile(r"([a-f0-9]{32})\.json\Z")
 SUMMARY_PROMPT = (
     "Bạn tóm tắt phần cuộc gọi mà trợ lý AI đã nghe để các bên đọc lại. "
@@ -64,6 +76,17 @@ def call_peer(value: object, expected_owner: str) -> CallPeer | None:
     return CallPeer(owner, caller)
 
 
+def identity_failure(data: dict, expected_owner: str) -> str:
+    value = data.get("summaryPeer")
+    if isinstance(value, dict) and isinstance(value.get("ownerId"), str) and value["ownerId"] != expected_owner:
+        return "OWNER_MISMATCH"
+    identity = data.get("summaryIdentity")
+    code = identity.get("code") if isinstance(identity, dict) else None
+    return code if isinstance(code, str) and code in IDENTITY_NOTES else (
+        "INVALID_PEER" if value is not None else "EXTENSION_METADATA_MISSING"
+    )
+
+
 @dataclass
 class CallTranscript:
     turns: list[tuple[str, str]] = field(default_factory=list, repr=False)
@@ -71,6 +94,7 @@ class CallTranscript:
     started_clock: float = 0
     truncated: bool = False
     peer: CallPeer | None = field(default=None, repr=False)
+    identity_reason: str = field(default="EXTENSION_METADATA_MISSING", repr=False)
 
     def start(self) -> None:
         self.started_at = time.time()
@@ -114,7 +138,7 @@ class CallTranscript:
 
 def write_report(
     outbox: Path, body: str, started_at: float, seconds: int,
-    *, target: str = "self", peer: CallPeer | None = None,
+    *, target: str = "self", peer: CallPeer | None = None, identity_reason: str = "",
 ) -> Path:
     if outbox.is_symlink() or not outbox.is_dir():
         raise ValueError("Hộp tóm tắt chưa được bộ cài tạo.")
@@ -134,6 +158,8 @@ def write_report(
             owner_id=peer.owner_id if peer else "",
             caller_id=peer.caller_id if peer else "",
         )
+        if peer is None:
+            report["identity_reason"] = identity_reason if identity_reason in IDENTITY_NOTES else "INVALID_PEER"
     fd, name = tempfile.mkstemp(prefix=".report-", dir=outbox)
     try:
         os.fchmod(fd, 0o640)
@@ -158,6 +184,7 @@ class CallReporter:
 
     def submit(self, transcript: CallTranscript) -> None:
         if not transcript.has_caller:
+            self.log("Chưa có lời người gọi được nhận dạng; không tạo bản tóm tắt chỉ có lời chào.")
             return
         seconds = max(0, int(time.monotonic() - transcript.started_clock))
         if len(self.tasks) >= 8:
@@ -238,9 +265,11 @@ class CallReporter:
                 seconds,
                 target=self.options.target,
                 peer=transcript.peer,
+                identity_reason=transcript.identity_reason,
             )
             self.log(
-                "Chưa xác định được người gọi; giữ bản .unrouted.json, chưa gửi cho ai."
+                "Chưa xác định được người gọi; giữ bản .unrouted.json, chưa gửi cho ai. Lý do: "
+                + IDENTITY_NOTES.get(transcript.identity_reason, IDENTITY_NOTES["INVALID_PEER"])
                 if self.options.target == "caller" and transcript.peer is None
                 else "Đã xếp bản tóm tắt cuộc gọi vào hộp gửi riêng."
             )

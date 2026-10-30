@@ -159,6 +159,13 @@
         emit("reply", {requestId: msg.requestId, ok: true, count: candidates().length});
         return;
       }
+      if (msg.command === "incoming-peer") {
+        let identity;
+        try { identity = globalThis.CallLabCaller?.read(msg.ringId); } catch {}
+        emit("reply", {requestId: msg.requestId, ok: true,
+          identity: identity || {code: "MAIN_BRIDGE_MISSING"}});
+        return;
+      }
       if (msg.command === "hangup-check") {
         const choices = candidates();
         const ok = active?.session === msg.session && choices.length === 1 && choices[0] === active.pc;

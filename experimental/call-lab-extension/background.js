@@ -244,11 +244,28 @@ async function prepareAutomatic(state, requested, revision) {
   if (current !== state || !automation.enabled || rings.length !== 1
       || rings[0].tabId !== requested.tabId || rings[0].ringId !== requested.ringId
       || performance.now() < requested.answerAt) throw new Error("RING_CHANGED");
+  let identity;
+  try {
+    identity = await chrome.tabs.sendMessage(requested.tabId,
+      {to: "call-lab-content", command: "auto-identity", ringId: requested.ringId}, {frameId: 0});
+  } catch {}
+  if (current !== state || !automation.enabled || attempt !== revision) throw new Error("CANCELLED");
+  // Identity lookup is read-only. Recheck takeover and the ring before clicking.
+  const latest = await findCall(revision, state.id), freshRings = await incomingCalls();
+  if (current !== state || !automation.enabled || attempt !== revision || latest.tab || latest.code === "MULTIPLE_CALLS"
+      || freshRings.length !== 1 || freshRings[0].tabId !== requested.tabId || freshRings[0].ringId !== requested.ringId) throw new Error("RING_CHANGED");
   const accepted = await chrome.tabs.sendMessage(requested.tabId,
     {to: "call-lab-content", command: "auto-accept", ringId: requested.ringId}, {frameId: 0});
   if (!accepted?.accepted) throw new Error("RING_CHANGED");
   state.accepted = true;
-  state.summaryPeer = accepted.summaryPeer || null;
+  const captured = identity?.ok && identity.ringId === requested.ringId ? identity : null;
+  state.summaryPeer = captured?.summaryPeer || (captured?.summaryIdentity?.code === "MAIN_BRIDGE_MISSING" || !captured ? accepted.summaryPeer : null) || null;
+  state.summaryIdentity = captured?.summaryIdentity || {code: "EXTENSION_METADATA_MISSING"};
+  if (state.summaryPeer && accepted.summaryPeer && (state.summaryPeer.ownerId !== accepted.summaryPeer.ownerId
+      || state.summaryPeer.callerId !== accepted.summaryPeer.callerId)) {
+    state.summaryPeer = null;
+    state.summaryIdentity = {code: "CALLER_AMBIGUOUS"};
+  }
   for (let i = 0; i < 25; i++) {
     if (current !== state || !automation.enabled) throw new Error("CANCELLED");
     const found = await findCall(revision, state.id);
@@ -368,7 +385,8 @@ async function start(msg, automatic = null) {
           if (!result?.ok) { await stop(label(result)); return; }
           if (state.callKey) callTabs.set(state.tabId, {callKey: state.callKey, homeTabId: automatic?.tabId});
           state.ready = true;
-          ws.send(JSON.stringify({type: "ready", ...(state.summaryPeer ? {summaryPeer: state.summaryPeer} : {})}));
+          ws.send(JSON.stringify({type: "ready", ...(state.summaryPeer ? {summaryPeer: state.summaryPeer} : {}),
+            ...(state.summaryIdentity ? {summaryIdentity: state.summaryIdentity} : {})}));
           status = "AI đang nghe và nói trong cuộc gọi này. Bấm Dừng AI để trả micro.";
         }).catch(() => { if (current === state) return stop("Không gắn được âm thanh; tải lại trang rồi gọi thử lại."); });
       } else if (data.type === "end_call") {

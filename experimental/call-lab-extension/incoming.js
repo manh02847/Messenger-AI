@@ -32,6 +32,10 @@
     const found = candidates();
     return found.length === 1 ? found[0] : null;
   }
+  function cardText(button) {
+    const scope = button?.closest('[role="dialog"], [role="alertdialog"]') || button?.parentElement?.parentElement;
+    return normalize(String(scope?.textContent || "").slice(0, 4000));
+  }
   function callerPeer(button) {
     if (!button) return null;
     // Read only the numeric account identifier, never return cookie data.
@@ -75,7 +79,7 @@
     const ended = close && (redial || handoff || /bạn thấy chất lượng cuộc gọi|how was (?:the quality of )?your call|cuộc gọi (?:đã )?kết thúc|call (?:has )?ended/.test(text));
     return {ended, handoff, busy};
   }
-  let observed = null, observedPeer = null, ring = null, callback = null, observer = null, timer = null, interval = null;
+  let observed = null, observedPeer = null, observedText = "", ring = null, callback = null, observer = null, timer = null, interval = null;
   let autoEnabled = false, lastUI = "";
   function scan() {
     timer = null;
@@ -87,11 +91,17 @@
     }
     if (!autoEnabled) return;
     const button = candidate();
-    if (!button) { observed = observedPeer = null; ring = null; return; }
+    if (!button) {
+      observed?.removeAttribute?.("data-messenger-ai-ring");
+      observed = observedPeer = null; ring = null; return;
+    }
     const peer = callerPeer(button);
-    if (button === observed && JSON.stringify(peer) === JSON.stringify(observedPeer)) return;
+    const text = cardText(button);
+    if (button === observed && text === observedText && JSON.stringify(peer) === JSON.stringify(observedPeer)) return;
+    observed?.removeAttribute?.("data-messenger-ai-ring");
     observed = button;
     observedPeer = peer;
+    observedText = text;
     ring = crypto.randomUUID();
     callback?.({kind: "incoming", ringId: ring});
   }
@@ -102,7 +112,8 @@
     if (observer && autoEnabled === enabled) return;
     observer?.disconnect(); observer = null;
     clearTimeout(timer); clearInterval(interval); timer = interval = null;
-    observed = observedPeer = ring = null; autoEnabled = enabled; lastUI = "";
+    observed?.removeAttribute?.("data-messenger-ai-ring");
+    observed = observedPeer = ring = null; observedText = ""; autoEnabled = enabled; lastUI = "";
     observer = new MutationObserver(() => { if (!timer) timer = setTimeout(scan, 350); });
     observer.observe(document, {subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "title", "style", "disabled", "aria-disabled"]});
     interval = setInterval(scan, 2500);
@@ -111,12 +122,19 @@
   function probe() {
     // Revalidate the same live button; a removed/replaced dialog needs a new nonce.
     return {ok: true, ringId: ring && observed === candidate()
+      && cardText(observed) === observedText
       && JSON.stringify(callerPeer(observed)) === JSON.stringify(observedPeer) ? ring : null};
+  }
+  function mark(id) {
+    if (!id || id !== probe().ringId) return false;
+    observed.setAttribute("data-messenger-ai-ring", id);
+    return true;
   }
   function accept(id) {
     if (!id || id !== probe().ringId) return {ok: false};
     const button = observed;
     const peer = observedPeer;
+    button.removeAttribute?.("data-messenger-ai-ring");
     observed = observedPeer = ring = null;
     button.click();
     return {ok: true, accepted: true, ...(peer ? {summaryPeer: peer} : {})};
@@ -127,5 +145,5 @@
     found[0].click();
     return {ok: true};
   }
-  globalThis.CallLabIncoming = Object.freeze({watch, probe, accept, hangup, endState});
+  globalThis.CallLabIncoming = Object.freeze({watch, probe, mark, accept, hangup, endState});
 })();
