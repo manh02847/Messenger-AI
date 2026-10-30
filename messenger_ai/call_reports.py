@@ -20,11 +20,11 @@ DEFAULT_SUMMARY_MODEL = "gemini-3.5-flash-lite"
 MAX_TRANSCRIPT = 24000
 MAX_BODY = 5000
 IDENTITY_NOTES = {
-    "EXTENSION_METADATA_MISSING": "tiện ích chưa gửi metadata; kiểm tra tự nhận, Reload 0.6.1 và tải lại Facebook",
-    "MAIN_BRIDGE_MISSING": "chưa nạp bộ đọc danh tính; Reload tiện ích 0.6.1 rồi tải lại Facebook",
+    "EXTENSION_METADATA_MISSING": "tiện ích chưa gửi metadata; kiểm tra tự nhận, Reload 0.6.2 và tải lại Facebook",
+    "MAIN_BRIDGE_MISSING": "chưa nạp bộ đọc danh tính; Reload tiện ích 0.6.2 rồi tải lại Facebook",
     "OWNER_ID_MISSING": "chưa đọc được ID tài khoản đang đăng nhập Chrome",
     "OWNER_MISMATCH": "tài khoản Chrome khác tài khoản bot đã chọn ở bộ cài",
-    "CALLER_ID_MISSING": "bảng gọi đến chưa có ID người gọi trong các nguồn được hỗ trợ",
+    "CALLER_ID_MISSING": "giao diện cuộc gọi chưa có ID người gọi trong các nguồn được hỗ trợ",
     "CALLER_AMBIGUOUS": "bảng gọi đến chứa nhiều ID người gọi, không chọn thay",
     "GROUP_CALL": "metadata cho biết là cuộc gọi nhóm",
     "RING_CHANGED": "bảng cuộc gọi đã đổi trong lúc kiểm tra danh tính",
@@ -41,6 +41,41 @@ SUMMARY_PROMPT = (
     "Không bịa tên, số điện thoại, thông tin riêng hoặc cam kết. Nếu lời nghe mơ hồ hãy nói chưa rõ. "
     "Tối đa khoảng 180 từ, chỉ xuất nội dung tóm tắt."
 )
+SCHEMA_WORDS = set("call calls caller callee peer peers other user users profile actor actors participant participants inviter initiator offer sender recipient party parties owner viewer local remote incoming outgoing current active previous pending notification payload data info dialog record records entity entities member members snapshot map by for source target session stream connection rtc media audio video thread room key keys id ids fb fbid facebook contact contacts name value values state context props memoized base next first last list node nodes size count total num is has get set ref _".split())
+
+
+def clean_identity_diagnostics(value: object) -> dict:
+    if not isinstance(value, dict) or value.get("source") not in ("ring", "call"):
+        return {}
+    result = {"source": value["source"]}
+    if isinstance(value.get("reactTypes"), list):
+        result["reactTypes"] = [item for item in value["reactTypes"][:5] if item in ("props", "fiber", "internal", "container", "other")]
+    for key in ("nodes", "props", "fibers", "hooks", "contexts", "maps"):
+        if type(value.get(key)) is int and 0 <= value[key] <= 10000:
+            result[key] = value[key]
+    fields = []
+    for item in value.get("fields", [])[:40] if isinstance(value.get("fields"), list) else []:
+        if not isinstance(item, str) or len(item) > 150:
+            continue
+        if not re.fullmatch(r"(?:props|state|context)(?:\.(?:[A-Za-z_]{1,50}|\[\])){1,12}=(?:null|undefined|boolean|string|numeric-string|owner-id|call-id|number|object|array|map|set|function|bigint|symbol)", item):
+            continue
+        path = item.partition("=")[0]
+        if all(part in ("_", "[]") or all(word in SCHEMA_WORDS for word in
+            re.sub(r"([a-z])([A-Z])", r"\1_\2", part).lower().split("_") if word)
+            for part in path.split(".")):
+            fields.append(item)
+    result["fields"] = fields
+    return result
+
+
+def describe_identity_diagnostics(value: dict) -> str:
+    parts = ["nguồn=" + ("cửa sổ gọi" if value["source"] == "call" else "bảng đổ chuông")]
+    parts.extend(f"{key}={value[key]}" for key in ("nodes", "props", "fibers", "hooks", "contexts", "maps") if key in value)
+    if "reactTypes" in value:
+        parts.append("react=" + (",".join(value["reactTypes"]) or "none"))
+    if value.get("fields"):
+        parts.append("trường=" + ", ".join(value["fields"][:16]))
+    return "; ".join(parts)
 
 
 def valid_summary_model(value: object) -> bool:
@@ -95,6 +130,7 @@ class CallTranscript:
     truncated: bool = False
     peer: CallPeer | None = field(default=None, repr=False)
     identity_reason: str = field(default="EXTENSION_METADATA_MISSING", repr=False)
+    identity_diagnostics: dict = field(default_factory=dict, repr=False)
 
     def start(self) -> None:
         self.started_at = time.time()
@@ -138,7 +174,7 @@ class CallTranscript:
 
 def write_report(
     outbox: Path, body: str, started_at: float, seconds: int,
-    *, target: str = "self", peer: CallPeer | None = None, identity_reason: str = "",
+    *, target: str = "self", peer: CallPeer | None = None, identity_reason: str = "", identity_diagnostics: dict | None = None,
 ) -> Path:
     if outbox.is_symlink() or not outbox.is_dir():
         raise ValueError("Hộp tóm tắt chưa được bộ cài tạo.")
@@ -160,6 +196,9 @@ def write_report(
         )
         if peer is None:
             report["identity_reason"] = identity_reason if identity_reason in IDENTITY_NOTES else "INVALID_PEER"
+            diagnostics = clean_identity_diagnostics(identity_diagnostics)
+            if diagnostics:
+                report["identity_diagnostics"] = diagnostics
     fd, name = tempfile.mkstemp(prefix=".report-", dir=outbox)
     try:
         os.fchmod(fd, 0o640)
@@ -266,6 +305,7 @@ class CallReporter:
                 target=self.options.target,
                 peer=transcript.peer,
                 identity_reason=transcript.identity_reason,
+                identity_diagnostics=transcript.identity_diagnostics,
             )
             self.log(
                 "Chưa xác định được người gọi; giữ bản .unrouted.json, chưa gửi cho ai. Lý do: "

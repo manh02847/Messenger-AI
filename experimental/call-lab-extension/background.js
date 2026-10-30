@@ -250,6 +250,7 @@ async function prepareAutomatic(state, requested, revision) {
       {to: "call-lab-content", command: "auto-identity", ringId: requested.ringId}, {frameId: 0});
   } catch {}
   if (current !== state || !automation.enabled || attempt !== revision) throw new Error("CANCELLED");
+  if (identity?.summaryIdentity?.code === "GROUP_CALL") throw new Error("RING_CHANGED");
   // Identity lookup is read-only. Recheck takeover and the ring before clicking.
   const latest = await findCall(revision, state.id), freshRings = await incomingCalls();
   if (current !== state || !automation.enabled || attempt !== revision || latest.tab || latest.code === "MULTIPLE_CALLS"
@@ -269,7 +270,21 @@ async function prepareAutomatic(state, requested, revision) {
   for (let i = 0; i < 25; i++) {
     if (current !== state || !automation.enabled) throw new Error("CANCELLED");
     const found = await findCall(revision, state.id);
-    if (found.tab) { state.tabId = found.tab.id; state.callKey = callIdentity(found.tab.url); return; }
+    if (found.tab) {
+      state.tabId = found.tab.id; state.callKey = callIdentity(found.tab.url);
+      if (!state.summaryPeer && state.summaryIdentity?.code === "CALLER_ID_MISSING" && state.callKey) {
+        let connected;
+        try {connected = await content(state,"call-identity",{callKey:state.callKey});} catch {}
+        if (current !== state || !automation.enabled || attempt !== revision) throw new Error("CANCELLED");
+        const latest = await chrome.tabs.get(state.tabId);
+        if (current !== state || attempt !== revision || callIdentity(latest.url) !== state.callKey) throw new Error("RING_CHANGED");
+        if (connected?.ok && connected.callKey === state.callKey) {
+          state.summaryPeer = connected.summaryPeer || null;
+          state.summaryIdentity = connected.summaryIdentity || state.summaryIdentity;
+        }
+      }
+      return;
+    }
     if (found.code === "MULTIPLE_CALLS") throw new Error("MULTIPLE_CALLS");
     await new Promise(resolve => setTimeout(resolve, 1000));
   }

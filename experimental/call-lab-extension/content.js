@@ -18,10 +18,7 @@
       window.postMessage({channel: CHANNEL, direction: "command", command, requestId, session: session || "probe", ...details}, location.origin);
     });
   }
-  async function incomingIdentity(incoming, ringId) {
-    if (!incoming.mark || !incoming.mark(ringId)) return {ok: false};
-    const captured = await main("incoming-peer", {ringId});
-    if (incoming.probe().ringId !== ringId) return {ok: false};
+  function identityResult(captured) {
     const known = new Set(["RESOLVED", "RING_CHANGED", "GROUP_CALL", "OWNER_ID_MISSING",
       "CALL_CARD_TOO_LARGE", "CALLER_AMBIGUOUS", "CALLER_ID_MISSING", "MAIN_BRIDGE_MISSING"]);
     const code = known.has(captured.identity?.code) ? captured.identity.code : "MAIN_BRIDGE_MISSING";
@@ -30,8 +27,27 @@
     const valid = peer && Object.keys(peer).length === 2
       && [peer.ownerId, peer.callerId].every(value => typeof value === "string" && /^[1-9][0-9]{0,24}$/.test(value))
       && peer.ownerId !== peer.callerId;
-    return {ok: true, ringId, ...(valid ? {summaryPeer: {ownerId: peer.ownerId, callerId: peer.callerId}} : {}),
-      summaryIdentity: {version: "0.6.1", code: valid ? "RESOLVED" : code === "RESOLVED" ? "INVALID_PEER" : code}};
+    const diagnostics = captured.identity?.diagnostics;
+    const clean = {};
+    if (diagnostics && ["ring", "call"].includes(diagnostics.source)) {
+      clean.source = diagnostics.source;
+      if (Array.isArray(diagnostics.reactTypes)) clean.reactTypes = diagnostics.reactTypes
+        .filter(value => ["props","fiber","internal","container","other"].includes(value)).slice(0,5);
+      for (const key of ["nodes", "props", "fibers", "hooks", "contexts", "maps"]) {
+        if (Number.isInteger(diagnostics[key]) && diagnostics[key] >= 0 && diagnostics[key] <= 10000) clean[key] = diagnostics[key];
+      }
+      clean.fields = Array.isArray(diagnostics.fields) ? diagnostics.fields.filter(value => typeof value === "string"
+        && value.length <= 150 && /^(?:props|state|context)(?:\.(?:[A-Za-z_]{1,50}|\[\])){1,12}=(?:null|undefined|boolean|string|numeric-string|owner-id|call-id|number|object|array|map|set|function|bigint|symbol)$/.test(value)).slice(0,40) : [];
+    }
+    return {ok: true, ...(valid ? {summaryPeer: {ownerId: peer.ownerId, callerId: peer.callerId}} : {}),
+      summaryIdentity: {version: "0.6.2", code: valid ? "RESOLVED" : code === "RESOLVED" ? "INVALID_PEER" : code,
+        ...(clean.source ? {diagnostics: clean} : {})}};
+  }
+  async function incomingIdentity(incoming, ringId) {
+    if (!incoming.mark || !incoming.mark(ringId)) return {ok: false};
+    const captured = await main("incoming-peer", {ringId});
+    if (incoming.probe().ringId !== ringId) return {ok: false};
+    return {...identityResult(captured), ringId};
   }
   window.addEventListener("message", event => {
     const msg = event.data;
@@ -54,6 +70,12 @@
       return true;
     }
     if (typeof msg.command !== "string") return;
+    if (msg.command === "call-identity") {
+      if (!msg.callKey || !matchesCall(msg.callKey)) {sendResponse({ok:false});return;}
+      main("active-peer", {callKey:msg.callKey}).then(result => sendResponse(matchesCall(msg.callKey)
+        ? {...identityResult(result),callKey:msg.callKey} : {ok:false}));
+      return true;
+    }
     if (msg.command.startsWith("auto-")) {
       const incoming = globalThis.CallLabIncoming;
       if (!incoming) { sendResponse({ok: false, code: "AUTO_NOT_READY"}); return; }

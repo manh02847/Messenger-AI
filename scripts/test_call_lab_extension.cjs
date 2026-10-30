@@ -206,15 +206,17 @@ test('late Stop acknowledgement in content script does not clear a newer session
   await flush(); assert.equal(forwarded.at(-1).session, 'new');
 });
 
-function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAuto,deferRemoval,summaryPeer,lookupIdentity}={}) {
+function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAuto,deferRemoval,summaryPeer,lookupIdentity,lookupActive,
+  callURL='https://www.facebook.com/groupcall/test'}={}) {
   let accepted=false, ended=false, ringing=true, human=false, ringId='ring-1';
   const f=background({
     clock,cancelClock,now,savedAuto,deferRemoval,
-    query:async()=>[{id:42,url:'https://www.facebook.com/'},...(accepted||human||twoRings?[{id:84,url:'https://www.facebook.com/groupcall/test'}]:[])],
+    query:async()=>[{id:42,url:'https://www.facebook.com/'},...(accepted||human||twoRings?[{id:84,url:callURL}]:[])],
     send:async(msg,tabId)=>{
       if(msg.command==='ui-probe')return{ok:true,ended:tabId===84&&ended,handoff:tabId===84&&handoff,count:tabId===84&&!ended?1:0,busy:tabId===84&&!ended};
       if(msg.command==='auto-probe')return{ok:true,ringId:ringing&&!accepted&&(tabId===42||twoRings)?ringId:null};
       if(msg.command==='auto-identity'&&lookupIdentity)return lookupIdentity(msg);
+      if(msg.command==='call-identity'&&lookupActive)return lookupActive(msg);
       if(msg.command==='auto-accept'){accepted=true;return{ok:true,accepted:true,...(summaryPeer?{summaryPeer}:{})};}
       if(msg.command==='probe')return{ok:true,count:(accepted||human)&&!ended&&tabId===84?1:0};
       return{ok:true};
@@ -244,6 +246,40 @@ test('a metadata-only caller lookup is bound to the accepted ring and included i
   for(let i=0;i<8;i++)await flush();
   assert.equal(f.accepted(),true);
   assert.deepEqual(ws.sent.find(msg=>msg.type==='ready').summaryPeer,{ownerId:'111',callerId:'222'});
+  await f.popup('stop');
+});
+
+test('a missing ring identity is resolved from the exact connected call window before ready',async()=>{
+  const f=autoFixture({callURL:'https://www.facebook.com/groupcall/test?call_id=one',
+    lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryIdentity:{code:'CALLER_ID_MISSING'}}),
+    lookupActive:async msg=>({ok:true,callKey:msg.callKey,summaryPeer:{ownerId:'111',callerId:'222'},summaryIdentity:{code:'RESOLVED'}})});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+  for(let i=0;i<12;i++)await flush();
+  assert.equal(f.page.find(msg=>msg.command==='call-identity').tabId,84);
+  assert.deepEqual(ws.sent.find(msg=>msg.type==='ready').summaryPeer,{ownerId:'111',callerId:'222'});
+  await f.popup('stop');
+});
+
+test('takeover during connected-window lookup discards the late recipient and does not hang up',async()=>{
+  let release;
+  const f=autoFixture({callURL:'https://www.facebook.com/groupcall/test?call_id=one',
+    lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryIdentity:{code:'CALLER_ID_MISSING'}}),
+    lookupActive:msg=>new Promise(resolve=>release=()=>resolve({ok:true,callKey:msg.callKey,summaryPeer:{ownerId:'111',callerId:'222'}}))});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+  for(let i=0;i<8;i++)await flush();assert.equal(typeof release,'function');
+  await f.popup('takeover');release();for(let i=0;i<8;i++)await flush();
+  assert.ok(!ws.sent.some(msg=>msg.type==='ready'));
+  assert.ok(!f.page.some(msg=>msg.command==='auto-hangup'));
+  await f.popup('stop');
+});
+
+test('known group metadata prevents automatic answering',async()=>{
+  const f=autoFixture({lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryIdentity:{code:'GROUP_CALL'}})});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+  for(let i=0;i<8;i++)await flush();assert.equal(f.accepted(),false);
   await f.popup('stop');
 });
 

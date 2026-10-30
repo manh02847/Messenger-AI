@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function fixture({deferResume=false,deferRestore=false}={}) {
+function fixture({deferResume=false,deferRestore=false,caller}={}) {
   const events=[], listeners=[], contexts=[];
   let resume, restore;
   const window={postMessage(data){queueMicrotask(()=>{events.push(data);for(const fn of listeners)void fn({source:window,data});});},addEventListener(type,fn){if(type==='message')listeners.push(fn);}};
@@ -34,7 +34,7 @@ function fixture({deferResume=false,deferRestore=false}={}) {
     createBufferSource(){const source=new Node();source.start=time=>source.started=time;source.stop=()=>source.stopped=true;this.sources.push(source);return source;}
     async close(){this.state='closed';}
   }
-  const context=vm.createContext({window,location:{origin:'https://www.facebook.com'},AudioContext:Context,MediaStream:Stream,Float32Array,Uint8Array,DataView,Math,btoa,atob,queueMicrotask,console});
+  const context=vm.createContext({window,location:{origin:'https://www.facebook.com'},AudioContext:Context,MediaStream:Stream,Float32Array,Uint8Array,DataView,Math,btoa,atob,queueMicrotask,console,CallLabCaller:caller});
   const root=path.join(__dirname,'../experimental/call-lab-extension');
   vm.runInContext(fs.readFileSync(path.join(root,'pcm.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(path.join(root,'bridge-main.js'),'utf8'),context);
@@ -62,6 +62,17 @@ test('observer is passive and refuses absent/ambiguous calls',async()=>{
   new f.window.RTCPeerConnection();
   assert.equal((await f.send('start')).code,'MULTIPLE_CALLS');
   assert.equal(one.sender.track,one.original);
+});
+
+test('active caller lookup needs exactly one connected audio peer and never starts audio capture',async()=>{
+  const calls=[],f=fixture({caller:{readActive:key=>{calls.push(key);return{code:'RESOLVED',peer:{ownerId:'111',callerId:'222'}};}}});
+  const details={callKey:'https://www.facebook.com/groupcall/test?call_id=one'};
+  assert.equal((await f.send('active-peer',details)).identity.code,'RING_CHANGED');assert.equal(calls.length,0);
+  const pc=new f.window.RTCPeerConnection();
+  assert.equal((await f.send('active-peer',details)).identity.peer.callerId,'222');
+  assert.deepEqual(calls,[details.callKey]);assert.equal(f.contexts.length,0);assert.equal(pc.sender.track,pc.original);
+  new f.window.RTCPeerConnection();
+  assert.equal((await f.send('active-peer',details)).identity.code,'RING_CHANGED');assert.equal(calls.length,1);
 });
 
 test('only caller audio is captured and microphone is restored after Stop',async()=>{

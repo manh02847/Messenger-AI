@@ -16,7 +16,7 @@ function fixture({cookie='', viewer='111', props={}, attrs={}, extra=[], fiber=f
   let calls=0;
   if (fiber) button.__reactFiber$test={memoizedProps:{},return:{memoizedProps:props,return:{stateNode:scope}}};
   else button.__reactProps$test=props;
-  const document={querySelectorAll:()=>nodes,get cookie(){if(typeof cookie==='function')return cookie();return cookie;}};
+  const document={body:scope,querySelectorAll:()=>nodes,get cookie(){if(typeof cookie==='function')return cookie();return cookie;}};
   const context=vm.createContext({document,location:{href:'https://www.facebook.com/'},URL,
     require:name=>{calls++;assert.equal(name,'CurrentUserInitialData');return{USER_ID:viewer,token:'DO_NOT_EXPORT'};}});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../experimental/call-lab-extension/caller-main.js'),'utf8'),context);
@@ -36,6 +36,58 @@ test('MAIN account data works when c_user is hidden or cookie access throws',()=
 
 test('React fiber props of the incoming card resolve its caller',()=>{
   assert.equal(fixture({fiber:true,props:{callInfo:{callerId:'222'}}}).read().peer.callerId,'222');
+});
+
+test('a hook/context participant collection requires the verified owner and exactly one other profile',()=>{
+  const active=f=>{f.context.location.href='https://www.facebook.com/groupcall/test?call_id=one';return f.api.readActive(f.context.location.href);};
+  for(const value of [['111','222'],[{id:'111'},{id:'222'}],new Map([['111',{}],['222',{}]])]) {
+    const f=fixture({fiber:true});
+    f.button.__reactFiber$test.memoizedState={memoizedState:{callID:'one',participants:value},next:null};
+    assert.equal(active(f).peer.callerId,'222');
+  }
+  const f=fixture({fiber:true});
+  f.button.__reactFiber$test.dependencies={firstContext:{memoizedValue:{callID:'one',participantMap:new Map([['111',{}],['222',{}]])}}};
+  assert.equal(active(f).peer.callerId,'222');
+  const ref=fixture({fiber:true});
+  ref.button.__reactFiber$test.memoizedState={memoizedState:{current:{callID:'one',participants:['111','222']}}};
+  assert.equal(active(ref).peer.callerId,'222');
+});
+
+test('unbound, cached or another call state cannot route a current call summary',()=>{
+  for(const state of [{participants:['111','333']},{callID:'two',participants:['111','333']},
+    {callID:'one',history:{participants:['111','333']}},{isGroupCall:true,participants:['111','222','333']}]) {
+    const f=fixture({fiber:true});f.context.location.href='https://www.facebook.com/groupcall/test?call_id=one';
+    f.button.__reactFiber$test.memoizedState={memoizedState:state};
+    assert.equal(f.api.readActive(f.context.location.href).code,'CALLER_ID_MISSING');
+  }
+});
+
+test('unrelated participant lists and getters cannot infer a caller',()=>{
+  for(const value of [['222','333'],['222'],['111','111']]) {
+    assert.equal(fixture({props:{participants:value}}).read().code,'CALLER_ID_MISSING');
+  }
+  const people=['111','222'];Object.defineProperty(people,'0',{get(){throw Error('Do not invoke getters');}});
+  assert.equal(fixture({props:{participants:people}}).read().code,'CALL_CARD_TOO_LARGE');
+});
+
+test('the active call reader checks the exact call URL and does not use a feed or another call',()=>{
+  const f=fixture({props:{callID:'one',participants:['111','222']}});
+  f.context.location.href='https://www.facebook.com/groupcall/ROOM:test?call_id=one';
+  assert.equal(f.api.readActive(f.context.location.href).peer.callerId,'222');
+  assert.equal(f.api.readActive('https://www.facebook.com/groupcall/ROOM:test?call_id=two').code,'RING_CHANGED');
+  f.context.location.href='https://www.facebook.com/';
+  assert.equal(f.api.readActive(f.context.location.href).code,'RING_CHANGED');
+  const unrelated=fixture({props:{userID:'333'},attrs:{href:'/333'}});
+  unrelated.context.location.href='https://www.facebook.com/groupcall/test?call_id=one';
+  assert.equal(unrelated.api.readActive(unrelated.context.location.href).code,'CALLER_ID_MISSING');
+});
+
+test('structural diagnostics preserve field shapes without private values or dynamic key names',()=>{
+  const f=fixture({props:{call:{otherUserFbId:'222',name:'PRIVATE_NAME',token:'PRIVATE_TOKEN',userAlice:'333',user123456789:'444'}}});
+  const result=f.read();assert.equal(result.code,'CALLER_ID_MISSING');
+  assert.ok(result.diagnostics.fields.includes('props.call.otherUserFbId=numeric-string'));
+  const encoded=JSON.stringify(result);
+  for(const text of ['PRIVATE_NAME','PRIVATE_TOKEN','Alice','123456789','222','333','444'])assert.ok(!encoded.includes(text));
 });
 
 for(const [key,value] of [['actorID','222'],['userId','222'],['actor',{id:'222',name:'PRIVATE_NAME'}],['profile',{id:'222'}]]) {

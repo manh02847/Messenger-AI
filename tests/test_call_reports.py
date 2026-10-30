@@ -21,6 +21,8 @@ from messenger_ai.call_reports import (
     write_report,
     call_peer,
     identity_failure,
+    clean_identity_diagnostics,
+    describe_identity_diagnostics,
     MAX_TRANSCRIPT,
 )
 from messenger_ai.config import Settings
@@ -377,6 +379,25 @@ def test_identity_diagnostics_only_use_fixed_safe_reason_codes(data, expected):
     assert identity_failure(data, "111") == expected
 
 
+@pytest.mark.parametrize("value", [None, {}, {"source":"PRIVATE_NAME"}, {"source": []}])
+def test_unknown_identity_diagnostics_do_not_log_external_values(value):
+    assert clean_identity_diagnostics(value) == {}
+
+
+def test_structural_diagnostics_only_keep_schema_shapes_and_bounded_counts():
+    clean = clean_identity_diagnostics({"source":"call", "nodes":120, "props":True,
+        "fibers":-1, "hooks":99999999, "contexts":2, "cookie":"PRIVATE_SECRET", "callerId":"222",
+        "fields":["context.memoizedValue.participants=map", "props.otherUserFbId=numeric-string",
+                  "props.callID=call-id", "props.userID=owner-id",
+                  "props.userAlice=string", "props.user123456789=number", "props.callerID=222", "PRIVATE_TEXT"]})
+    assert clean == {"source":"call", "nodes":120, "contexts":2,
+        "fields":["context.memoizedValue.participants=map", "props.otherUserFbId=numeric-string",
+                  "props.callID=call-id", "props.userID=owner-id"]}
+    log = describe_identity_diagnostics(clean)
+    assert "cửa sổ gọi" in log
+    assert all(word not in log for word in ("Alice","123456789","222","PRIVATE_SECRET","PRIVATE_TEXT"))
+
+
 def test_unrouted_summary_keeps_a_safe_reason_without_exposing_body_in_logs(tmp_path):
     memory = transcript()
     memory.identity_reason = "CALLER_ID_MISSING"
@@ -386,7 +407,7 @@ def test_unrouted_summary_keeps_a_safe_reason_without_exposing_body_in_logs(tmp_
     stored = json.loads(next(tmp_path.glob("*.unrouted.json")).read_text())
     assert stored["body"].find("PRIVATE_SUMMARY") >= 0
     assert stored["identity_reason"] == "CALLER_ID_MISSING"
-    assert "bảng gọi đến" in logs[0] and "PRIVATE_SUMMARY" not in logs[0]
+    assert "giao diện cuộc gọi" in logs[0] and "PRIVATE_SUMMARY" not in logs[0]
 
 
 @pytest.mark.asyncio
@@ -493,7 +514,9 @@ async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_g
         async with connect(url, origin=ORIGIN, proxy=None) as ws:
             await authorize(ws)
             await receive(ws)
-            await ws.send(json.dumps({"type": "ready", "summaryPeer": {"ownerId": browser_owner, "callerId": "222"}}))
+            await ws.send(json.dumps({"type": "ready", "summaryPeer": {"ownerId": browser_owner, "callerId": "222"},
+                "summaryIdentity":{"code":"RESOLVED", "diagnostics":{"source":"call","nodes":120,"hooks":2,
+                    "fields":["state.memoizedState.participants=map","props.userAlice=string"],"token":"PRIVATE_DIAGNOSTIC"}}}))
             await receive(ws)
             await receive(ws)
             await ws.send(json.dumps({"type": "audio", "sampleRate": 16000, "data": PCM,
@@ -509,6 +532,8 @@ async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_g
         assert captured and "xem lịch" in captured[0]
         assert "summaryPeer" not in json.dumps(created[0].sent)
         assert "callerId" not in json.dumps(created[0].sent)
+        assert "diagnostics" not in json.dumps(created[0].sent)
+        assert all("PRIVATE_DIAGNOSTIC" not in line and "Alice" not in line for line in logs)
         assert all("999" not in line and "xem lịch" not in line for line in logs)
     paths = list(tmp_path.glob("*.json"))
     assert len(paths) == 1
@@ -517,3 +542,6 @@ async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_g
         assert report["version"] == 2 and report["caller_id"] == "222" and report["owner_id"] == "111"
     else:
         assert paths[0].name.endswith(".unrouted.json")
+        raw = json.loads(paths[0].read_text())
+        assert raw["identity_diagnostics"]["fields"] == ["state.memoizedState.participants=map"]
+        assert any("Tóm tắt: cấu trúc nhận diện" in line for line in logs)

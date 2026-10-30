@@ -17,7 +17,16 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
 
-from .call_reports import CallReporter, CallTranscript, SummaryOptions, call_peer, identity_failure, IDENTITY_NOTES
+from .call_reports import (
+    IDENTITY_NOTES,
+    CallReporter,
+    CallTranscript,
+    SummaryOptions,
+    call_peer,
+    clean_identity_diagnostics,
+    describe_identity_diagnostics,
+    identity_failure,
+)
 
 ENDPOINT = (
     "wss://generativelanguage.googleapis.com/ws/"
@@ -408,6 +417,14 @@ class CallRelay:
                         if control.transcript.peer is None:
                             control.transcript.identity_reason = identity_failure(data, self.config.summary.owner_id)
                             self.log("Tóm tắt: chưa gắn được người gọi — " + IDENTITY_NOTES[control.transcript.identity_reason])
+                            identity = data.get("summaryIdentity")
+                            control.transcript.identity_diagnostics = clean_identity_diagnostics(
+                                identity.get("diagnostics") if isinstance(identity, dict) else None
+                            )
+                            if control.transcript.identity_diagnostics:
+                                self.log("Tóm tắt: cấu trúc nhận diện — " + describe_identity_diagnostics(control.transcript.identity_diagnostics))
+                            elif not isinstance(identity, dict) or identity.get("version") != "0.6.2":
+                                self.log("Tóm tắt: tiện ích chưa gửi chẩn đoán 0.6.2; Reload tiện ích rồi tải lại Facebook.")
                         else:
                             self.log("Tóm tắt: đã gắn người gọi của đúng lượt tự nhận; không log ID.")
                     control.transcript.start()
