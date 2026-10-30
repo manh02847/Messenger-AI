@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from .call_lab import MODELS, SYSTEM, VOICES, CallRelay, LabConfig
+from .call_reports import DEFAULT_SUMMARY_MODEL, SummaryOptions, valid_summary_model
 
 STATE = Path("/var/lib/messenger-ai-call")
 RUNTIME = Path("/run/messenger-ai-call")
@@ -47,6 +48,16 @@ def read_settings(root: Path) -> dict:
         or not Path(data["browser"]).is_absolute()
         or type(data.get("use_persona", False)) is not bool
         or (data.get("voice") is not None and data["voice"] not in VOICES)
+        or type(data.get("summary_enabled", False)) is not bool
+        or not valid_summary_model(data.get("summary_model", DEFAULT_SUMMARY_MODEL))
+        or (
+            data.get("summary_enabled", False)
+            and (
+                not isinstance(data.get("summary_outbox"), str)
+                or not Path(data["summary_outbox"]).is_absolute()
+                or "\x00" in data["summary_outbox"]
+            )
+        )
     ):
         raise HostError("Cấu hình gọi VPS chưa hợp lệ.")
     return data
@@ -256,6 +267,12 @@ async def run(root: Path = STATE, runtime: Path = RUNTIME, *, port=8765):
             data["max_seconds"],
             system_instruction=call_instruction(root, data),
             voice=data.get("voice"),
+            summary=SummaryOptions(
+                Path(data["summary_outbox"]),
+                data.get("summary_model", DEFAULT_SUMMARY_MODEL),
+            )
+            if data.get("summary_enabled", False)
+            else None,
         )
     )
     try:
@@ -307,6 +324,7 @@ async def run(root: Path = STATE, runtime: Path = RUNTIME, *, port=8765):
                     f"{children[index][0]} đã dừng; systemd sẽ thử khởi động lại."
                 )
     finally:
+        await relay.close()
         for task in watchers:
             task.cancel()
         await asyncio.gather(*watchers, return_exceptions=True)

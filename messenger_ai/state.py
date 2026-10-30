@@ -31,7 +31,16 @@ class State:
             CREATE TABLE IF NOT EXISTS ai_calls (id INTEGER PRIMARY KEY, day TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread, id);
             CREATE INDEX IF NOT EXISTS outbox_thread ON outbox(thread, at);
+            CREATE TABLE IF NOT EXISTS call_reports (
+                id TEXT PRIMARY KEY, status TEXT NOT NULL, at REAL NOT NULL
+            );
         """)
+        if "kind" not in {
+            row[1] for row in self.db.execute("PRAGMA table_info(outbox)")
+        }:
+            self.db.execute(
+                "ALTER TABLE outbox ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'"
+            )
         self.db.commit()
 
     def claim(self, thread: str, message_id: str, now: float) -> bool:
@@ -92,11 +101,13 @@ class State:
     def _hash(text: str) -> str:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    def begin_send(self, thread: str, text: str, now: float) -> int:
+    def begin_send(
+        self, thread: str, text: str, now: float, *, kind: str = "text"
+    ) -> int:
         with self.db:
             cursor = self.db.execute(
-                "INSERT INTO outbox(thread,hash,status,at) VALUES (?,?,'pending',?)",
-                (thread, self._hash(text), now),
+                "INSERT INTO outbox(thread,hash,status,at,kind) VALUES (?,?,'pending',?,?)",
+                (thread, self._hash(text), now, kind),
             )
         return int(cursor.lastrowid)
 
@@ -112,13 +123,33 @@ class State:
     def bot_echo(self, thread: str, message_id: str, text: str, now: float) -> bool:
         row = self.db.execute(
             """
-            SELECT 1 FROM outbox WHERE thread=? AND (
+            SELECT 1 FROM outbox WHERE thread=? AND kind!='reaction' AND (
                 message_id=? OR (status IN ('pending','unknown') AND hash=? AND at>=?)
             ) LIMIT 1
         """,
             (thread, message_id, self._hash(text), now - 120),
         ).fetchone()
         return row is not None
+
+    def claim_report(self, report_id: str, now: float) -> bool:
+        with self.db:
+            cursor = self.db.execute(
+                "INSERT OR IGNORE INTO call_reports VALUES (?,'pending',?)",
+                (report_id, now),
+            )
+        return cursor.rowcount == 1
+
+    def finish_report(self, report_id: str, status: str) -> None:
+        with self.db:
+            self.db.execute(
+                "UPDATE call_reports SET status=? WHERE id=?", (status, report_id)
+            )
+
+    def report_status(self, report_id: str) -> str | None:
+        row = self.db.execute(
+            "SELECT status FROM call_reports WHERE id=?", (report_id,)
+        ).fetchone()
+        return row[0] if row else None
 
     def sends_since(self, thread: str, since: float) -> int:
         return int(

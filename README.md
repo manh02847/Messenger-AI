@@ -2,6 +2,8 @@
 
 Bot nhận **tin văn bản mới** trên Messenger cá nhân, dùng AI để soạn rồi trả lời trong cuộc trò chuyện đó. Có thể bật thêm **đọc ảnh gửi mới** bằng model hỗ trợ thị giác. Có ngữ cảnh riêng cho từng người và tự nhường khi bạn nhắn thủ công.
 
+Có thể bật **AI thả cảm xúc theo ngữ cảnh** và **tóm tắt phần cuộc gọi AI đã nghe rồi gửi cho chính mình**. Hai tính năng có công tắc riêng, mặc định chưa bật khi cập nhật.
+
 Hỗ trợ **NVIDIA NIM, Google AI Studio, Cloudflare Workers AI và Groq**. Bot chạy bằng dòng lệnh trên máy tính/VPS; GitHub chỉ lưu mã nguồn. Dùng API hosted nên VPS không cần GPU.
 
 - **Đã cài bot:** xem [lệnh thường dùng](#1-lệnh-thường-dùng) và [kiểm tra nguồn/model](#2-kiểm-tra-ai-nguồn-và-model).
@@ -43,6 +45,45 @@ Nếu chạy trực tiếp trên terminal, nhấn **Ctrl+C** để dừng trư�
 | Áp dụng cấu hình/persona mới | `systemctl restart messenger-ai` |
 
 Các lệnh trên dành cho **system service**. Nếu đã cài **user service**, thêm `--user` vào `systemctl` và `journalctl`. Hai loại service được cài ở vị trí khác nhau; chọn đúng loại đã cài. Nếu chưa có service, xem [chạy nền trên VPS](#6-chạy-nền-trên-vps).
+
+### AI tự chọn cảm xúc
+
+```bash
+.venv/bin/python -m messenger_ai reactions auto
+systemctl restart messenger-ai
+```
+
+Model chọn theo câu mới và ngữ cảnh: không thả, thả rồi trả lời, hoặc chỉ thả để xác nhận/kết chuyện. Có các cảm xúc thích, tim, vui, ngạc nhiên và buồn; hướng dẫn chọn thận trọng, không dùng để nhận lời hoặc xác nhận giao dịch thay chủ tài khoản. Nội dung chữ vẫn theo persona, không tự thêm emoji. Quyết định nằm trong cùng lượt gọi AI, không gọi thêm một model chỉ để chọn react.
+
+`chat-ai` cho xem lựa chọn dự kiến mà không kết nối Messenger. Cảm xúc chỉ tác động đúng tin mới nhất trong chat riêng đã được phép, không tác động nhóm hoặc tin của chính bạn. Bot vẫn nhường khi bạn nhắn thủ công. Nếu lệnh react lỗi/chưa rõ kết quả, không tự thả lại và dùng câu trả lời chữ dự phòng. Việc gửi lệnh thành công chưa thay thế việc kiểm tra cảm xúc đã hiển thị trên Messenger.
+
+```bash
+.venv/bin/python -m messenger_ai reactions off
+```
+
+Đổi cấu hình xong restart service tương ứng. Với acc 2, chạy trong `~/messenger-ai-bot-2` và dùng `systemctl restart messenger-ai-2`.
+
+### Tóm tắt cuộc gọi rồi gửi tin
+
+Trên VPS đã cài gọi AI, chọn thư mục bot sẽ **nhận thông báo cho chính tài khoản đó**:
+
+```bash
+cd ~/messenger-ai-bot
+.venv/bin/python setup_call_vps.py install --call-summaries
+systemctl restart messenger-ai
+```
+
+Sau khi phần AI tham gia cuộc gọi kết thúc, host tạo bản tóm tắt ngắn và bot nhắn vào cuộc trò chuyện **với chính mình**. Không gửi bản tóm tắt cho người gọi. Chỉ nhận dạng lời nói khi bật tính năng này, không ghi file âm thanh. Bản tóm tắt dựa vào phần AI nghe, có thể thiếu khi nhường người thật hoặc nhận dạng sai.
+
+Mặc định dùng `gemini-3.5-flash-lite`, một request Google bổ sung sau mỗi phiên có lời người gọi; tính vào quota/phí project Google, tách bộ đếm của bot text. Đổi bằng `--summary-model MÃ_MODEL`. Host và bot nhắn tin đều cần chạy, bot phải ở chế độ gửi thật. Không cần reload tiện ích chỉ để bật hai tính năng Python này; giữ các lựa chọn giọng, persona, chờ tự nhận và mã kết nối hiện có.
+
+Tắt tóm tắt **các cuộc gọi mới**:
+
+```bash
+.venv/bin/python setup_call_vps.py install --no-call-summaries
+```
+
+Chi tiết acc 2, bản chờ gửi, lỗi và dữ liệu tạm: [hướng dẫn tóm tắt cuộc gọi](deploy/CALL_VPS.md#tóm-tắt-sau-gọi-và-gửi-cho-chính-mình).
 
 ## 2. Kiểm tra AI, nguồn và model
 

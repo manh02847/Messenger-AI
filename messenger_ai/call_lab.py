@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
 
+from .call_reports import CallReporter, CallTranscript, SummaryOptions
+
 ENDPOINT = (
     "wss://generativelanguage.googleapis.com/ws/"
     "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
@@ -132,6 +134,7 @@ class LabConfig:
     max_seconds: float = 180
     system_instruction: str = field(default=SYSTEM, repr=False)
     voice: str | None = None
+    summary: SummaryOptions | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -142,6 +145,7 @@ class CallControl:
     seen: set = field(default_factory=set, repr=False)
     request_id: str | None = None
     result: asyncio.Future | None = field(default=None, repr=False)
+    transcript: CallTranscript | None = field(default=None, repr=False)
 
 
 def google_key(root: Path, *, stdin: bool = False) -> str:
@@ -213,6 +217,9 @@ def setup(config: LabConfig, *, end_call_enabled=False) -> dict:
         data["setup"]["generationConfig"]["speechConfig"] = {
             "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": config.voice}}
         }
+    if config.summary is not None:
+        data["setup"]["inputAudioTranscription"] = {}
+        data["setup"]["outputAudioTranscription"] = {}
     if end_call_enabled:
         data["setup"]["systemInstruction"]["parts"][0]["text"] += END_CALL_INSTRUCTION
         data["setup"]["tools"] = [
@@ -239,7 +246,7 @@ def setup(config: LabConfig, *, end_call_enabled=False) -> dict:
 
 
 class CallRelay:
-    def __init__(self, config: LabConfig, *, connector=None, log=print):
+    def __init__(self, config: LabConfig, *, connector=None, log=print, reporter=None):
         self.config, self.log = config, log
         if connector is None:
             from websockets.asyncio.client import connect
@@ -252,6 +259,11 @@ class CallRelay:
             connector = FixedGoogleConnection
         self.connector = connector
         self.active = False
+        self.reporter = reporter or (
+            CallReporter(config.summary, config.api_key, log=log)
+            if config.summary is not None
+            else None
+        )
 
     @staticmethod
     async def origin_check(connection, request):
@@ -268,6 +280,7 @@ class CallRelay:
 
     async def handle(self, local):
         claimed = False
+        control = None
         try:
             auth = message(await asyncio.wait_for(local.recv(), 5))
             token = auth.get("token")
@@ -283,11 +296,14 @@ class CallRelay:
             self.active = claimed = True
             async with asyncio.timeout(self.config.max_seconds):
                 capabilities = auth.get("capabilities")
+                control = CallControl(
+                    enabled=isinstance(capabilities, list)
+                    and "end_call" in capabilities,
+                    transcript=CallTranscript() if self.reporter is not None else None,
+                )
                 await self.session(
                     local,
-                    end_call_enabled=(
-                        isinstance(capabilities, list) and "end_call" in capabilities
-                    ),
+                    control=control,
                 )
         except CallLabError as error:
             await self.send_error(local, str(error))
@@ -305,8 +321,18 @@ class CallRelay:
         finally:
             if claimed:
                 self.active = False
-                self.log("Đã dừng phiên gọi AI; không lưu âm thanh hay bản chép lời.")
+                self.log(
+                    "Đã dừng phiên gọi AI; đang tạo bản tóm tắt riêng nếu có lời người gọi."
+                    if self.reporter is not None
+                    else "Đã dừng phiên gọi AI; không lưu âm thanh hay bản chép lời."
+                )
+                if control is not None and control.transcript is not None:
+                    self.reporter.submit(control.transcript)
             await local.close()
+
+    async def close(self):
+        if self.reporter is not None:
+            await self.reporter.close()
 
     @staticmethod
     async def send_error(local, text):
@@ -317,8 +343,7 @@ class CallRelay:
         except Exception:
             pass
 
-    async def session(self, local, *, end_call_enabled=False):
-        control = CallControl(enabled=end_call_enabled)
+    async def session(self, local, *, control):
         async with self.connector(
             ENDPOINT,
             additional_headers={"x-goog-api-key": self.config.api_key},
@@ -329,7 +354,7 @@ class CallRelay:
             logger=logging.getLogger("messenger_ai.call_lab.google"),
         ) as google:
             await google.send(
-                json.dumps(setup(self.config, end_call_enabled=end_call_enabled))
+                json.dumps(setup(self.config, end_call_enabled=control.enabled))
             )
             first = json.loads(await asyncio.wait_for(google.recv(), 20))
             if not isinstance(first, dict) or "setupComplete" not in first:
@@ -348,6 +373,19 @@ class CallRelay:
                 for task in done:
                     task.result()
             finally:
+                if (
+                    control.transcript is not None
+                    and control.ready
+                    and tasks[0].done()
+                    and not tasks[1].done()
+                ):
+                    try:
+                        await google.send(
+                            json.dumps({"realtimeInput": {"audioStreamEnd": True}})
+                        )
+                        await asyncio.wait([tasks[1]], timeout=0.5)
+                    except Exception:
+                        pass
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
@@ -362,6 +400,8 @@ class CallRelay:
             elif kind == "ready" and not ready:
                 ready = True
                 control.ready = True
+                if control.transcript is not None:
+                    control.transcript.start()
                 await google.send(
                     json.dumps(
                         {
@@ -482,6 +522,14 @@ class CallRelay:
             ):
                 return
             content = data.get("serverContent", {})
+            if control.ready and control.transcript is not None:
+                for key, role in (
+                    ("inputTranscription", "caller"),
+                    ("outputTranscription", "assistant"),
+                ):
+                    part = content.get(key)
+                    if isinstance(part, dict):
+                        control.transcript.add(role, part.get("text"))
             if content.get("interrupted"):
                 await local.send(json.dumps({"type": "clear"}))
             for part in content.get("modelTurn", {}).get("parts", []):

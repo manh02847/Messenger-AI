@@ -18,12 +18,14 @@ from pathlib import Path
 
 from messenger_ai.call_lab import MODELS, VOICES, google_key
 from messenger_ai.call_vps import PERSONA_NAME, read_persona, read_settings
+from messenger_ai.call_reports import DEFAULT_SUMMARY_MODEL, valid_summary_model
 
 ROOT = Path(__file__).resolve().parent
 APP = Path("/opt/messenger-ai-call")
 STATE = Path("/var/lib/messenger-ai-call")
 SERVICE = "messenger-ai-call"
 USER = "messenger-call"
+REPORT_SPOOL = Path("/var/spool/messenger-ai-call")
 EXTENSION_FILES = (
     "manifest.json",
     "background.js",
@@ -64,6 +66,9 @@ def settings(
     max_seconds=None,
     use_persona=None,
     voice=None,
+    summary_enabled=None,
+    summary_model=None,
+    summary_outbox=None,
 ):
     data = dict(old or {})
     selected_voice = data.get("voice") if voice is None else voice
@@ -81,7 +86,78 @@ def settings(
         if use_persona is None
         else use_persona,
         "voice": selected_voice,
+        "summary_enabled": data.get("summary_enabled", False)
+        if summary_enabled is None
+        else summary_enabled,
+        "summary_model": summary_model
+        or data.get("summary_model", DEFAULT_SUMMARY_MODEL),
+        "summary_outbox": summary_outbox or data.get("summary_outbox", ""),
     }
+
+
+def summary_source():
+    from messenger_ai.config import Settings
+
+    config_path = ROOT / "config.json"
+    if config_path.is_symlink():
+        raise ValueError("Từ chối cấu hình bot qua symlink.")
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    Settings.from_dict(raw)
+    secrets_data = json.loads((ROOT / "secrets.json").read_text(encoding="utf-8"))
+    cookie = secrets_data.get("facebook_cookie", "")
+    owner = (
+        next(
+            (
+                piece.partition("=")[2].strip()
+                for piece in cookie.split(";")
+                if piece.partition("=")[0].strip() == "c_user"
+            ),
+            "",
+        )
+        if isinstance(cookie, str)
+        else ""
+    )
+    if not owner.isascii() or not owner.isdigit() or not owner or owner.startswith("0"):
+        raise ValueError(
+            "Chưa xác định được chính tài khoản bot từ cấu hình Facebook hiện có."
+        )
+    info = config_path.stat()
+    return raw, info, owner
+
+
+def prepare_summary_route(account):
+    from messenger_ai.config import Settings
+
+    raw, info, owner = summary_source()
+    config_path = ROOT / "config.json"
+    REPORT_SPOOL.mkdir(mode=0o711, parents=True, exist_ok=True)
+    if REPORT_SPOOL.is_symlink():
+        raise ValueError("Từ chối hộp tóm tắt qua symlink.")
+    os.chown(REPORT_SPOOL, 0, 0)
+    os.chmod(REPORT_SPOOL, 0o711)
+    current = raw.get("call_summary_inbox", "")
+    route = (
+        Path(current)
+        if isinstance(current, str)
+        and Path(current).parent == REPORT_SPOOL
+        and len(Path(current).name) == 32
+        and all(c in "0123456789abcdef" for c in Path(current).name)
+        else REPORT_SPOOL / secrets.token_hex(16)
+    )
+    if route.is_symlink():
+        raise ValueError("Từ chối hộp tóm tắt qua symlink.")
+    route.mkdir(mode=0o2770, exist_ok=True)
+    os.chown(route, account.pw_uid, pwd.getpwuid(info.st_uid).pw_gid)
+    os.chmod(route, 0o2770)
+    raw.update(call_summary_inbox=str(route), call_summary_owner_id=owner)
+    Settings.from_dict(raw)
+    private_write(
+        config_path,
+        (json.dumps(raw, ensure_ascii=False, indent=2) + "\n").encode(),
+        info.st_uid,
+        info.st_gid,
+    )
+    return str(route)
 
 
 def password(uid, gid):
@@ -130,6 +206,10 @@ def preflight():
 
 def install(args):
     preflight()
+    if args.summary_model is not None and not valid_summary_model(args.summary_model):
+        raise ValueError("Mã model tóm tắt chưa hợp lệ.")
+    if args.call_summaries:
+        summary_source()
     chosen_persona = (
         read_persona(Path(args.persona).expanduser()) if args.persona else None
     )
@@ -210,7 +290,7 @@ def install(args):
     extension = APP / "app/experimental/call-lab-extension"
     code.mkdir(parents=True, exist_ok=True)
     extension.mkdir(parents=True, exist_ok=True)
-    for name in ("__init__.py", "call_lab.py", "call_vps.py"):
+    for name in ("__init__.py", "call_lab.py", "call_vps.py", "call_reports.py"):
         shutil.copyfile(ROOT / "messenger_ai" / name, code / name)
         os.chmod(code / name, 0o644)
     for name in EXTENSION_FILES:
@@ -240,6 +320,13 @@ def install(args):
         args.max_seconds,
         use_persona,
         voice=args.voice,
+        summary_enabled=True
+        if args.call_summaries
+        else False
+        if args.no_call_summaries
+        else None,
+        summary_model=args.summary_model,
+        summary_outbox=prepare_summary_route(account) if args.call_summaries else None,
     )
     if chosen_persona is not None:
         private_write(
@@ -265,6 +352,14 @@ def install(args):
     command("systemctl", "enable", "--now", SERVICE)
     print("Đã cài service messenger-ai-call. Google model: " + data["model"])
     print("Giọng gọi: " + (data["voice"] or "mặc định của Google"))
+    print(
+        "Tóm tắt sau gọi: "
+        + (
+            "BẬT; khởi động lại bot nhắn tin của thư mục này để nhận tin cho chính mình."
+            if data["summary_enabled"]
+            else "TẮT"
+        )
+    )
     print(
         "Persona cuộc gọi: "
         + (
@@ -296,6 +391,22 @@ def main():
         "--max-seconds", type=int, choices=range(15, 901), metavar="15..900"
     )
     parser.add_argument("--update-key", action="store_true")
+    summary = parser.add_mutually_exclusive_group()
+    summary.add_argument(
+        "--call-summaries",
+        action="store_true",
+        help="Tóm tắt phần AI nghe, gửi cho chính tài khoản bot của thư mục hiện tại.",
+    )
+    summary.add_argument(
+        "--no-call-summaries",
+        action="store_true",
+        help="Tắt nhận dạng/tóm tắt cuộc gọi mới.",
+    )
+    parser.add_argument(
+        "--summary-model",
+        metavar="MODEL",
+        help="Model Google dùng cho một lượt tóm tắt sau gọi.",
+    )
     persona = parser.add_mutually_exclusive_group()
     persona.add_argument(
         "--persona",

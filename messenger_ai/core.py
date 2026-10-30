@@ -20,6 +20,7 @@ from .images import (
     image_attachments,
 )
 from .state import State
+from .reactions import LABELS, parse_reply
 
 VIETNAM = timezone(timedelta(hours=7))
 TYPING_REFRESH_SECONDS = 4
@@ -126,6 +127,8 @@ class Transport(Protocol):
     async def load_image(
         self, image: ImageAttachment, *, encrypted: bool
     ) -> ImageInput: ...
+
+    async def react(self, message: Message, reaction: str) -> None: ...
 
 
 class ReplyBot:
@@ -501,7 +504,10 @@ class ReplyBot:
                     break
                 if revision != self.revisions[thread]:
                     continue
-                text = reply_text(text)
+                action = parse_reply(
+                    text, enabled=self.settings.reaction_mode == "auto"
+                )
+                text = reply_text(action.text)
                 message = self.latest[thread]
                 text = (
                     self.settings.reply_prefix
@@ -511,8 +517,51 @@ class ReplyBot:
                 self.pending_images.pop(thread, None)
                 image_cache.clear()
                 if self.settings.dry_run:
+                    if action.reaction:
+                        self.log(
+                            f"[XEM TRƯỚC — CHƯA THẢ] {LABELS[action.reaction]}"
+                            + (
+                                "; chỉ cảm xúc nếu thành công"
+                                if action.reaction_only
+                                else ""
+                            )
+                        )
                     self.log(f"[XEM TRƯỚC — CHƯA GỬI] {text}")
                     continue
+                reacted = False
+                if action.reaction:
+                    action_id = self.state.begin_send(
+                        thread,
+                        f"{message.id}:{action.reaction}",
+                        self.clock(),
+                        kind="reaction",
+                    )
+                    try:
+                        async with asyncio.timeout(8):
+                            await self.transport.react(message, action.reaction)
+                        reacted = True
+                        self.state.finish_send(action_id, "sent")
+                        self.log("Đã gửi lệnh thả cảm xúc vào tin nhắn.")
+                    except Exception:
+                        self.state.finish_send(action_id, "unknown")
+                        self.log(
+                            "Chưa xác nhận được cảm xúc; không thử lại, vẫn gửi câu trả lời bằng chữ."
+                        )
+                    if (
+                        not self.state.paused(thread, self.clock())
+                        and self.revisions.get(thread) == revision
+                    ):
+                        if reacted and action.reaction_only:
+                            self.state.remember(
+                                thread,
+                                "assistant",
+                                f"[Đã thả cảm xúc {LABELS[action.reaction]} vào tin nhắn trước.]",
+                                self.clock(),
+                                self.settings.history_messages,
+                            )
+                            continue
+                    else:
+                        continue
                 outbox_id = self.state.begin_send(thread, text, self.clock())
                 try:
                     result = await self.transport.send(message, text)

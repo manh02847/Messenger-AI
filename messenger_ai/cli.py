@@ -324,6 +324,17 @@ def configure_features(
     print("Đã lưu lựa chọn. Chạy chat-ai để thử; khởi động lại bot để áp dụng.")
 
 
+def configure_reactions(mode: str | None = None) -> None:
+    raw = read_config(ROOT)
+    if mode is not None:
+        raw["reaction_mode"] = mode
+        Settings.from_dict(raw)
+        save_config(ROOT, raw)
+    print("Cảm xúc tin nhắn: " + Settings.from_dict(raw).reaction_mode)
+    if mode is not None:
+        print("Đã lưu. Khởi động lại bot để áp dụng; chat-ai chỉ xem trước cảm xúc.")
+
+
 def configure_ai(
     provider: str,
     daily_limit: int | None = None,
@@ -746,6 +757,8 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
     ai = None
     image_ai = None
     bot = None
+    report_task = None
+    report_sender = None
     started_at = time.time()
     with instance_lock(ROOT / "data"):
         try:
@@ -768,6 +781,12 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                 bot = ReplyBot(
                     settings, state, ai, transport, transport.own_id, image_ai=image_ai
                 )
+                if settings.call_summary_inbox:
+                    from .call_reports import ReportSender
+
+                    report_sender = ReportSender(settings, state, transport)
+                    report_task = asyncio.create_task(report_sender.run())
+                print("Cảm xúc tin nhắn:", settings.reaction_mode)
                 print(f"AI: {ai.description}")
                 from .features import describe
 
@@ -809,6 +828,14 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                 elif bot is not None:
                     bot.receive(message)
         finally:
+            if report_task is not None:
+                # Allow an already-started notification to finish before closing Messenger.
+                report_sender.stop()
+                try:
+                    await asyncio.wait_for(asyncio.shield(report_task), 16)
+                except TimeoutError:
+                    report_task.cancel()
+                    await asyncio.gather(report_task, return_exceptions=True)
             if bot is not None:
                 await bot.close()
             await transport.close()
@@ -897,6 +924,10 @@ def main() -> None:
         "features",
         help="Chọn bật/tắt/auto suy luận và tra cứu, chung hoặc riêng từng model.",
     )
+    reaction_config = sub.add_parser(
+        "reactions", help="Bật/tắt AI tự chọn cảm xúc theo ngữ cảnh."
+    )
+    reaction_config.add_argument("mode", nargs="?", choices=("auto", "off"))
     feature_config.add_argument("--reasoning", choices=("on", "off", "auto"))
     feature_config.add_argument("--search", choices=("on", "off", "auto"))
     feature_config.add_argument("--model", metavar="NGUỒN:MODEL")
@@ -1053,6 +1084,8 @@ def main() -> None:
                 show=args.show,
                 reset=args.reset,
             )
+        elif args.command == "reactions":
+            configure_reactions(args.mode)
         elif args.command == "providers":
             providers(args.action, args.names)
         elif args.command == "configure-google":

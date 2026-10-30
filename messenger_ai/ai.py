@@ -27,6 +27,7 @@ from .features import GEMMA_MODELS, FeaturePlan, plan
 from .grounding import with_sources
 from .images import ImageInput, MAX_IMAGES
 from .search_routing import SEARCH_REQUEST, can_request_search, needs_search
+from .reactions import instructions as reaction_instructions, parse_reply
 
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GOOGLE_REQUEST_TIMEOUT = 8
@@ -156,7 +157,13 @@ def google_payload(
     features = features or plan(settings, history)
     payload = {
         "systemInstruction": {
-            "parts": [{"text": system_prompt(persona) + features.prompt}]
+            "parts": [
+                {
+                    "text": system_prompt(persona)
+                    + features.prompt
+                    + reaction_instructions(settings.reaction_mode == "auto")
+                }
+            ]
         },
         "contents": [
             {
@@ -348,6 +355,7 @@ class ChatAI:
             )
         if features.suffix:
             persona += "\n" + features.suffix
+        persona += reaction_instructions(self.settings.reaction_mode == "auto")
         payload = {
             "model": self.settings.model,
             "messages": [{"role": "system", "content": persona}, *history],
@@ -589,7 +597,8 @@ class ChatAI:
                     answer, used_search, source_count = with_sources(
                         data,
                         answer,
-                        self.settings.output_char_limit,
+                        self.settings.output_char_limit
+                        + (64 if self.settings.reaction_mode == "auto" else 0),
                         include_sources=False,
                     )
                     self.last_search_used = used_search
@@ -603,6 +612,7 @@ class ChatAI:
                             1,
                         )
                     self.last_used = self.description
+                    parse_reply(answer, enabled=self.settings.reaction_mode == "auto")
                     return answer
                 choice = data["choices"][0]
                 if choice.get("finish_reason") == "length":
@@ -623,6 +633,7 @@ class ChatAI:
                 answer = final_text(choice["message"]["content"])
                 self._check_handoff(answer, allow_search_request, require_search)
                 self.last_used = self.description
+                parse_reply(answer, enabled=self.settings.reaction_mode == "auto")
                 return answer
             except (ValueError, KeyError, IndexError, TypeError, AttributeError):
                 raise ProviderUnavailable(

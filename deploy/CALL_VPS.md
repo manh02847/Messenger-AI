@@ -128,6 +128,35 @@ Hỗ trợ 30 tên giọng có sẵn của Google. Nghe trước trong **Google 
 .venv/bin/python setup_call_vps.py install --voice default
 ```
 
+## Tóm tắt sau gọi và gửi cho chính mình
+
+Trong thư mục bot nhắn tin đã có cấu hình, chạy:
+
+```bash
+cd ~/messenger-ai-bot
+git pull --ff-only
+.venv/bin/python setup_call_vps.py install --call-summaries
+systemctl restart messenger-ai
+```
+
+Bộ cài chọn chính tài khoản Facebook đã cấu hình trong thư mục này làm nơi nhận. Khi bot nhắn tin kết nối lại, nó đối chiếu ID tài khoản thật; không khớp thì dừng gửi báo cáo. Host gọi không nhận cookie Facebook của bot nhắn tin. Muốn chọn acc 2 làm nơi nhận, chạy lệnh cài trên trong `~/messenger-ai-bot-2`, rồi restart `messenger-ai-2`. Vẫn chỉ có một host gọi; tính năng này không tự biết tài khoản Chrome VPS có trùng tài khoản bot nhắn tin hay không, nên chọn đúng thư mục nhận mong muốn.
+
+Khi phần AI tham gia cuộc gọi kết thúc (gác máy, dừng/nhường AI hoặc kết nối mất), host tóm tắt nội dung chính, yêu cầu người gọi và mốc hẹn đã nói rõ. Bot gửi vào cuộc trò chuyện **với chính mình** của tài khoản nhận, qua E2EE. Không gửi cho người gọi, không lấy đích gửi từ lời nói trong cuộc gọi. Nếu không nhận dạng được lời người gọi thì không tạo báo cáo chỉ có lời chào. Khi nhường người thật, bản tóm tắt chỉ có phần AI đã nghe, không tiếp tục nghe cuộc gọi của người thật.
+
+Mặc định dùng `gemini-3.5-flash-lite`, thêm một request Google sau mỗi phiên có nội dung. Đổi model bằng `--summary-model MÃ_MODEL`. Tóm tắt chạy riêng sau gọi để không giữ cuộc gọi mới chờ. Quota/phí thuộc project Google, không qua bộ đếm ngày của bot text. Nếu nguồn tóm tắt lỗi, gửi báo cáo ghi rõ chưa tóm tắt được và kèm trích đoạn lời người gọi được nhận dạng; không tự bịa một bản tổng kết.
+
+Nhận dạng input/output chỉ bật khi đã chọn `--call-summaries`. Không ghi âm; bản nhận dạng đầy đủ chỉ giữ trong RAM, tối đa 24.000 ký tự gần nhất và 200 lượt, báo rõ nếu rút bớt. Tóm tắt/trích đoạn dự phòng được xếp vào hộp gửi riêng trên VPS, không log nội dung. Hộp nằm dưới `/var/spool/messenger-ai-call`, chỉ user host và nhóm của bot nhận đọc/ghi được. Bot gửi thật thì xóa bản tạm sau khi xác nhận ID tin; chạy preview thì giữ chờ và chưa gửi.
+
+Khi gửi chưa rõ kết quả, giữ file `.unknown.json`; nếu process dừng giữa lúc gửi, có thể còn `.sending.json`. Không tự gửi lại các bản này để tránh trùng. Bạn có thể mở bản riêng để đọc lại khi cần. Nếu chưa thấy thông báo, kiểm tra log `messenger-ai-call` và service bot nhận; kiểm tra bot không ở preview, ID tài khoản còn khớp và thư mục hộp gửi đọc được. Chức năng nhắn cho chính mình và cảm xúc vẫn cần thử với Facebook thật sau cập nhật; kiểm thử offline không xác nhận server luôn chấp nhận.
+
+Tắt nhận dạng/tóm tắt cuộc gọi mới (các báo cáo cũ đang chờ vẫn được bot xử lý):
+
+```bash
+.venv/bin/python setup_call_vps.py install --no-call-summaries
+```
+
+Chạy lại `install` không có cờ tóm tắt giữ lựa chọn đã lưu. Hai tính năng react/tóm tắt chỉ sửa Python: không cần đổi phiên bản tiện ích 0.5.0, giọng, persona hoặc chế độ chờ người thật. Nếu đã sửa file persona nguồn, vẫn dùng `--persona` như phần riêng bên dưới để cập nhật bản sao.
+
 ## Yêu cầu AI kết thúc cuộc gọi
 
 Khi AI đang nghe trong cuộc gọi, model hiểu ý định kết thúc qua toàn bộ hội thoại và lượt mới nhất rồi dùng công cụ `end_call`. Có thể nói rõ như **“ngắt cuộc gọi đi”**, nói ngắn **“ok ngắt đi”**, **“cúp đi”**, hoặc chào kết chuyện **“ok thôi nhá”**, **“ừ thế nhé”** sau khi đã hỏi xong. Không cần đọc nguyên một mẫu câu hoặc nhắc từ “máy/cuộc gọi”. Tiện ích vẫn kiểm tra đúng phiên, đúng cửa sổ và kết nối âm thanh trước khi bấm nút kết thúc. Tính năng hoạt động với cả cuộc gọi AI tự nhận và cuộc gọi bạn đã bật AI thủ công. Tự nhận cuộc gọi sau vẫn giữ theo lựa chọn đã lưu.

@@ -5,6 +5,7 @@ from time import monotonic
 from .ai import AIError
 from .context import recent_history
 from .handoff import reply_text, requests_human
+from .reactions import LABELS, parse_reply
 
 
 def bounded_history(history, settings):
@@ -54,12 +55,24 @@ async def chat_loop(ai, settings, reserve, *, read=input, write=print, clock=mon
         history.append({"role": "user", "content": text[: settings.input_char_limit]})
         history = bounded_history(history, settings)
         try:
-            answer = reply_text(await ai.generate(history, reserve))
+            action = parse_reply(
+                await ai.generate(history, reserve),
+                enabled=settings.reaction_mode == "auto",
+            )
+            answer = reply_text(action.text)
         except AIError as error:
             write(str(error))
             continue
         answer = settings.reply_prefix + answer.strip()[: settings.output_char_limit]
-        write("AI: " + answer)
+        if action.reaction:
+            write(
+                "[Cảm xúc dự kiến: "
+                + LABELS[action.reaction]
+                + ("; chỉ thả cảm xúc" if action.reaction_only else "")
+                + "]"
+            )
+        if not action.reaction_only:
+            write("AI: " + answer)
         history.append({"role": "assistant", "content": answer})
         history = bounded_history(history, settings)
         last_activity = clock()

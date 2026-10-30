@@ -150,6 +150,9 @@ class Settings:
     ai_retry_enabled: bool = True
     reasoning_mode: str = "off"
     search_mode: str = "off"
+    reaction_mode: str = "off"
+    call_summary_inbox: str = ""
+    call_summary_owner_id: str = ""
     model_features: dict[str, dict[str, str]] = field(default_factory=dict)
     max_replies_per_thread_per_day: int = 1000
     minimum_ai_interval_seconds: float = 6
@@ -290,6 +293,25 @@ class Settings:
             raise ValueError("dry_run phải là true hoặc false.")
         if not isinstance(result.ai_retry_enabled, bool):
             raise ValueError("ai_retry_enabled phải là true hoặc false.")
+        if result.reaction_mode not in ("off", "auto"):
+            raise ValueError("reaction_mode phải là off hoặc auto.")
+        if (
+            not isinstance(result.call_summary_inbox, str)
+            or len(result.call_summary_inbox) > 500
+            or "\x00" in result.call_summary_inbox
+            or (
+                result.call_summary_inbox
+                and not Path(result.call_summary_inbox).is_absolute()
+            )
+            or not isinstance(result.call_summary_owner_id, str)
+            or (
+                result.call_summary_inbox
+                and not re.fullmatch(r"[1-9][0-9]{0,24}", result.call_summary_owner_id)
+            )
+        ):
+            raise ValueError(
+                "Hộp nhận tóm tắt cần đường dẫn tuyệt đối và ID chính tài khoản bot."
+            )
         for name in ("reasoning_mode", "search_mode"):
             if getattr(result, name) not in ("on", "off", "auto"):
                 raise ValueError(f"{name} phải là on, off hoặc auto.")

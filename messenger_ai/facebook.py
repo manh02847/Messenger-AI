@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from .core import Message
+from .reactions import EMOJI
 from .images import (
     MAX_IMAGE_BYTES,
     MEDIA_TIMEOUT,
@@ -158,6 +159,43 @@ class FacebookTransport:
             await actions.send_typing_indicator(
                 message.thread_id, is_typing, thread_type=message.thread_type
             )
+
+    async def react(self, message: Message, reaction: str) -> None:
+        if self.listener is None or self.closing or self.listener._bridge is None:
+            raise RuntimeError("Messenger chưa sẵn sàng thả cảm xúc.")
+        if (
+            not message.is_private
+            or message.sender_id == self.own_id
+            or reaction not in EMOJI
+        ):
+            raise ValueError(
+                "Chỉ thả cảm xúc được phép vào tin chat riêng của người nhắn."
+            )
+        if not message.id or len(message.id) > 500:
+            raise ValueError("Mã tin nhắn chưa hợp lệ.")
+        params = {"messageId": message.id, "emoji": EMOJI[reaction]}
+        if message.chat_jid:
+            if not message.sender_jid:
+                raise ValueError("Thiếu sender JID để thả cảm xúc E2EE.")
+            params.update(chatJid=message.chat_jid, senderJid=message.sender_jid)
+            method = "sendE2EEReaction"
+        else:
+            if message.thread_id <= 0:
+                raise ValueError("Mã cuộc trò chuyện chưa hợp lệ.")
+            params["threadId"] = message.thread_id
+            method = "sendReaction"
+        result = await self.listener._bridge.call(method, params)
+        if (
+            not isinstance(result, dict)
+            or result.get("error")
+            or result.get("deliveryStatus") == "unknown"
+        ):
+            raise RuntimeError("Chưa xác nhận được lệnh thả cảm xúc.")
+
+    async def notify_owner(self, text: str) -> dict:
+        if self.listener is None or self.closing or not self.own_id.isdigit():
+            raise RuntimeError("Messenger chưa sẵn sàng gửi thông báo cho chính mình.")
+        return await self.listener.send_e2ee_message(self.own_id + "@msgr", text)
 
     async def close(self) -> None:
         self.closing = True
