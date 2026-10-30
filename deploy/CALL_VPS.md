@@ -4,7 +4,7 @@ Chrome, phiên Facebook, thiết bị âm thanh ảo và Google Live relay cùng
 
 **Đây là bản triển khai đầu tiên cần thử trên VPS thật.** Người dùng đã xác nhận cầu nối Chrome trên Windows hoạt động ở bản 0.1.1. Bản 0.2.0 bổ sung desktop Ubuntu và nhận cuộc gọi tự động; phần mới đã kiểm thử offline/mô phỏng, chưa được cài hoặc kiểm chứng với Facebook trên VPS trong môi trường phát triển.
 
-**Bản hiện tại: 0.5.0.** Có thời gian chờ trước khi AI tự nhận để ưu tiên bạn nghe trước, mặc định 25 giây và chỉnh được trong popup. Tiếp tục giữ kết thúc theo yêu cầu, lựa chọn giọng, lời chào, làm mới Facebook sau cuộc gọi, nhường người thật và persona riêng. Các thao tác phụ thuộc nhãn giao diện Facebook vẫn cần kiểm tra trên VPS sau cập nhật.
+**Bản hiện tại: 0.6.0.** Thêm gắn người gọi vào bản tóm tắt để gửi lại đúng chat khi được bật. Giữ thời gian chờ trước khi AI tự nhận, mặc định 25 giây và chỉnh được trong popup, kết thúc theo yêu cầu, giọng, lời chào, làm mới Facebook, nhường người thật và persona riêng. Các thao tác phụ thuộc giao diện Facebook cần kiểm tra trên VPS sau cập nhật.
 
 Cấu hình khởi đầu dự kiến: 2 vCPU, khoảng 4 GB RAM cho một phiên Chrome với một tài khoản. Đây là đánh giá theo cấu hình, chưa phải số đo tải thật. Bộ cài giới hạn service ở 2500 MB để dành RAM cho hệ thống và bot text. Chưa tự thêm swap.
 
@@ -62,7 +62,7 @@ Relay 8765, VNC 5977 và noVNC 6080 đều chỉ nghe loopback. Không mở các
 /opt/messenger-ai-call/app/experimental/call-lab-extension
 ```
 
-3. Kiểm tra phiên bản **0.5.0**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
+3. Kiểm tra phiên bản **0.6.0**. Cho phép tiện ích chạy trên Facebook/Messenger nếu Chrome hỏi; chỉ giữ một bản tiện ích đang bật.
 4. Ghim tiện ích. Tải lại trang Facebook trước khi tạo cuộc gọi mới.
 5. Mở tiện ích, địa chỉ giữ `ws://127.0.0.1:8765`, dán mã kết nối từ bộ cài. Có thể tắt **Nghe giọng AI trên máy này** vì VPS không cần phát loa để bạn nghe qua noVNC.
 
@@ -128,26 +128,30 @@ Hỗ trợ 30 tên giọng có sẵn của Google. Nghe trước trong **Google 
 .venv/bin/python setup_call_vps.py install --voice default
 ```
 
-## Tóm tắt sau gọi và gửi cho chính mình
+## Tóm tắt sau gọi và chọn nơi nhận
 
 Trong thư mục bot nhắn tin đã có cấu hình, chạy:
 
 ```bash
 cd ~/messenger-ai-bot
 git pull --ff-only
-.venv/bin/python setup_call_vps.py install --call-summaries
+.venv/bin/python setup_call_vps.py install --call-summaries --summary-target caller
 systemctl restart messenger-ai
 ```
 
-Bộ cài chọn chính tài khoản Facebook đã cấu hình trong thư mục này làm nơi nhận. Khi bot nhắn tin kết nối lại, nó đối chiếu ID tài khoản thật; không khớp thì dừng gửi báo cáo. Host gọi không nhận cookie Facebook của bot nhắn tin. Muốn chọn acc 2 làm nơi nhận, chạy lệnh cài trên trong `~/messenger-ai-bot-2`, rồi restart `messenger-ai-2`. Vẫn chỉ có một host gọi; tính năng này không tự biết tài khoản Chrome VPS có trùng tài khoản bot nhắn tin hay không, nên chọn đúng thư mục nhận mong muốn.
+Bộ cài gắn route tóm tắt với tài khoản Facebook đã cấu hình trong thư mục này. Chrome VPS và bot text phải dùng cùng tài khoản. Khi bot nhắn tin kết nối lại, nó đối chiếu ID tài khoản thật; không khớp thì dừng gửi báo cáo. Host gọi không nhận cookie Facebook của bot nhắn tin. Với acc 2, chạy trong `~/messenger-ai-bot-2` rồi restart `messenger-ai-2`; vẫn chỉ có một host gọi trên VPS.
 
-Khi phần AI tham gia cuộc gọi kết thúc (gác máy, dừng/nhường AI hoặc kết nối mất), host tóm tắt nội dung chính, yêu cầu người gọi và mốc hẹn đã nói rõ. Bot gửi vào cuộc trò chuyện **với chính mình** của tài khoản nhận, qua E2EE. Không gửi cho người gọi, không lấy đích gửi từ lời nói trong cuộc gọi. Nếu không nhận dạng được lời người gọi thì không tạo báo cáo chỉ có lời chào. Khi nhường người thật, bản tóm tắt chỉ có phần AI đã nghe, không tiếp tục nghe cuộc gọi của người thật.
+Khi phần AI tham gia cuộc gọi kết thúc (gác máy, dừng/nhường AI hoặc kết nối mất), host tóm tắt nội dung chính, yêu cầu người gọi và mốc hẹn đã nói rõ. Với `--summary-target caller`, bot gửi qua E2EE vào chat của **người đã gọi**. Không lấy người nhận từ lời nói hoặc model. Nếu không nhận dạng được lời người gọi thì không tạo báo cáo chỉ có lời chào. Khi nhường người thật, bản tóm tắt chỉ có phần AI đã nghe, không tiếp tục nghe cuộc gọi của người thật.
+
+**Cần Reload tiện ích 0.6.0 và tải lại Facebook sau cập nhật.** Tự xác định người gọi hiện áp dụng cho cuộc gọi thoại đến được tiện ích tự nhận, khi bảng cuộc gọi đến có liên kết hồ sơ bằng ID số và đọc được ID tài khoản đang đăng nhập. Chỉ lấy ID trong bảng của đúng lượt gọi; không dùng mã `/t/`, `ROOM:`, tên hiển thị hoặc chat đang mở. Nếu chỉ có liên kết tên ngắn, thiếu/không rõ hồ sơ, nhiều người, khác tài khoản, hoặc bật AI thủ công sau khi đã nghe thì giữ bản `.unrouted.json`, chưa gửi cho ai. Cần thử trên Facebook thật vì cách hiển thị hồ sơ có thể khác giữa tài khoản.
+
+Để gửi về **cho chính mình** như bản trước, dùng `install --call-summaries --summary-target self` rồi restart bot text. Cấu hình cũ giữ `self` đến khi bạn chọn `caller`. Bản đã xếp hàng giữ đích cũ; đổi chế độ không tự chuyển bản cũ sang người nhận mới.
 
 Mặc định dùng `gemini-3.5-flash-lite`, thêm một request Google sau mỗi phiên có nội dung. Đổi model bằng `--summary-model MÃ_MODEL`. Tóm tắt chạy riêng sau gọi để không giữ cuộc gọi mới chờ. Quota/phí thuộc project Google, không qua bộ đếm ngày của bot text. Nếu nguồn tóm tắt lỗi, gửi báo cáo ghi rõ chưa tóm tắt được và kèm trích đoạn lời người gọi được nhận dạng; không tự bịa một bản tổng kết.
 
 Nhận dạng input/output chỉ bật khi đã chọn `--call-summaries`. Không ghi âm; bản nhận dạng đầy đủ chỉ giữ trong RAM, tối đa 24.000 ký tự gần nhất và 200 lượt, báo rõ nếu rút bớt. Tóm tắt/trích đoạn dự phòng được xếp vào hộp gửi riêng trên VPS, không log nội dung. Hộp nằm dưới `/var/spool/messenger-ai-call`, chỉ user host và nhóm của bot nhận đọc/ghi được. Bot gửi thật thì xóa bản tạm sau khi xác nhận ID tin; chạy preview thì giữ chờ và chưa gửi.
 
-Khi gửi chưa rõ kết quả, giữ file `.unknown.json`; nếu process dừng giữa lúc gửi, có thể còn `.sending.json`. Không tự gửi lại các bản này để tránh trùng. Bạn có thể mở bản riêng để đọc lại khi cần. Nếu chưa thấy thông báo, kiểm tra log `messenger-ai-call` và service bot nhận; kiểm tra bot không ở preview, ID tài khoản còn khớp và thư mục hộp gửi đọc được. Chức năng nhắn cho chính mình và cảm xúc vẫn cần thử với Facebook thật sau cập nhật; kiểm thử offline không xác nhận server luôn chấp nhận.
+Khi gửi chưa rõ kết quả, giữ file `.unknown.json`; nếu process dừng giữa lúc gửi, có thể còn `.sending.json`. Không tự gửi lại các bản này để tránh trùng. `.unrouted.json` là bản chưa xác định được người nhận hoặc cấu hình nơi nhận đã thay đổi, không tự gửi. Bạn có thể mở bản riêng để đọc lại khi cần. Nếu chưa thấy tin, kiểm tra log `messenger-ai-call` và service bot text; kiểm tra bot không ở preview, ID tài khoản còn khớp và thư mục hộp gửi đọc được. Đường gửi người gọi và emoji tự chọn cần thử với Facebook thật sau cập nhật.
 
 Tắt nhận dạng/tóm tắt cuộc gọi mới (các báo cáo cũ đang chờ vẫn được bot xử lý):
 
@@ -155,7 +159,7 @@ Tắt nhận dạng/tóm tắt cuộc gọi mới (các báo cáo cũ đang ch�
 .venv/bin/python setup_call_vps.py install --no-call-summaries
 ```
 
-Chạy lại `install` không có cờ tóm tắt giữ lựa chọn đã lưu. Hai tính năng react/tóm tắt chỉ sửa Python: không cần đổi phiên bản tiện ích 0.5.0, giọng, persona hoặc chế độ chờ người thật. Nếu đã sửa file persona nguồn, vẫn dùng `--persona` như phần riêng bên dưới để cập nhật bản sao.
+Chạy lại `install` không có cờ tóm tắt giữ lựa chọn đã lưu. Đường gửi cho người gọi cần host và tiện ích **0.6.0**; phần tự chọn emoji chỉ cần cập nhật bot text bằng `python3 setup_bot.py`. Không cần đổi giọng, persona hay thời gian chờ. Nếu đã sửa file persona nguồn, vẫn dùng `--persona` như phần riêng bên dưới để cập nhật bản sao.
 
 ## Yêu cầu AI kết thúc cuộc gọi
 
@@ -165,7 +169,7 @@ Câu **“đừng ngắt”**, **“ok thôi, nói tiếp đi”**, **“bạn c
 
 Nếu nút kết thúc không khớp, phiên đã đổi hoặc lệnh quá hạn thì báo chưa thực hiện được; không báo thành công khi chưa có kết quả từ tiện ích. Không dùng bản chép lời hoặc nội dung AI nói ra làm lệnh cúp. Không bổ sung quyền Chrome hoặc lưu âm thanh/lời nói trong log.
 
-Cần cập nhật **cả host và tiện ích**: chạy `git pull --ff-only`, `.venv/bin/python setup_call_vps.py install`, rồi trong Chrome VPS mở `chrome://extensions`, Reload tiện ích, xác nhận **0.5.0** và tải lại Facebook. Host chỉ khai báo công cụ kết thúc khi tiện ích báo hỗ trợ; bản tiện ích cũ tiếp tục hoạt động theo cách cũ.
+Cần cập nhật **cả host và tiện ích**: chạy `git pull --ff-only`, `.venv/bin/python setup_call_vps.py install`, rồi trong Chrome VPS mở `chrome://extensions`, Reload tiện ích, xác nhận **0.6.0** và tải lại Facebook. Host chỉ khai báo công cụ kết thúc khi tiện ích báo hỗ trợ; bản tiện ích cũ tiếp tục hoạt động theo cách cũ.
 
 Các điều chỉnh cách nói/hiểu ý hoặc đổi giọng chỉ cần cập nhật host rồi mở cuộc gọi mới. Riêng thời gian chờ tự nhận ở **0.5.0** cần Reload tiện ích như trên để nạp mã mới.
 

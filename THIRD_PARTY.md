@@ -11,3 +11,5 @@ The installer downloads `vendor/fbchat_v2-2.3.4-py3-none-any.whl` and the platfo
 - Upstream asset SHA-256 values from GitHub release metadata remain pinned in `assets.json`. The Linux fix has separate pins for the original binary, delta, patched binary and source patch. The installer verifies the applicable checksums before execution. This project's fix is not an upstream release.
 
 The bot's Python application files are original integration code and are licensed under MIT (`LICENSE`). The upstream assets retain their original licenses. Groq and Facebook services have their own terms and data policies.
+
+Reaction validation uses [emoji 2.15.0](https://pypi.org/project/emoji/2.15.0/) (BSD-3-Clause; [source and license](https://github.com/carpedm20/emoji/tree/d26c675190a6b6c0edee959d7b896721a9c3641d)), installed from PyPI. Its Unicode emoji data allows the model to select a single valid emoji, including supported compound sequences, without a fixed reaction menu. No emoji data is downloaded at reply time.

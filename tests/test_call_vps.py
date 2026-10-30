@@ -125,6 +125,9 @@ def test_private_config_write_is_atomic_and_does_not_follow_symlinks(tmp_path):
         {"voice": "UNKNOWN_PRIVATE"},
         {"voice": ["Kore"]},
         {"voice": True},
+        {"summary_target": "everyone"},
+        {"summary_target": "caller", "summary_owner_id": "222@msgr"},
+        {"summary_target": "caller", "summary_owner_id": ""},
     ],
 )
 def test_bad_host_settings_fail_without_echoing_values(tmp_path, patch):

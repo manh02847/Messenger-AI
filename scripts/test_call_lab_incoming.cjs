@@ -5,9 +5,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {randomUUID} = require('node:crypto');
 
-function fixture({text='Incoming audio call. Someone is calling you', answer='Accept', decline='Decline', pathname='/'}={}) {
-  let list=[], interval;
-  const scope={textContent:text,querySelectorAll:()=>list};
+function fixture({text='Incoming audio call. Someone is calling you', answer='Accept', decline='Decline', pathname='/',
+  cookie='', profiles=[]}={}) {
+  let list=[], interval, links=profiles;
+  const scope={textContent:text,querySelectorAll:selector=>selector==='a[href]'
+    ? links.map(href=>({getAttribute:()=>href})) : list};
   function button(name) {
     const item={innerText:name,isConnected:true,disabled:false,clicked:0,attrs:{},style:{display:'block',visibility:'visible'},
       getAttribute(key){return this.attrs[key] || null;},getBoundingClientRect(){return {width:50,height:20};},
@@ -15,11 +17,14 @@ function fixture({text='Incoming audio call. Someone is calling you', answer='Ac
     list.push(item);return item;
   }
   const yes=button(answer), no=button(decline), events=[];
-  const context=vm.createContext({document:{querySelectorAll:()=>list,body:{innerText:text}},location:{pathname},getComputedStyle:button=>button.style,
+  const context=vm.createContext({document:{querySelectorAll:()=>list,body:{innerText:text},
+    get cookie(){return typeof cookie==='function'?cookie():cookie;}},URL,
+    location:{pathname,href:'https://www.facebook.com'+pathname},getComputedStyle:button=>button.style,
     crypto:{randomUUID},MutationObserver:class{observe(){}disconnect(){}},
     setTimeout:fn=>fn,clearTimeout(){},setInterval:fn=>{interval=fn;return fn;},clearInterval:()=>interval=null});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../experimental/call-lab-extension/incoming.js'),'utf8'),context);
   return {api:context.CallLabIncoming,yes,no,events,button,scope,scan:()=>interval?.(),
+    setProfiles:value=>links=value,
     enable(){this.api.watch(true,event=>events.push(event));},remove(item){list=list.filter(x=>x!==item);}};
 }
 
@@ -29,6 +34,42 @@ test('incoming call detection is passive until armed and accepts a validated non
   assert.equal(f.api.accept('wrong').ok,false);assert.equal(f.yes.clicked,0);
   assert.equal(f.api.accept(id).accepted,true);assert.equal(f.yes.clicked,1);
   assert.equal(f.api.accept(id).ok,false);
+});
+
+test('the accepted ring carries only its numeric owner and unique caller profile',()=>{
+  const f=fixture({cookie:'c_user=111; xs=PRIVATE_SECRET',profiles:[
+    '/profile.php?id=222','https://www.facebook.com/people/Caller/222/','/profile.php?id=111',
+    '/messages/t/999','https://www.facebook.com.attacker.example/333',
+  ]});
+  f.enable();const event=f.events[0];
+  assert.deepEqual(Object.keys(event).sort(),['kind','ringId']);
+  const accepted=f.api.accept(event.ringId);
+  assert.equal(accepted.accepted,true);
+  assert.deepEqual(JSON.parse(JSON.stringify(accepted.summaryPeer)),{ownerId:'111',callerId:'222'});
+  assert.ok(!JSON.stringify(accepted).includes('PRIVATE'));
+});
+
+for(const profiles of [[],['/messages/t/222'],['/groupcall/ROOM:222'],['/profile.php?id=222&id=333'],
+  ['/profile.php?id=222','/333/'],['https://evil.example/222'],['/profile.php?id=111']]) {
+  test(`missing, ambiguous or unrelated profile links do not choose a recipient: ${JSON.stringify(profiles)}`,()=>{
+    const f=fixture({cookie:'c_user=111',profiles});f.enable();
+    const result=f.api.accept(f.events[0].ringId);
+    assert.equal(result.accepted,true);assert.equal(result.summaryPeer,undefined);
+  });
+}
+
+test('a changed caller invalidates the old ring even when Facebook reuses the answer button',()=>{
+  const f=fixture({cookie:'c_user=111',profiles:['/222/']});f.enable();
+  const old=f.events[0].ringId;f.setProfiles(['/333/']);
+  assert.equal(f.api.probe().ringId,null);assert.equal(f.api.accept(old).ok,false);
+  f.scan();const next=f.events.at(-1).ringId;assert.notEqual(next,old);
+  assert.equal(f.api.accept(next).summaryPeer.callerId,'333');
+});
+
+test('unavailable account identity does not break answering and never guesses a recipient',()=>{
+  const f=fixture({cookie:()=>{throw Error('cookie blocked');},profiles:['/222/']});f.enable();
+  const accepted=f.api.accept(f.events[0].ringId);
+  assert.equal(accepted.accepted,true);assert.equal(accepted.summaryPeer,undefined);
 });
 
 test('restoring the saved watch mode keeps the first ringing nonce valid and does not emit a duplicate',()=>{

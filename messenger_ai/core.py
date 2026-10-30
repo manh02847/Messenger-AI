@@ -20,7 +20,7 @@ from .images import (
     image_attachments,
 )
 from .state import State
-from .reactions import LABELS, parse_reply
+from .reactions import reaction_label, parse_reply
 
 VIETNAM = timezone(timedelta(hours=7))
 TYPING_REFRESH_SECONDS = 4
@@ -519,7 +519,7 @@ class ReplyBot:
                 if self.settings.dry_run:
                     if action.reaction:
                         self.log(
-                            f"[XEM TRƯỚC — CHƯA THẢ] {LABELS[action.reaction]}"
+                            f"[XEM TRƯỚC — CHƯA THẢ] {reaction_label(action.reaction)}"
                             + (
                                 "; chỉ cảm xúc nếu thành công"
                                 if action.reaction_only
@@ -555,7 +555,7 @@ class ReplyBot:
                             self.state.remember(
                                 thread,
                                 "assistant",
-                                f"[Đã thả cảm xúc {LABELS[action.reaction]} vào tin nhắn trước.]",
+                                f"[Đã thả cảm xúc {reaction_label(action.reaction)} vào tin nhắn trước.]",
                                 self.clock(),
                                 self.settings.history_messages,
                             )

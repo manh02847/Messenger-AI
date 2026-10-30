@@ -69,6 +69,8 @@ def settings(
     summary_enabled=None,
     summary_model=None,
     summary_outbox=None,
+    summary_target=None,
+    summary_owner_id=None,
 ):
     data = dict(old or {})
     selected_voice = data.get("voice") if voice is None else voice
@@ -92,6 +94,8 @@ def settings(
         "summary_model": summary_model
         or data.get("summary_model", DEFAULT_SUMMARY_MODEL),
         "summary_outbox": summary_outbox or data.get("summary_outbox", ""),
+        "summary_target": summary_target or data.get("summary_target", "self"),
+        "summary_owner_id": summary_owner_id or data.get("summary_owner_id", ""),
     }
 
 
@@ -125,7 +129,7 @@ def summary_source():
     return raw, info, owner
 
 
-def prepare_summary_route(account):
+def prepare_summary_route(account, *, target=None):
     from messenger_ai.config import Settings
 
     raw, info, owner = summary_source()
@@ -150,6 +154,8 @@ def prepare_summary_route(account):
     os.chown(route, account.pw_uid, pwd.getpwuid(info.st_uid).pw_gid)
     os.chmod(route, 0o2770)
     raw.update(call_summary_inbox=str(route), call_summary_owner_id=owner)
+    if target is not None:
+        raw["call_summary_target"] = target
     Settings.from_dict(raw)
     private_write(
         config_path,
@@ -208,7 +214,7 @@ def install(args):
     preflight()
     if args.summary_model is not None and not valid_summary_model(args.summary_model):
         raise ValueError("Mã model tóm tắt chưa hợp lệ.")
-    if args.call_summaries:
+    if args.call_summaries or args.summary_target is not None:
         summary_source()
     chosen_persona = (
         read_persona(Path(args.persona).expanduser()) if args.persona else None
@@ -312,6 +318,11 @@ def install(args):
     use_persona = (
         True if chosen_persona is not None else False if args.no_persona else None
     )
+    summary_route = summary_owner = summary_target = None
+    if args.call_summaries or args.summary_target is not None:
+        source, _, summary_owner = summary_source()
+        summary_target = args.summary_target or source.get("call_summary_target", "self")
+        summary_route = prepare_summary_route(account, target=summary_target)
     data = settings(
         old,
         key,
@@ -326,7 +337,9 @@ def install(args):
         if args.no_call_summaries
         else None,
         summary_model=args.summary_model,
-        summary_outbox=prepare_summary_route(account) if args.call_summaries else None,
+        summary_outbox=summary_route,
+        summary_target=summary_target,
+        summary_owner_id=summary_owner,
     )
     if chosen_persona is not None:
         private_write(
@@ -355,7 +368,9 @@ def install(args):
     print(
         "Tóm tắt sau gọi: "
         + (
-            "BẬT; khởi động lại bot nhắn tin của thư mục này để nhận tin cho chính mình."
+            "BẬT; gửi cho "
+            + ("người gọi" if data["summary_target"] == "caller" else "chính mình")
+            + "; khởi động lại bot nhắn tin của thư mục này để áp dụng."
             if data["summary_enabled"]
             else "TẮT"
         )
@@ -395,12 +410,17 @@ def main():
     summary.add_argument(
         "--call-summaries",
         action="store_true",
-        help="Tóm tắt phần AI nghe, gửi cho chính tài khoản bot của thư mục hiện tại.",
+        help="Bật tóm tắt phần AI nghe; chọn người nhận bằng --summary-target.",
     )
     summary.add_argument(
         "--no-call-summaries",
         action="store_true",
         help="Tắt nhận dạng/tóm tắt cuộc gọi mới.",
+    )
+    parser.add_argument(
+        "--summary-target",
+        choices=("self", "caller"),
+        help="Gửi tóm tắt cho chính mình hoặc người gọi đã xác định từ cuộc gọi đến.",
     )
     parser.add_argument(
         "--summary-model",

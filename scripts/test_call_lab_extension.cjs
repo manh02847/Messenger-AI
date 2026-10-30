@@ -206,7 +206,7 @@ test('late Stop acknowledgement in content script does not clear a newer session
   await flush(); assert.equal(forwarded.at(-1).session, 'new');
 });
 
-function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAuto,deferRemoval}={}) {
+function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAuto,deferRemoval,summaryPeer}={}) {
   let accepted=false, ended=false, ringing=true, human=false, ringId='ring-1';
   const f=background({
     clock,cancelClock,now,savedAuto,deferRemoval,
@@ -214,7 +214,7 @@ function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAu
     send:async(msg,tabId)=>{
       if(msg.command==='ui-probe')return{ok:true,ended:tabId===84&&ended,handoff:tabId===84&&handoff,count:tabId===84&&!ended?1:0,busy:tabId===84&&!ended};
       if(msg.command==='auto-probe')return{ok:true,ringId:ringing&&!accepted&&(tabId===42||twoRings)?ringId:null};
-      if(msg.command==='auto-accept'){accepted=true;return{ok:true,accepted:true};}
+      if(msg.command==='auto-accept'){accepted=true;return{ok:true,accepted:true,...(summaryPeer?{summaryPeer}:{})};}
       if(msg.command==='probe')return{ok:true,count:(accepted||human)&&!ended&&tabId===84?1:0};
       return{ok:true};
     },
@@ -223,6 +223,17 @@ function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAu
     cancelRing:()=>ringing=false, humanAnswer:()=>{human=true;ringing=false;},
     replaceRing:id=>{ringId=id;ringing=true;}});
 }
+
+test('only the accepted incoming call supplies a summary recipient at ready, not at auth or in page audio',async()=>{
+  const f=autoFixture({summaryPeer:{ownerId:'111',callerId:'222'}});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();
+  assert.equal(ws.sent[0].summaryPeer,undefined);
+  ws.receive({type:'google_ready'});for(let i=0;i<5;i++)await flush();
+  assert.deepEqual(ws.sent.find(msg=>msg.type==='ready').summaryPeer,{ownerId:'111',callerId:'222'});
+  assert.ok(!f.page.some(msg=>JSON.stringify(msg).includes('callerId')));
+  await f.popup('stop');
+});
 
 function answerClock() {
   let now=100000, next=0;

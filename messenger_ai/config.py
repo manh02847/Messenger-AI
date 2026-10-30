@@ -153,6 +153,7 @@ class Settings:
     reaction_mode: str = "off"
     call_summary_inbox: str = ""
     call_summary_owner_id: str = ""
+    call_summary_target: str = "self"
     model_features: dict[str, dict[str, str]] = field(default_factory=dict)
     max_replies_per_thread_per_day: int = 1000
     minimum_ai_interval_seconds: float = 6
@@ -295,6 +296,8 @@ class Settings:
             raise ValueError("ai_retry_enabled phải là true hoặc false.")
         if result.reaction_mode not in ("off", "auto"):
             raise ValueError("reaction_mode phải là off hoặc auto.")
+        if result.call_summary_target not in ("self", "caller"):
+            raise ValueError("call_summary_target phải là self hoặc caller.")
         if (
             not isinstance(result.call_summary_inbox, str)
             or len(result.call_summary_inbox) > 500

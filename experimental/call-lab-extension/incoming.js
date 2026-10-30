@@ -32,6 +32,34 @@
     const found = candidates();
     return found.length === 1 ? found[0] : null;
   }
+  function callerPeer(button) {
+    if (!button) return null;
+    // Read only the numeric account identifier, never return cookie data.
+    let cookie;
+    try { cookie = String(document.cookie || ""); } catch { return null; }
+    const owners = cookie.split(";").map(part => part.trim())
+      .filter(part => part.startsWith("c_user=")).map(part => part.slice(7));
+    if (owners.length !== 1 || !/^[1-9][0-9]{0,24}$/.test(owners[0])) return null;
+    const scope = button.closest('[role="dialog"], [role="alertdialog"]') || button.parentElement?.parentElement;
+    if (!scope || /group call|cuộc gọi nhóm/.test(normalize(scope.textContent))) return null;
+    // A conversation URL /t/id and ROOM:id are not numeric profile IDs.
+    // Only profile links inside this incoming-call notification are eligible.
+    const peers = new Set();
+    const links = [...scope.querySelectorAll('a[href]')];
+    if (links.length > 20) return null;
+    for (const link of links) {
+      try {
+        const url = new URL(link.getAttribute("href"), location.href);
+        if (url.protocol !== "https:" || url.username || url.password || url.port
+            || !["www.facebook.com", "web.facebook.com", "facebook.com", "m.facebook.com"].includes(url.hostname)) continue;
+        let id = null;
+        if (url.pathname === "/profile.php" && url.searchParams.getAll("id").length === 1) id = url.searchParams.get("id");
+        else id = url.pathname.match(/^\/(?:people\/[^/]+\/)?([1-9][0-9]{0,24})\/?$/)?.[1];
+        if (id && /^[1-9][0-9]{0,24}$/.test(id) && id !== owners[0]) peers.add(id);
+      } catch {}
+    }
+    return peers.size === 1 ? {ownerId: owners[0], callerId: [...peers][0]} : null;
+  }
   function endState() {
     const path = globalThis.location?.pathname || "";
     const callPage = /^\/(?:groupcall|call|calls)(?:\/|$)/.test(path);
@@ -47,7 +75,7 @@
     const ended = close && (redial || handoff || /bạn thấy chất lượng cuộc gọi|how was (?:the quality of )?your call|cuộc gọi (?:đã )?kết thúc|call (?:has )?ended/.test(text));
     return {ended, handoff, busy};
   }
-  let observed = null, ring = null, callback = null, observer = null, timer = null, interval = null;
+  let observed = null, observedPeer = null, ring = null, callback = null, observer = null, timer = null, interval = null;
   let autoEnabled = false, lastUI = "";
   function scan() {
     timer = null;
@@ -59,9 +87,11 @@
     }
     if (!autoEnabled) return;
     const button = candidate();
-    if (!button) { observed = null; ring = null; return; }
-    if (button === observed) return;
+    if (!button) { observed = observedPeer = null; ring = null; return; }
+    const peer = callerPeer(button);
+    if (button === observed && JSON.stringify(peer) === JSON.stringify(observedPeer)) return;
     observed = button;
+    observedPeer = peer;
     ring = crypto.randomUUID();
     callback?.({kind: "incoming", ringId: ring});
   }
@@ -72,7 +102,7 @@
     if (observer && autoEnabled === enabled) return;
     observer?.disconnect(); observer = null;
     clearTimeout(timer); clearInterval(interval); timer = interval = null;
-    observed = ring = null; autoEnabled = enabled; lastUI = "";
+    observed = observedPeer = ring = null; autoEnabled = enabled; lastUI = "";
     observer = new MutationObserver(() => { if (!timer) timer = setTimeout(scan, 350); });
     observer.observe(document, {subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "title", "style", "disabled", "aria-disabled"]});
     interval = setInterval(scan, 2500);
@@ -80,14 +110,16 @@
   }
   function probe() {
     // Revalidate the same live button; a removed/replaced dialog needs a new nonce.
-    return {ok: true, ringId: ring && observed === candidate() ? ring : null};
+    return {ok: true, ringId: ring && observed === candidate()
+      && JSON.stringify(callerPeer(observed)) === JSON.stringify(observedPeer) ? ring : null};
   }
   function accept(id) {
     if (!id || id !== probe().ringId) return {ok: false};
     const button = observed;
-    observed = ring = null;
+    const peer = observedPeer;
+    observed = observedPeer = ring = null;
     button.click();
-    return {ok: true, accepted: true};
+    return {ok: true, accepted: true, ...(peer ? {summaryPeer: peer} : {})};
   }
   function hangup() {
     const found = buttons().filter(button => END.has(label(button)));

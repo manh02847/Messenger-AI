@@ -12,8 +12,9 @@ from messenger_ai.facebook import FacebookTransport
 from messenger_ai.reactions import EMOJI, parse_reply
 from test_bot import FakeAI, Sender, drain, make_bot, message
 
+CUSTOM_EMOJI = ("🫶", "😂", "🥲", "😏", "🫠", "🤦🏽‍♂️", "👨‍👩‍👧‍👦", "❤️", "🇻🇳", "1️⃣", "🧑🏿‍🚀", "🐱", "🍜", "🎮", "🏳️‍🌈", "👍🏽", "🫩")
 
-@pytest.mark.parametrize("reaction", EMOJI)
+@pytest.mark.parametrize("reaction", (*EMOJI, *CUSTOM_EMOJI))
 @pytest.mark.parametrize("only", [False, True])
 def test_model_protocol(reaction, only):
     text = f"[[react:{reaction}{':only' if only else ''}]]\nMình hiểu rồi."
@@ -26,7 +27,12 @@ def test_model_protocol(reaction, only):
 @pytest.mark.parametrize(
     "text",
     [
-        "[[react:angry]]\nBody",
+        "[[react:unknown]]\nBody",
+        "[[react:👍❤️]]\nBody",
+        "[[react:1]]\nBody",
+        "[[react::smile:]]\nBody",
+        "[[react:\u202e👍]]\nBody",
+        "[[react:👍" + "\u200d" * 40 + "]]\nBody",
         "[[react:none:only]]\nBody",
         "[[react:like]]",
         "[[react:like]]\n",
@@ -170,11 +176,49 @@ async def test_reaction_rpc_uses_the_existing_bridge_with_exact_encrypted_and_re
         (replace(encrypted, is_private=False), "like"),
         (replace(encrypted, sender_id="111"), "like"),
         (replace(encrypted, sender_jid=""), "like"),
-        (encrypted, "angry"),
+        (encrypted, "unknown"),
     ]:
         with pytest.raises(ValueError):
             await transport.react(msg, kind)
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reaction", (*EMOJI, *CUSTOM_EMOJI))
+@pytest.mark.parametrize("encrypted", [False, True])
+async def test_any_valid_emoji_reaches_its_exact_native_or_regular_message(tmp_path, reaction, encrypted):
+    calls = []
+
+    class Bridge:
+        async def call(self, method, params):
+            calls.append((method, params))
+            return {}
+
+    transport = FacebookTransport("", tmp_path / "device", tmp_path / "bridge", log=lambda _: None)
+    transport.own_id = "111"
+    transport.listener = SimpleNamespace(_bridge=Bridge())
+    transport.native_reaction_timestamp = True
+    incoming = message() if encrypted else replace(message(), chat_jid="", thread_id=222)
+    await transport.react(incoming, reaction)
+    assert len(calls) == 1
+    assert calls[0][0] == ("sendE2EEReaction" if encrypted else "sendReaction")
+    assert calls[0][1]["messageId"] == incoming.id
+    assert calls[0][1]["emoji"] == EMOJI.get(reaction, reaction)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail,dry_run", [(False, False), (True, False), (False, True)])
+async def test_free_choice_reaction_only_uses_fallback_or_preview_without_leaking_header(tmp_path, fail, dry_run):
+    sender = ReactSender(fail=fail)
+    bot, state, _, _, _ = make_bot(tmp_path, sender=sender, ai=FakeAI("[[react:🧑🏿‍🚀:only]]\nMình hiểu rồi."),
+        reaction_mode="auto", dry_run=dry_run)
+    bot.receive(message())
+    await drain(bot)
+    assert sender.reactions == ([] if dry_run else [("m1", "🧑🏿‍🚀")])
+    assert bool(sender.calls) is (fail and not dry_run)
+    if sender.calls:
+        assert "[[react:" not in str(sender.calls)
+    state.close()
 
 
 @pytest.mark.asyncio

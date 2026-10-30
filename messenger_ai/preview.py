@@ -5,7 +5,7 @@ from time import monotonic
 from .ai import AIError
 from .context import recent_history
 from .handoff import reply_text, requests_human
-from .reactions import LABELS, parse_reply
+from .reactions import reaction_label, parse_reply
 
 
 def bounded_history(history, settings):
@@ -67,7 +67,7 @@ async def chat_loop(ai, settings, reserve, *, read=input, write=print, clock=mon
         if action.reaction:
             write(
                 "[Cảm xúc dự kiến: "
-                + LABELS[action.reaction]
+                + reaction_label(action.reaction)
                 + ("; chỉ thả cảm xúc" if action.reaction_only else "")
                 + "]"
             )

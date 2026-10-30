@@ -248,6 +248,7 @@ async function prepareAutomatic(state, requested, revision) {
     {to: "call-lab-content", command: "auto-accept", ringId: requested.ringId}, {frameId: 0});
   if (!accepted?.accepted) throw new Error("RING_CHANGED");
   state.accepted = true;
+  state.summaryPeer = accepted.summaryPeer || null;
   for (let i = 0; i < 25; i++) {
     if (current !== state || !automation.enabled) throw new Error("CANCELLED");
     const found = await findCall(revision, state.id);
@@ -367,7 +368,7 @@ async function start(msg, automatic = null) {
           if (!result?.ok) { await stop(label(result)); return; }
           if (state.callKey) callTabs.set(state.tabId, {callKey: state.callKey, homeTabId: automatic?.tabId});
           state.ready = true;
-          ws.send(JSON.stringify({type: "ready"}));
+          ws.send(JSON.stringify({type: "ready", ...(state.summaryPeer ? {summaryPeer: state.summaryPeer} : {})}));
           status = "AI đang nghe và nói trong cuộc gọi này. Bấm Dừng AI để trả micro.";
         }).catch(() => { if (current === state) return stop("Không gắn được âm thanh; tải lại trang rồi gọi thử lại."); });
       } else if (data.type === "end_call") {

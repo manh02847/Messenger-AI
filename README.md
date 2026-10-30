@@ -2,14 +2,14 @@
 
 Bot nhận **tin văn bản mới** trên Messenger cá nhân, dùng AI để soạn rồi trả lời trong cuộc trò chuyện đó. Có thể bật thêm **đọc ảnh gửi mới** bằng model hỗ trợ thị giác. Có ngữ cảnh riêng cho từng người và tự nhường khi bạn nhắn thủ công.
 
-Có thể bật **AI thả cảm xúc theo ngữ cảnh** và **tóm tắt phần cuộc gọi AI đã nghe rồi gửi cho chính mình**. Hai tính năng có công tắc riêng, mặc định chưa bật khi cập nhật.
+Có thể bật **AI tự chọn emoji để thả cảm xúc** và **tóm tắt phần cuộc gọi AI đã nghe rồi gửi cho người gọi hoặc chính mình**. Hai tính năng có công tắc riêng, mặc định chưa bật khi cập nhật.
 
 Hỗ trợ **NVIDIA NIM, Google AI Studio, Cloudflare Workers AI và Groq**. Bot chạy bằng dòng lệnh trên máy tính/VPS; GitHub chỉ lưu mã nguồn. Dùng API hosted nên VPS không cần GPU.
 
 - **Đã cài bot:** xem [lệnh thường dùng](#1-lệnh-thường-dùng) và [kiểm tra nguồn/model](#2-kiểm-tra-ai-nguồn-và-model).
 - **Cài lần đầu:** bắt đầu từ [cài đặt](#3-cài-đặt-lần-đầu), sau đó chọn phạm vi rep và chạy thử.
 - **AI trong cuộc gọi Chrome máy tính:** xem [Call Lab](experimental/CALL_LAB.md). Relay đã thử với Google thật; người dùng xác nhận cầu nối 0.1.1 hoạt động trên Chrome Windows. Các phần mới ở bản VPS cần kiểm tra riêng.
-- **Gọi AI chạy hoàn toàn trên Ubuntu VPS:** xem [cài Chrome, âm thanh ảo và tự nhận cuộc gọi](deploy/CALL_VPS.md). Bản 0.5.0 cho chọn thời gian chờ để bạn nghe trước, mặc định 25 giây; cần đăng nhập Facebook và kiểm tra cuộc gọi trên VPS trước khi bật tự động.
+- **Gọi AI chạy hoàn toàn trên Ubuntu VPS:** xem [cài Chrome, âm thanh ảo và tự nhận cuộc gọi](deploy/CALL_VPS.md). Bản 0.6.0 thêm xác định người gọi để gửi tóm tắt; giữ thời gian chờ mặc định 25 giây để bạn nghe trước. Cần đăng nhập Facebook và kiểm tra cuộc gọi trên VPS trước khi bật tự động.
 
 ## 1. Lệnh thường dùng
 
@@ -53,7 +53,7 @@ Các lệnh trên dành cho **system service**. Nếu đã cài **user service**
 systemctl restart messenger-ai
 ```
 
-Model chọn theo câu mới và ngữ cảnh: không thả, thả rồi trả lời, hoặc chỉ thả để xác nhận/kết chuyện. Có các cảm xúc thích, tim, vui, ngạc nhiên và buồn; hướng dẫn chọn thận trọng, không dùng để nhận lời hoặc xác nhận giao dịch thay chủ tài khoản. Nội dung chữ vẫn theo persona, không tự thêm emoji. Quyết định nằm trong cùng lượt gọi AI, không gọi thêm một model chỉ để chọn react.
+Model chọn theo câu mới và ngữ cảnh: không thả, thả rồi trả lời, hoặc chỉ thả để xác nhận/kết chuyện. **AI tự chọn emoji Unicode, không giới hạn vào vài cảm xúc có sẵn**, kể cả emoji ghép, màu da và cờ. Mỗi tin tối đa một biểu tượng; chọn thận trọng, không dùng để nhận lời hoặc xác nhận giao dịch thay chủ tài khoản. Nội dung chữ vẫn theo persona, không tự thêm emoji. Quyết định nằm trong cùng lượt gọi AI, không gọi thêm một model chỉ để chọn react. Cập nhật bằng `python3 setup_bot.py` để cài thư viện kiểm tra emoji.
 
 `chat-ai` cho xem lựa chọn dự kiến mà không kết nối Messenger. Cảm xúc chỉ tác động đúng tin mới nhất trong chat riêng đã được phép, không tác động nhóm hoặc tin của chính bạn. Bot vẫn nhường khi bạn nhắn thủ công. Nếu lệnh react lỗi/chưa rõ kết quả, không tự thả lại và dùng câu trả lời chữ dự phòng. Việc gửi lệnh thành công chưa thay thế việc kiểm tra cảm xúc đã hiển thị trên Messenger.
 
@@ -69,17 +69,19 @@ Log `Reaction: tuyến=E2EE; timestamp=đã vá.` xác nhận bot dùng tuyến 
 
 ### Tóm tắt cuộc gọi rồi gửi tin
 
-Trên VPS đã cài gọi AI, chọn thư mục bot sẽ **nhận thông báo cho chính tài khoản đó**:
+Trên VPS đã cài gọi AI, chọn đúng thư mục bot của tài khoản đang đăng nhập Chrome. Bật gửi tóm tắt vào **chat người gọi**:
 
 ```bash
 cd ~/messenger-ai-bot
-.venv/bin/python setup_call_vps.py install --call-summaries
+.venv/bin/python setup_call_vps.py install --call-summaries --summary-target caller
 systemctl restart messenger-ai
 ```
 
-Sau khi phần AI tham gia cuộc gọi kết thúc, host tạo bản tóm tắt ngắn và bot nhắn vào cuộc trò chuyện **với chính mình**. Không gửi bản tóm tắt cho người gọi. Chỉ nhận dạng lời nói khi bật tính năng này, không ghi file âm thanh. Bản tóm tắt dựa vào phần AI nghe, có thể thiếu khi nhường người thật hoặc nhận dạng sai.
+Sau khi phần AI tham gia cuộc gọi kết thúc, host tạo bản tóm tắt ngắn và bot nhắn vào cuộc trò chuyện của **người gọi đã xác định từ lượt gọi đến mà AI tự nhận**. Nếu giao diện không cho xác định chắc người đó, giữ bản riêng `.unrouted.json` và báo log; không đoán theo tên, chat đang mở hoặc lời nói. Chỉ nhận dạng lời nói khi bật tính năng này, không ghi file âm thanh. Bản tóm tắt dựa vào phần AI nghe, có thể thiếu khi nhường người thật hoặc nhận dạng sai.
 
-Mặc định dùng `gemini-3.5-flash-lite`, một request Google bổ sung sau mỗi phiên có lời người gọi; tính vào quota/phí project Google, tách bộ đếm của bot text. Đổi bằng `--summary-model MÃ_MODEL`. Host và bot nhắn tin đều cần chạy, bot phải ở chế độ gửi thật. Không cần reload tiện ích chỉ để bật hai tính năng Python này; giữ các lựa chọn giọng, persona, chờ tự nhận và mã kết nối hiện có.
+Mặc định dùng `gemini-3.5-flash-lite`, một request Google bổ sung sau mỗi phiên có lời người gọi; tính vào quota/phí project Google, tách bộ đếm của bot text. Đổi bằng `--summary-model MÃ_MODEL`. Host và bot nhắn tin đều cần chạy, bot phải ở chế độ gửi thật. Sau cập nhật host, **Reload tiện ích trong Chrome VPS, xác nhận 0.6.0 và tải lại Facebook** để nhận thông tin người gọi. Giữ các lựa chọn giọng, persona, chờ tự nhận và mã kết nối hiện có.
+
+Muốn gửi về cho chính mình như trước, dùng `install --call-summaries --summary-target self` rồi restart bot text. Bản cài cũ giữ lựa chọn gửi cho chính mình đến khi bạn đổi sang `caller`; báo cáo cũ không tự đổi người nhận.
 
 Tắt tóm tắt **các cuộc gọi mới**:
 
@@ -87,7 +89,7 @@ Tắt tóm tắt **các cuộc gọi mới**:
 .venv/bin/python setup_call_vps.py install --no-call-summaries
 ```
 
-Chi tiết acc 2, bản chờ gửi, lỗi và dữ liệu tạm: [hướng dẫn tóm tắt cuộc gọi](deploy/CALL_VPS.md#tóm-tắt-sau-gọi-và-gửi-cho-chính-mình).
+Chi tiết acc 2, nhận diện người gọi, bản chờ gửi và lỗi: [hướng dẫn tóm tắt cuộc gọi](deploy/CALL_VPS.md#tóm-tắt-sau-gọi-và-chọn-nơi-nhận).
 
 ## 2. Kiểm tra AI, nguồn và model
 

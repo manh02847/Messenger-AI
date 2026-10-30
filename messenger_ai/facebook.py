@@ -5,6 +5,7 @@ import base64
 import contextlib
 import hashlib
 import hmac
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from typing import Any
 import httpx
 
 from .core import Message
-from .reactions import EMOJI
+from .reactions import reaction_emoji
 from .images import (
     MAX_IMAGE_BYTES,
     MEDIA_TIMEOUT,
@@ -181,14 +182,13 @@ class FacebookTransport:
         if (
             not message.is_private
             or message.sender_id == self.own_id
-            or reaction not in EMOJI
         ):
             raise ValueError(
                 "Chỉ thả cảm xúc được phép vào tin chat riêng của người nhắn."
             )
         if not message.id or len(message.id) > 500:
             raise ValueError("Mã tin nhắn chưa hợp lệ.")
-        params = {"messageId": message.id, "emoji": EMOJI[reaction]}
+        params = {"messageId": message.id, "emoji": reaction_emoji(reaction)}
         if message.chat_jid:
             if not self.native_reaction_timestamp:
                 self.log("Reaction E2EE: bridge chưa có bản vá timestamp; dùng câu chữ dự phòng.")
@@ -219,6 +219,17 @@ class FacebookTransport:
         if self.listener is None or self.closing or not self.own_id.isdigit():
             raise RuntimeError("Messenger chưa sẵn sàng gửi thông báo cho chính mình.")
         return await self.listener.send_e2ee_message(self.own_id + "@msgr", text)
+
+    async def notify_caller(self, caller_id: str, text: str) -> dict:
+        if (
+            self.listener is None or self.closing
+            or not re.fullmatch(r"[1-9][0-9]{0,24}", self.own_id)
+            or not isinstance(caller_id, str)
+            or not re.fullmatch(r"[1-9][0-9]{0,24}", caller_id)
+            or caller_id == self.own_id
+        ):
+            raise ValueError("Chưa xác định được tài khoản người gọi để gửi tóm tắt.")
+        return await self.listener.send_e2ee_message(caller_id + "@msgr", text)
 
     async def close(self) -> None:
         self.closing = True

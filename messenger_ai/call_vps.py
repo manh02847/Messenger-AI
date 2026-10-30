@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
 import signal
 import sys
@@ -50,6 +51,14 @@ def read_settings(root: Path) -> dict:
         or (data.get("voice") is not None and data["voice"] not in VOICES)
         or type(data.get("summary_enabled", False)) is not bool
         or not valid_summary_model(data.get("summary_model", DEFAULT_SUMMARY_MODEL))
+        or data.get("summary_target", "self") not in ("self", "caller")
+        or (
+            data.get("summary_target", "self") == "caller"
+            and not (
+                isinstance(data.get("summary_owner_id"), str)
+                and re.fullmatch(r"[1-9][0-9]{0,24}", data["summary_owner_id"])
+            )
+        )
         or (
             data.get("summary_enabled", False)
             and (
@@ -270,6 +279,8 @@ async def run(root: Path = STATE, runtime: Path = RUNTIME, *, port=8765):
             summary=SummaryOptions(
                 Path(data["summary_outbox"]),
                 data.get("summary_model", DEFAULT_SUMMARY_MODEL),
+                data.get("summary_target", "self"),
+                data.get("summary_owner_id", ""),
             )
             if data.get("summary_enabled", False)
             else None,

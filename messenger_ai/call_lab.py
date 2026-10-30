@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
 
-from .call_reports import CallReporter, CallTranscript, SummaryOptions
+from .call_reports import CallReporter, CallTranscript, SummaryOptions, call_peer
 
 ENDPOINT = (
     "wss://generativelanguage.googleapis.com/ws/"
@@ -401,6 +401,10 @@ class CallRelay:
                 ready = True
                 control.ready = True
                 if control.transcript is not None:
+                    if self.config.summary is not None and self.config.summary.target == "caller":
+                        control.transcript.peer = call_peer(
+                            data.get("summaryPeer"), self.config.summary.owner_id
+                        )
                     control.transcript.start()
                 await google.send(
                     json.dumps(

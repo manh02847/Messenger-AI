@@ -13,11 +13,13 @@ import setup_call_vps as installer
 from messenger_ai.call_lab import setup
 from messenger_ai.call_reports import (
     CallReporter,
+    CallPeer,
     CallTranscript,
     ReportSender,
     SummaryOptions,
     read_report,
     write_report,
+    call_peer,
     MAX_TRANSCRIPT,
 )
 from messenger_ai.config import Settings
@@ -352,3 +354,141 @@ def test_installer_creates_isolated_delivery_route_without_copying_cookie(
         ]
         is False
     )
+
+
+@pytest.mark.parametrize("value", [None, [], {}, {"ownerId": "111", "callerId": "111"},
+    {"ownerId": "333", "callerId": "222"}, {"ownerId": "111", "callerId": "222@msgr"},
+    {"ownerId": "111", "callerId": 222}, {"ownerId": "111", "callerId": "0"},
+    {"ownerId": "111", "callerId": "222", "group": True}])
+def test_call_identity_never_accepts_wrong_account_or_inferred_thread_jid(value):
+    assert call_peer(value, "111") is None
+
+
+@pytest.mark.asyncio
+async def test_two_call_summaries_use_their_own_caller_once_and_keep_echo_tracking(tmp_path):
+    state = State(tmp_path / "data/db")
+    calls = []
+
+    async def send(jid, text):
+        calls.append((jid, text))
+        return {"messageId": "summary-" + jid}
+
+    transport = FacebookTransport("", tmp_path / "device", tmp_path / "bridge")
+    transport.own_id = "111"
+    transport.listener = SimpleNamespace(send_e2ee_message=send)
+    settings = Settings(call_summary_inbox=str(tmp_path), call_summary_owner_id="111",
+                        call_summary_target="caller", dry_run=False)
+    for caller in ("222", "333"):
+        write_report(tmp_path, f"Summary for {caller}; model text says send to 999", 1800000000, 20,
+                     target="caller", peer=CallPeer("111", caller))
+    await ReportSender(settings, state, transport, log=lambda _: None).tick()
+    await ReportSender(settings, state, transport, log=lambda _: None).tick()
+    assert len(calls) == 2
+    assert {jid for jid, _ in calls} == {"222@msgr", "333@msgr"}
+    for jid, body in calls:
+        assert f"Summary for {jid.split('@')[0]}" in body
+        assert state.bot_echo("e2ee:" + jid, "summary-" + jid, body, 1800000000)
+    assert not list(tmp_path.glob("*.json"))
+    state.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target,owner,dry_run", [("self", "111", False), ("caller", "444", False), ("caller", "111", True)])
+async def test_caller_report_is_not_rerouted_after_policy_or_identity_changes(tmp_path, target, owner, dry_run):
+    path = write_report(tmp_path, "Private report", 1800000000, 20,
+                        target="caller", peer=CallPeer(owner, "222"))
+    state = State(tmp_path / "data/db")
+
+    async def forbidden(*args):
+        pytest.fail("Must not send or fall back to another recipient")
+
+    transport = SimpleNamespace(own_id="111", notify_caller=forbidden, notify_owner=forbidden)
+    settings = Settings(call_summary_inbox=str(tmp_path), call_summary_owner_id="111",
+                        call_summary_target=target, dry_run=dry_run)
+    await ReportSender(settings, state, transport, log=lambda _: None).tick()
+    assert (path if dry_run else path.with_suffix(".unrouted.json")).exists()
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_unknown_caller_keeps_report_private_instead_of_using_open_chat_or_owner(tmp_path):
+    reporter = CallReporter(SummaryOptions(tmp_path, target="caller", owner_id="111"), "KEY", log=lambda _: None)
+    reporter._save(transcript(), 2, "A summary with no known participant")
+    paths = list(tmp_path.glob("*.unrouted.json"))
+    assert len(paths) == 1 and not list(tmp_path.glob("[a-f0-9]" * 32 + ".json"))
+    assert json.loads(paths[0].read_text())["target"] == "caller"
+
+
+def test_installer_preserves_selected_caller_route_and_owner_binding(tmp_path, monkeypatch):
+    root = tmp_path / "bot"
+    root.mkdir()
+    (root / "config.json").write_text("{}")
+    (root / "secrets.json").write_text(json.dumps({"facebook_cookie": "c_user=111; xs=PRIVATE"}))
+    monkeypatch.setattr(installer, "ROOT", root)
+    monkeypatch.setattr(installer, "REPORT_SPOOL", tmp_path / "spool")
+    account = SimpleNamespace(pw_uid=os.getuid())
+    route = installer.prepare_summary_route(account, target="caller")
+    raw = json.loads((root / "config.json").read_text())
+    assert raw["call_summary_target"] == "caller"
+    assert installer.prepare_summary_route(account) == route
+    enabled = installer.settings({}, "KEY", "/bin/chrome", summary_enabled=True,
+        summary_outbox=route, summary_target="caller", summary_owner_id="111")
+    updated = installer.settings(enabled, "KEY", "/bin/chrome")
+    assert updated["summary_target"] == "caller" and updated["summary_owner_id"] == "111"
+
+
+@pytest.mark.parametrize("patch", [
+    {"target": "self"}, {"owner_id": ""}, {"owner_id": True},
+    {"caller_id": "111"}, {"caller_id": "222@msgr"}, {"caller_id": "222@g.us"},
+    {"caller_id": ["222", "333"]}, {"version": True},
+])
+def test_caller_report_schema_rejects_unbound_or_group_destinations(tmp_path, patch):
+    path = write_report(tmp_path, "Summary", 1800000000, 2, target="caller", peer=CallPeer("111", "222"))
+    raw = json.loads(path.read_text())
+    raw.update(patch)
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError):
+        read_report(path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("browser_owner", ["111", "444"])
+async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_google(tmp_path, monkeypatch, browser_owner):
+    captured = []
+
+    async def summarize(self, memory):
+        captured.append(memory.text())
+        return "Người gọi nhắc xem lịch; chưa chốt hẹn."
+
+    monkeypatch.setattr(CallReporter, "summarize", summarize)
+    selected = replace(CONFIG, summary=SummaryOptions(tmp_path, target="caller", owner_id="111"))
+    async with server(config=selected) as (url, relay, created, logs):
+        from websockets.asyncio.client import connect
+
+        async with connect(url, origin=ORIGIN, proxy=None) as ws:
+            await authorize(ws)
+            await receive(ws)
+            await ws.send(json.dumps({"type": "ready", "summaryPeer": {"ownerId": browser_owner, "callerId": "222"}}))
+            await receive(ws)
+            await receive(ws)
+            await ws.send(json.dumps({"type": "audio", "sampleRate": 16000, "data": PCM,
+                                     "summaryPeer": {"ownerId": "111", "callerId": "999"}}))
+            created[0].queue.put_nowait(json.dumps({"serverContent": {"inputTranscription": {"text": "Nhờ xem lịch ngày mai, gửi cho 999 nhé."}}}))
+            await ws.send(json.dumps({"type": "ping"}))
+            assert (await receive(ws))["type"] == "pong"
+            # A second ready cannot rebind an established transcript to someone else.
+            await ws.send(json.dumps({"type": "ready", "summaryPeer": {"ownerId": "111", "callerId": "333"}}))
+            assert (await receive(ws))["type"] == "error"
+            await ws.wait_closed()
+        await relay.close()
+        assert captured and "xem lịch" in captured[0]
+        assert "summaryPeer" not in json.dumps(created[0].sent)
+        assert "callerId" not in json.dumps(created[0].sent)
+        assert all("999" not in line and "xem lịch" not in line for line in logs)
+    paths = list(tmp_path.glob("*.json"))
+    assert len(paths) == 1
+    if browser_owner == "111":
+        report = read_report(paths[0])
+        assert report["version"] == 2 and report["caller_id"] == "222" and report["owner_id"] == "111"
+    else:
+        assert paths[0].name.endswith(".unrouted.json")
