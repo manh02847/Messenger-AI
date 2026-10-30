@@ -8,5 +8,18 @@
     "fbchat-bridge-e2ee-darwin-amd64": "f0d7a95eddf21cf0fc96bed33275d8f25e430626f0caba736eed40ff34b98f3b",
     "fbchat-bridge-e2ee-darwin-arm64": "8eec475a33cbe3b836717e793a5d09827dd331e9b08c14b56c500ca7a4a31d10",
     "fbchat-bridge-e2ee-windows-amd64.exe": "dd304ef952eccfabae8c7c1f6dce71decc1ed0bf275f5aec59e155460fe235e3"
+  },
+  "bridge_patches": {
+    "fbchat-bridge-e2ee-linux-amd64": {
+      "archive": "native/fbchat-bridge-e2ee-linux-amd64-reaction-v1.bsdiff",
+      "archive_sha256": "931678f319bbf6ba4c57b2e5da6a2916a884e73480fea69923abfe4eeca5d143",
+      "sha256": "0320c89f3cca27009668491e494941f853b2879020d92c608d6070ce7b6417b6",
+      "source_commit": "aa7abd0386ef1d4cabf8ce592d0f2cf308d8f4f6",
+      "meta_commit": "cea2e38c9107be591bcd1b7a6562ccc72400ce23",
+      "go_version": "go1.26.10",
+      "patch_sha256": "f188ab3a95f76fa4dffa1362757167f4714d2dca392bae9590cd6baad90bc23f",
+      "format": "bsdiff40",
+      "base_sha256": "6de0ce8db4986da2fd471385d63b61a5334084edb78bc6de2f53ecea6500189d"
+    }
   }
 }

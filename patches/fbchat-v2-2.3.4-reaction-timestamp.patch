@@ -1,0 +1,126 @@
+diff --git a/bridge-e2ee/bridge/messages.go b/bridge-e2ee/bridge/messages.go
+index caefe3e..43fe046 100644
+--- a/bridge-e2ee/bridge/messages.go
++++ b/bridge-e2ee/bridge/messages.go
+@@ -240,13 +240,30 @@ func (c *Client) SendReaction(threadID int64, messageID, emoji string) error {
+ 	return err
+ }
+ 
+-// SendE2EEReaction sends an E2EE reaction
++func buildE2EEReaction(msgKey *waCommon.MessageKey, emoji string, timestampMS int64) *waConsumerApplication.ConsumerApplication {
++	return &waConsumerApplication.ConsumerApplication{
++		Payload: &waConsumerApplication.ConsumerApplication_Payload{
++			Payload: &waConsumerApplication.ConsumerApplication_Payload_Content{
++				Content: &waConsumerApplication.ConsumerApplication_Content{
++					Content: &waConsumerApplication.ConsumerApplication_Content_ReactionMessage{
++						ReactionMessage: &waConsumerApplication.ConsumerApplication_ReactionMessage{
++							Key:               msgKey,
++							Text:              &emoji,
++							SenderTimestampMS: &timestampMS,
++						},
++					},
++				},
++			},
++		},
++	}
++}
++
++// SendE2EEReaction sends an E2EE reaction using the same ordering timestamp as mautrix-meta.
+ func (c *Client) SendE2EEReaction(chatJIDStr, messageID, senderJIDStr, emoji string) error {
+ 	e2eeClient := c.snapshotE2EEClient()
+ 	if e2eeClient == nil || !e2eeClient.IsConnected() {
+ 		return ErrE2EENotConnected
+ 	}
+-
+ 	chatJID, err := parseJID(chatJIDStr)
+ 	if err != nil {
+ 		return err
+@@ -255,22 +272,8 @@ func (c *Client) SendE2EEReaction(chatJIDStr, messageID, senderJIDStr, emoji str
+ 	if err != nil {
+ 		return err
+ 	}
+-
+ 	msgKey := e2eeClient.BuildMessageKey(chatJID, senderJID, messageID)
+-	reactionMsg := &waConsumerApplication.ConsumerApplication{
+-		Payload: &waConsumerApplication.ConsumerApplication_Payload{
+-			Payload: &waConsumerApplication.ConsumerApplication_Payload_Content{
+-				Content: &waConsumerApplication.ConsumerApplication_Content{
+-					Content: &waConsumerApplication.ConsumerApplication_Content_ReactionMessage{
+-						ReactionMessage: &waConsumerApplication.ConsumerApplication_ReactionMessage{
+-							Key:  msgKey,
+-							Text: &emoji,
+-						},
+-					},
+-				},
+-			},
+-		},
+-	}
++	reactionMsg := buildE2EEReaction(msgKey, emoji, time.Now().UnixMilli())
+ 
+ 	reactionID := strconv.FormatInt(time.Now().UnixNano(), 10)
+ 	_, err = e2eeClient.SendFBMessage(c.ctx, chatJID, reactionMsg, nil, whatsmeow.SendRequestExtra{ID: reactionID})
+diff --git a/bridge-e2ee/bridge/reaction_timestamp_test.go b/bridge-e2ee/bridge/reaction_timestamp_test.go
+new file mode 100644
+index 0000000..9744fbb
+--- /dev/null
++++ b/bridge-e2ee/bridge/reaction_timestamp_test.go
+@@ -0,0 +1,35 @@
++package bridge
++
++import (
++	"testing"
++
++	"go.mau.fi/whatsmeow/proto/waCommon"
++	"go.mau.fi/whatsmeow/proto/waConsumerApplication"
++	"google.golang.org/protobuf/proto"
++)
++
++func TestE2EEReactionCarriesSenderTimestampAcrossWire(t *testing.T) {
++	for _, emoji := range []string{"👍", "❤", ""} {
++		t.Run(emoji, func(t *testing.T) {
++			key := &waCommon.MessageKey{}
++			const timestampMS int64 = 1800000000123
++			message := buildE2EEReaction(key, emoji, timestampMS)
++			reaction := message.GetPayload().GetContent().GetReactionMessage()
++			if reaction.GetKey() != key || reaction.GetText() != emoji || reaction.GetSenderTimestampMS() != timestampMS {
++				t.Fatal("reaction lost its target, emoji or ordering timestamp")
++			}
++			wire, err := proto.Marshal(message)
++			if err != nil {
++				t.Fatal(err)
++			}
++			decoded := &waConsumerApplication.ConsumerApplication{}
++			if err = proto.Unmarshal(wire, decoded); err != nil {
++				t.Fatal(err)
++			}
++			got := decoded.GetPayload().GetContent().GetReactionMessage()
++			if got.GetKey() == nil || got.GetText() != emoji || got.GetSenderTimestampMS() != timestampMS {
++				t.Fatal("reaction timestamp missing from protobuf wire payload")
++			}
++		})
++	}
++}
+diff --git a/bridge-e2ee/main.go b/bridge-e2ee/main.go
+index 72ec8cb..fc4bacb 100644
+--- a/bridge-e2ee/main.go
++++ b/bridge-e2ee/main.go
+@@ -73,6 +73,7 @@ var bridgeCapabilities = []string{
+ 	"isConnected",
+ 	"events",
+ 	"structuredConnectionStatus",
++	"e2eeReactionTimestamp",
+ }
+ 
+ var (
+diff --git a/bridge-e2ee/main_test.go b/bridge-e2ee/main_test.go
+index 81b950b..d257a47 100644
+--- a/bridge-e2ee/main_test.go
++++ b/bridge-e2ee/main_test.go
+@@ -29,6 +29,7 @@ func TestHelloPayloadDeclaresCompatibleContract(t *testing.T) {
+ 		"isConnected",
+ 		"events",
+ 		"structuredConnectionStatus",
++		"e2eeReactionTimestamp",
+ 	} {
+ 		if !slices.Contains(capabilities, required) {
+ 			t.Errorf("capabilities does not contain %q", required)

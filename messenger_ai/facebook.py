@@ -41,6 +41,7 @@ class FacebookTransport:
         self.overflowed = False
         self.closing = False
         self.media_client: httpx.AsyncClient | None = None
+        self.native_reaction_timestamp = False
 
     async def connect(self) -> None:
         # Import only after setup, so configure/help can run without dependencies.
@@ -85,6 +86,7 @@ class FacebookTransport:
                 require_e2ee=True,
             )
             if ready:
+                await self._reaction_capabilities()
                 self.log("Messenger đã kết nối. Đang chờ tin nhắn mới.")
                 return
             if self.task.done():
@@ -93,6 +95,19 @@ class FacebookTransport:
             if self.listener.connection_state != "reconnecting":
                 raise RuntimeError("Chưa khởi động được kết nối Messenger mã hóa.")
             self.log("Kết nối tạm gián đoạn; bộ kết nối đang tự thử lại.")
+
+    async def _reaction_capabilities(self) -> None:
+        self.native_reaction_timestamp = False
+        bridge = getattr(self.listener, "_bridge", None)
+        if bridge is None:
+            return
+        try:
+            async with asyncio.timeout(3):
+                hello = await bridge.call("hello", {})
+            capabilities = hello.get("capabilities") if isinstance(hello, dict) else None
+            self.native_reaction_timestamp = isinstance(capabilities, list) and "e2eeReactionTimestamp" in capabilities
+        except Exception:
+            pass
 
     def _status(self, status: dict) -> None:
         if not self.closing:
@@ -175,15 +190,23 @@ class FacebookTransport:
             raise ValueError("Mã tin nhắn chưa hợp lệ.")
         params = {"messageId": message.id, "emoji": EMOJI[reaction]}
         if message.chat_jid:
+            if not self.native_reaction_timestamp:
+                self.log("Reaction E2EE: bridge chưa có bản vá timestamp; dùng câu chữ dự phòng.")
+                raise RuntimeError("Bridge chưa hỗ trợ reaction E2EE đã vá.")
             if not message.sender_jid:
                 raise ValueError("Thiếu sender JID để thả cảm xúc E2EE.")
             params.update(chatJid=message.chat_jid, senderJid=message.sender_jid)
             method = "sendE2EEReaction"
+            self.log("Reaction: tuyến=E2EE; timestamp=đã vá.")
         else:
+            if message.thread_type in (7, 13, 15):
+                self.log("Reaction: bỏ tuyến web cho tin mã hóa thiếu tham chiếu E2EE; dùng câu chữ dự phòng.")
+                raise ValueError("Tin mã hóa cần tham chiếu E2EE, không gửi reaction thường.")
             if message.thread_id <= 0:
                 raise ValueError("Mã cuộc trò chuyện chưa hợp lệ.")
             params["threadId"] = message.thread_id
             method = "sendReaction"
+            self.log("Reaction: tuyến=thường.")
         result = await self.listener._bridge.call(method, params)
         if (
             not isinstance(result, dict)

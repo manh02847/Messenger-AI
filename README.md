@@ -57,6 +57,10 @@ Model chọn theo câu mới và ngữ cảnh: không thả, thả rồi trả l
 
 `chat-ai` cho xem lựa chọn dự kiến mà không kết nối Messenger. Cảm xúc chỉ tác động đúng tin mới nhất trong chat riêng đã được phép, không tác động nhóm hoặc tin của chính bạn. Bot vẫn nhường khi bạn nhắn thủ công. Nếu lệnh react lỗi/chưa rõ kết quả, không tự thả lại và dùng câu trả lời chữ dự phòng. Việc gửi lệnh thành công chưa thay thế việc kiểm tra cảm xúc đã hiển thị trên Messenger.
 
+**Nếu web thấy cảm xúc nhưng app chưa thấy:** cập nhật bằng đủ các lệnh ở mục [Cập nhật bot](#cập-nhật-bot), gồm `python3 setup_bot.py` khi bot đã dừng. Bản vá bridge trên Linux x86_64 bổ sung timestamp cho reaction E2EE; bộ cài tự áp dụng và kiểm tra checksum, không cần cài Go trên VPS. Giữ nguyên cookie, thiết bị E2EE và lịch sử. Thử với **một tin mới**, kiểm tra cả web và app phía người nhắn; cảm xúc cũ không tự được gửi lại. Chưa xác nhận bản vá giải quyết mọi trường hợp lệch hiển thị trên thiết bị thật.
+
+Log `Reaction: tuyến=E2EE; timestamp=đã vá.` xác nhận bot dùng tuyến đã vá, chưa xác nhận app nhận được. Nếu tin đã biết là mã hóa nhưng chỉ có tham chiếu web, hoặc bridge chưa có bản vá trên nền tảng khác, bot dùng câu chữ dự phòng. Không cần cập nhật tiện ích hay khởi động lại dịch vụ gọi cho bản vá này. Mã nguồn và cách dựng: [native/README.md](native/README.md).
+
 ```bash
 .venv/bin/python -m messenger_ai reactions off
 ```

@@ -149,6 +149,7 @@ async def test_reaction_rpc_uses_the_existing_bridge_with_exact_encrypted_and_re
     transport = FacebookTransport("", tmp_path / "device", tmp_path / "bridge")
     transport.own_id = "111"
     transport.listener = SimpleNamespace(_bridge=Bridge())
+    transport.native_reaction_timestamp = True
     encrypted = message()
     regular = replace(encrypted, chat_jid="", thread="thread:222", thread_id=222)
     await transport.react(encrypted, "like")
@@ -174,6 +175,49 @@ async def test_reaction_rpc_uses_the_existing_bridge_with_exact_encrypted_and_re
         with pytest.raises(ValueError):
             await transport.react(msg, kind)
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("thread_type", [7, 13, 15])
+async def test_encrypted_web_projection_is_not_reacted_to_over_regular_transport(tmp_path, thread_type):
+    calls = []
+
+    class Bridge:
+        async def call(self, method, params):
+            calls.append(method)
+            return {}
+
+    transport = FacebookTransport("", tmp_path / "device", tmp_path / "bridge", log=lambda _: None)
+    transport.own_id = "111"
+    transport.listener = SimpleNamespace(_bridge=Bridge())
+    incoming = replace(message(), chat_jid="", thread_id=222, thread_type=thread_type)
+    with pytest.raises(ValueError):
+        await transport.react(incoming, "like")
+    assert not calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("capabilities,expected", [(["e2eeReactionTimestamp"], True), ([], False), ("e2eeReactionTimestamp", False)])
+async def test_native_reaction_requires_verified_bridge_capability(tmp_path, capabilities, expected):
+    calls = []
+
+    class Bridge:
+        async def call(self, method, params):
+            calls.append(method)
+            return {"capabilities": capabilities} if method == "hello" else {}
+
+    transport = FacebookTransport("", tmp_path / "device", tmp_path / "bridge", log=lambda _: None)
+    transport.own_id = "111"
+    transport.listener = SimpleNamespace(_bridge=Bridge())
+    await transport._reaction_capabilities()
+    assert transport.native_reaction_timestamp is expected
+    if expected:
+        await transport.react(message(), "like")
+        assert calls == ["hello", "sendE2EEReaction"]
+    else:
+        with pytest.raises(RuntimeError):
+            await transport.react(message(), "like")
+        assert calls == ["hello"]
 
 
 @pytest.mark.asyncio
