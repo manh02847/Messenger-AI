@@ -206,11 +206,11 @@ test('late Stop acknowledgement in content script does not clear a newer session
   await flush(); assert.equal(forwarded.at(-1).session, 'new');
 });
 
-function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAuto,deferRemoval,summaryPeer,lookupIdentity,lookupActive,
+function autoFixture({twoRings=false,handoff=false,clock,cancelClock,now,savedAuto,deferRemoval,summaryPeer,lookupIdentity,lookupActive,getTab,
   callURL='https://www.facebook.com/groupcall/test'}={}) {
   let accepted=false, ended=false, ringing=true, human=false, ringId='ring-1';
   const f=background({
-    clock,cancelClock,now,savedAuto,deferRemoval,
+    clock,cancelClock,now,savedAuto,deferRemoval,getTab,
     query:async()=>[{id:42,url:'https://www.facebook.com/'},...(accepted||human||twoRings?[{id:84,url:callURL}]:[])],
     send:async(msg,tabId)=>{
       if(msg.command==='ui-probe')return{ok:true,ended:tabId===84&&ended,handoff:tabId===84&&handoff,count:tabId===84&&!ended?1:0,busy:tabId===84&&!ended};
@@ -270,6 +270,78 @@ test('an ambiguous ring identity cannot be replaced by a connected-window recipi
   for(let i=0;i<12;i++)await flush();
   assert.ok(!f.page.some(msg=>msg.command==='call-identity'));
   assert.equal(ws.sent.find(msg=>msg.type==='ready').summaryPeer,undefined);
+  await f.popup('stop');
+});
+
+for(const callerId of ['222','333']) test(`URL identity is checked against an already identified ring caller: ${callerId}`,async()=>{
+  const f=autoFixture({callURL:'https://www.messenger.com/groupcall/ROOM:555/?call_id=one&peer_id='+callerId+'&av=111&thread_type=15',
+    lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryPeer:{ownerId:'111',callerId:'222'},summaryIdentity:{code:'RESOLVED'}}),
+    lookupActive:async msg=>({ok:true,callKey:msg.callKey,summaryPeer:{ownerId:'111',callerId},summaryIdentity:{code:'RESOLVED',method:'call-url'}})});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+  for(let i=0;i<12;i++)await flush();
+  const ready=ws.sent.find(msg=>msg.type==='ready');
+  assert.ok(f.page.some(msg=>msg.command==='call-identity'));
+  if(callerId==='222') {
+    assert.equal(ready.summaryPeer.callerId,'222');
+    assert.equal(ready.summaryIdentity.method,'call-url');
+  } else {
+    assert.equal(ready.summaryPeer,undefined);
+    assert.equal(ready.summaryIdentity.code,'CALLER_AMBIGUOUS');
+  }
+  await f.popup('stop');
+});
+
+for(const code of ['OWNER_MISMATCH','INVALID_PEER','GROUP_CALL']) test(`invalid URL identity cannot retain a prior ring recipient: ${code}`,async()=>{
+  const f=autoFixture({callURL:'https://www.messenger.com/groupcall/ROOM:555/?call_id=one&peer_id=222&av=111&thread_type=15',
+    lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryPeer:{ownerId:'111',callerId:'222'},summaryIdentity:{code:'RESOLVED'}}),
+    lookupActive:async msg=>({ok:true,callKey:msg.callKey,summaryIdentity:{code}})});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+  for(let i=0;i<12;i++)await flush();
+  const ready=ws.sent.find(msg=>msg.type==='ready');
+  assert.equal(ready.summaryPeer,undefined);
+  assert.equal(ready.summaryIdentity.code,code);
+  await f.popup('stop');
+});
+
+for(const change of ['peer_id=333&av=111&thread_type=15','peer_id=222&av=333&thread_type=15',
+  'peer_id=222&av=111&thread_type=16','peer_id=222&av=111&thread_type=15&call_id=two'])
+  test(`changed URL recipient cancels a late lookup without hanging up: ${change}`,async()=>{
+    const f=autoFixture({callURL:'https://www.messenger.com/groupcall/ROOM:555/?call_id=one&peer_id=222&av=111&thread_type=15',
+      getTab:async()=>({id:84,url:'https://www.messenger.com/groupcall/ROOM:555/?call_id=one&'+change}),
+      lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryIdentity:{code:'CALL_CARD_TOO_LARGE'}}),
+      lookupActive:async msg=>({ok:true,callKey:msg.callKey,summaryPeer:{ownerId:'111',callerId:'222'},summaryIdentity:{code:'RESOLVED',method:'call-url'}})});
+    await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+    const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+    for(let i=0;i<12;i++)await flush();
+    assert.ok(!ws.sent.some(msg=>msg.type==='ready'));
+    assert.ok(!f.page.some(msg=>msg.command==='auto-hangup'));
+    assert.equal((await f.popup('status')).active,false);
+    await f.popup('stop');
+});
+
+test('changing an unrelated URL nonce does not change the call recipient',async()=>{
+  const callURL='https://www.messenger.com/groupcall/ROOM:555/?call_id=one&peer_id=222&av=111&thread_type=15';
+  const f=autoFixture({callURL,
+    getTab:async()=>({id:84,url:callURL+'&nonce=PRIVATE_NEW_NONCE'}),
+    lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryIdentity:{code:'CALL_CARD_TOO_LARGE'}}),
+    lookupActive:async msg=>({ok:true,callKey:msg.callKey,summaryPeer:{ownerId:'111',callerId:'222'},summaryIdentity:{code:'RESOLVED',method:'call-url'}})});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+  for(let i=0;i<12;i++)await flush();
+  assert.equal(ws.sent.find(msg=>msg.type==='ready').summaryPeer.callerId,'222');
+  assert.ok(!JSON.stringify(ws.sent).includes('PRIVATE_NEW_NONCE'));
+  await f.popup('stop');
+});
+
+test('a manually started call cannot acquire an incoming-summary recipient just from its URL',async()=>{
+  const f=background({query:async()=>[{id:42,url:'https://www.messenger.com/groupcall/ROOM:555/?call_id=one&peer_id=222&av=111&thread_type=15'}]});
+  await f.popup('start');
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+  for(let i=0;i<8;i++)await flush();
+  assert.equal(ws.sent.find(msg=>msg.type==='ready').summaryPeer,undefined);
+  assert.ok(!f.page.some(msg=>msg.command==='call-identity'));
   await f.popup('stop');
 });
 

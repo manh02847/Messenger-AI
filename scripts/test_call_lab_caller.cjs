@@ -205,6 +205,66 @@ test('root-only active call state still needs the exact call_id before routing p
   }
 });
 
+function callURLFixture(query='thread_type=15&peer_id=222&av=111', options={}) {
+  const f=fixture(options);
+  f.context.location.href='https://www.messenger.com/groupcall/ROOM:555/?call_id=one&'+query;
+  const key='https://www.messenger.com/groupcall/ROOM:555/?call_id=one';
+  return {...f,key,active:()=>JSON.parse(JSON.stringify(f.api.readActive(key)))};
+}
+
+for(const type of ['1','7','13','15']) test(`private call URL type ${type} resolves before any React/DOM traversal`,()=>{
+  const f=callURLFixture('thread_type='+type+'&peer_id=222&av=111&nonce=PRIVATE_NONCE&server_info_data=PRIVATE_SERVER');
+  f.scope.querySelectorAll=()=>{throw Error('URL identity must not inspect React');};
+  const result=f.active();
+  assert.deepEqual(result,{code:'RESOLVED',peer:{ownerId:'111',callerId:'222'},method:'call-url'});
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+});
+
+for(const query of [
+  'thread_type=15&peer_id=222&peer_id=333&av=111',
+  'thread_type=15&peer_id=222&av=111&av=111',
+  'thread_type=15&thread_type=16&peer_id=222&av=111',
+  'thread_type=15&peer_id=222', 'thread_type=15&av=111',
+  'thread_type=15&peer_id=0&av=111', 'thread_type=15&peer_id=222%40msgr&av=111',
+  'thread_type=15&peer_id=111&av=111', 'thread_type=15&peer_id=%20222&av=111',
+  'thread_type=999&peer_id=222&av=111', 'peer_id=222&av=111',
+  'thread_type=15&peer_id=222&av=0',
+]) test(`ambiguous or invalid call URL cannot become a recipient: ${query}`,()=>{
+  const f=callURLFixture(query,{props:{callID:'one',callerID:'444'}});
+  assert.equal(f.active().code,'INVALID_PEER');
+});
+
+for(const type of ['2','8','11','16']) test(`group call URL type ${type} cannot route a private summary`,()=>{
+  assert.equal(callURLFixture('thread_type='+type+'&peer_id=222&av=111').active().code,'GROUP_CALL');
+});
+
+test('the URL actor must match the account independently verified in the calling page',()=>{
+  assert.equal(callURLFixture('thread_type=15&peer_id=222&av=333').active().code,'OWNER_MISMATCH');
+  assert.equal(callURLFixture(undefined,{viewer:'0'}).active().code,'OWNER_ID_MISSING');
+});
+
+test('a call URL without identity fields keeps the React fallback and never interprets ROOM as a person',()=>{
+  assert.equal(callURLFixture('',{props:{callID:'one',callerID:'222'}}).active().peer.callerId,'222');
+  assert.equal(callURLFixture('').active().code,'CALLER_ID_MISSING');
+});
+
+test('call URL identity is bound to one trusted HTTPS call URL and a unique call_id',()=>{
+  const f=callURLFixture();
+  assert.equal(f.api.readActive(f.key.replace('one','two')).code,'RING_CHANGED');
+  for(const href of [
+    f.context.location.href+'&call_id=two',
+    f.context.location.href.replace('https:','http:'),
+    f.context.location.href.replace('www.messenger.com','example.test'),
+    f.context.location.href.replace('www.messenger.com','user@www.messenger.com'),
+    f.context.location.href.replace('www.messenger.com','www.messenger.com:8443'),
+  ]) {
+    const invalid=callURLFixture();invalid.context.location.href=href;
+    const url=new URL(href), key=url.origin+url.pathname+'?call_id='+url.searchParams.get('call_id');
+    assert.equal(invalid.api.readActive(key).code,'RING_CHANGED');
+    assert.equal(invalid.calls(),0);
+  }
+});
+
 test('a hook/context participant collection requires the verified owner and exactly one other profile',()=>{
   const active=f=>{f.context.location.href='https://www.facebook.com/groupcall/test?call_id=one';return f.api.readActive(f.context.location.href);};
   for(const value of [['111','222'],[{id:'111'},{id:'222'}],new Map([['111',{}],['222',{}]])]) {
@@ -330,11 +390,12 @@ function contentFixture() {
   const incoming={watch(){},probe:()=>({ringId:ring}),mark:value=>value===ring,
     accept(value){if(value!==ring)return{ok:false};clicks++;ring=null;return{ok:true,accepted:true};}};
   const chrome={runtime:{id,onMessage:{addListener:fn=>runtime=fn},sendMessage:async()=>({watch:false})}};
+  const location={origin:'https://www.facebook.com',href:'https://www.facebook.com/'};
   const context=vm.createContext({window,chrome,CallLabIncoming:incoming,crypto:{randomUUID},
-    location:{origin:'https://www.facebook.com'},setTimeout,clearTimeout});
+    location,URL,setTimeout,clearTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../experimental/call-lab-extension/content.js'),'utf8'),context);
-  return {requests,clicks:()=>clicks,change:()=>ring='ring-2',
-    command:name=>new Promise(resolve=>runtime({to:'call-lab-content',command:name,ringId:'ring-1'},{id},resolve)),
+  return {requests,location,clicks:()=>clicks,change:()=>ring='ring-2',
+    command:(name,details={})=>new Promise(resolve=>runtime({to:'call-lab-content',command:name,ringId:'ring-1',...details},{id},resolve)),
     reply(identity){const request=requests.at(-1);for(const listener of listeners)listener({source:window,
       data:{channel:request.channel,direction:'event',kind:'reply',requestId:request.requestId,ok:true,identity}});}};
 }
@@ -346,6 +407,17 @@ test('content requests MAIN metadata without accepting and only returns bounded 
   const result=await waiting;assert.equal(result.summaryPeer.callerId,'222');
   assert.ok(!JSON.stringify(result).includes('DO_NOT_EXPORT'));assert.equal(f.clicks(),0);
   assert.equal((await f.command('auto-accept')).accepted,true);assert.equal(f.clicks(),1);
+});
+
+test('content forwards only the fixed URL source marker and bounded caller identity',async()=>{
+  const f=contentFixture(),callKey='https://www.facebook.com/groupcall/test?call_id=one';
+  f.location.href=callKey+'&peer_id=222&av=111&thread_type=15';
+  const waiting=f.command('call-identity',{callKey});
+  f.reply({code:'RESOLVED',method:'call-url',peer:{ownerId:'111',callerId:'222'},url:'PRIVATE_URL'});
+  const result=await waiting;
+  assert.equal(result.summaryIdentity.method,'call-url');
+  assert.equal(result.summaryPeer.callerId,'222');
+  assert.ok(!JSON.stringify(result).includes('PRIVATE_URL'));
 });
 
 test('content discards metadata if the incoming ring changes while MAIN is reading',async()=>{
@@ -367,7 +439,7 @@ test('root traversal counters survive the content boundary without unbounded or 
   f.reply({code:'CALLER_ID_MISSING',diagnostics:{source:'ring',reactTypes:['container','other'],
     roots:1,walked:18640,matched:43,limit:'time',nodes:10001,contexts:-1,maps:true,token:'DO_NOT_EXPORT',fields:[]}});
   const result=await waiting;
-  assert.equal(result.summaryIdentity.version,'0.6.4');
+  assert.equal(result.summaryIdentity.version,'0.6.5');
   assert.deepEqual(JSON.parse(JSON.stringify(result.summaryIdentity.diagnostics)),{source:'ring',reactTypes:['container','other'],
     roots:1,walked:18640,matched:43,limit:'time',fields:[]});
   assert.ok(!JSON.stringify(result).includes('DO_NOT_EXPORT'));
@@ -380,4 +452,13 @@ test('unknown limit text and search counts above the cap never leave content',as
   assert.equal(result.summaryIdentity.diagnostics.walked,undefined);
   assert.equal(result.summaryIdentity.diagnostics.limit,undefined);
   assert.ok(!JSON.stringify(result).includes('DO_NOT_EXPORT'));
+});
+
+for(const code of ['OWNER_MISMATCH','INVALID_PEER']) test(`URL identity rejection survives the content boundary: ${code}`,async()=>{
+  const f=contentFixture(), waiting=f.command('auto-identity');
+  f.reply({code,method:'PRIVATE_METHOD',url:'PRIVATE_URL'});
+  const result=await waiting;
+  assert.equal(result.summaryIdentity.code,code);
+  assert.equal(result.summaryPeer,undefined);
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
 });

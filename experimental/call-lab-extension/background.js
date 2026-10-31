@@ -35,6 +35,12 @@ function callIdentity(value) {
   if (!/^\/(?:groupcall|call|calls)(?:\/|$)/.test(url.pathname)) return "";
   return url.origin + url.pathname + "?call_id=" + (url.searchParams.get("call_id") || "");
 }
+function callRecipientIdentity(value) {
+  try {
+    const query = new URL(value).searchParams;
+    return JSON.stringify(["call_id", "peer_id", "av", "thread_type"].map(key => query.getAll(key)));
+  } catch { return ""; }
+}
 async function takeover() {
   await stop("Đã nhường cuộc gọi cho người thật; AI dừng, tự nhận cuộc gọi sau vẫn giữ theo lựa chọn.", {hangup: false});
 }
@@ -272,15 +278,30 @@ async function prepareAutomatic(state, requested, revision) {
     const found = await findCall(revision, state.id);
     if (found.tab) {
       state.tabId = found.tab.id; state.callKey = callIdentity(found.tab.url);
-      if (!state.summaryPeer && ["CALLER_ID_MISSING", "CALL_CARD_TOO_LARGE"].includes(state.summaryIdentity?.code) && state.callKey) {
+      const query = new URL(found.tab.url).searchParams;
+      const hasURLPeer = query.has("peer_id") || query.has("av");
+      const recipientKey = callRecipientIdentity(found.tab.url);
+      const needsIdentity = !state.summaryPeer && ["CALLER_ID_MISSING", "CALL_CARD_TOO_LARGE"].includes(state.summaryIdentity?.code);
+      if ((needsIdentity || hasURLPeer)
+          && !["CALLER_AMBIGUOUS", "GROUP_CALL", "OWNER_MISMATCH", "INVALID_PEER"].includes(state.summaryIdentity?.code) && state.callKey) {
         let connected;
         try {connected = await content(state,"call-identity",{callKey:state.callKey});} catch {}
         if (current !== state || !automation.enabled || attempt !== revision) throw new Error("CANCELLED");
         const latest = await chrome.tabs.get(state.tabId);
         if (current !== state || attempt !== revision || callIdentity(latest.url) !== state.callKey) throw new Error("RING_CHANGED");
+        if (latest.pendingUrl || latest.status === "loading" || callRecipientIdentity(latest.url) !== recipientKey) {
+          await stop("Thông tin người nhận trong cửa sổ gọi đã đổi; AI dừng.", {hangup: false});
+          throw new Error("CANCELLED");
+        }
         if (connected?.ok && connected.callKey === state.callKey) {
-          state.summaryPeer = connected.summaryPeer || null;
-          state.summaryIdentity = connected.summaryIdentity || state.summaryIdentity;
+          const peer = connected.summaryPeer;
+          if (state.summaryPeer && peer && (state.summaryPeer.ownerId !== peer.ownerId || state.summaryPeer.callerId !== peer.callerId)) {
+            state.summaryPeer = null;
+            state.summaryIdentity = {code: "CALLER_AMBIGUOUS"};
+          } else if (peer || !state.summaryPeer || ["OWNER_MISMATCH", "INVALID_PEER", "GROUP_CALL", "CALLER_AMBIGUOUS"].includes(connected.summaryIdentity?.code)) {
+            state.summaryPeer = peer || null;
+            state.summaryIdentity = connected.summaryIdentity || state.summaryIdentity;
+          }
         }
       }
       return;

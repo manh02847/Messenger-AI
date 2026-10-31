@@ -516,7 +516,7 @@ async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_g
             await authorize(ws)
             await receive(ws)
             await ws.send(json.dumps({"type": "ready", "summaryPeer": {"ownerId": browser_owner, "callerId": "222"},
-                "summaryIdentity":{"code":"RESOLVED", "diagnostics":{"source":"call","nodes":120,"hooks":2,
+                "summaryIdentity":{"code":"RESOLVED", "method":"call-url", "url":"PRIVATE_URL", "diagnostics":{"source":"call","nodes":120,"hooks":2,
                     "roots":1,"walked":18640,"matched":43,"limit":"search",
                     "fields":["state.memoizedState.participants=map","props.userAlice=string"],"token":"PRIVATE_DIAGNOSTIC"}}}))
             await receive(ws)
@@ -535,6 +535,11 @@ async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_g
         assert "summaryPeer" not in json.dumps(created[0].sent)
         assert "callerId" not in json.dumps(created[0].sent)
         assert "diagnostics" not in json.dumps(created[0].sent)
+        assert "call-url" not in json.dumps(created[0].sent)
+        assert "PRIVATE_URL" not in json.dumps(created[0].sent)
+        assert all("PRIVATE_URL" not in line for line in logs)
+        if browser_owner == "111":
+            assert any("đã gắn người gọi từ URL cửa sổ gọi đúng phiên" in line for line in logs)
         assert all("PRIVATE_DIAGNOSTIC" not in line and "Alice" not in line for line in logs)
         assert all("999" not in line and "xem lịch" not in line for line in logs)
     paths = list(tmp_path.glob("*.json"))

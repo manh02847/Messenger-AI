@@ -19,7 +19,7 @@
     });
   }
   function identityResult(captured) {
-    const known = new Set(["RESOLVED", "RING_CHANGED", "GROUP_CALL", "OWNER_ID_MISSING",
+    const known = new Set(["RESOLVED", "RING_CHANGED", "GROUP_CALL", "OWNER_ID_MISSING", "OWNER_MISMATCH", "INVALID_PEER",
       "CALL_CARD_TOO_LARGE", "CALLER_AMBIGUOUS", "CALLER_ID_MISSING", "MAIN_BRIDGE_MISSING"]);
     const code = known.has(captured.identity?.code) ? captured.identity.code : "MAIN_BRIDGE_MISSING";
     const peer = code === "RESOLVED" ? captured.identity.peer : null;
@@ -42,7 +42,8 @@
         && value.length <= 150 && /^(?:props|state|context)(?:\.(?:[A-Za-z_]{1,50}|\[\])){1,12}=(?:null|undefined|boolean|string|numeric-string|owner-id|call-id|number|object|array|map|set|function|bigint|symbol)$/.test(value)).slice(0,40) : [];
     }
     return {ok: true, ...(valid ? {summaryPeer: {ownerId: peer.ownerId, callerId: peer.callerId}} : {}),
-      summaryIdentity: {version: "0.6.4", code: valid ? "RESOLVED" : code === "RESOLVED" ? "INVALID_PEER" : code,
+      summaryIdentity: {version: "0.6.5", code: valid ? "RESOLVED" : code === "RESOLVED" ? "INVALID_PEER" : code,
+        ...(valid && captured.identity.method === "call-url" ? {method: "call-url"} : {}),
         ...(clean.source ? {diagnostics: clean} : {})}};
   }
   async function incomingIdentity(incoming, ringId) {

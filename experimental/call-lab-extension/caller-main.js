@@ -1,4 +1,4 @@
-/* Read-only caller metadata from the marked incoming-call card, in MAIN world. */
+/* Read-only caller metadata from the accepted call URL or marked call card. */
 (() => {
   const ID = /^[1-9][0-9]{0,24}$/;
   const normalize = text => String(text || "").normalize("NFC").toLowerCase();
@@ -307,9 +307,28 @@
   function readActive(callKey) {
     try {
       const url = new URL(location.href);
-      if (!/^\/(?:groupcall|call|calls)(?:\/|$)/.test(url.pathname)
+      if (url.protocol !== "https:" || url.port || url.username || url.password
+          || !["www.facebook.com", "web.facebook.com", "www.messenger.com", "messenger.com"].includes(url.hostname)
+          || !/^\/(?:groupcall|call|calls)(?:\/|$)/.test(url.pathname)
+          || url.searchParams.getAll("call_id").length !== 1
           || !/^[A-Za-z0-9_-]{1,100}$/.test(url.searchParams.get("call_id") || "")
           || callKey !== url.origin + url.pathname + "?call_id=" + (url.searchParams.get("call_id") || "")) return {code: "RING_CHANGED"};
+      const query = url.searchParams, types = query.getAll("thread_type");
+      if (types.length > 1) return {code: "INVALID_PEER"};
+      // Thread types are the same pinned one-to-one/group enum as the native
+      // bridge. ROOM and call_id identify a call, never a person's account.
+      if (["2", "8", "11", "16"].includes(types[0])) return {code: "GROUP_CALL"};
+      if (types.length && !["1", "7", "13", "15"].includes(types[0])) return {code: "INVALID_PEER"};
+      if (query.has("peer_id") || query.has("av")) {
+        if (query.getAll("peer_id").length !== 1 || query.getAll("av").length !== 1
+            || !["1", "7", "13", "15"].includes(types[0])) return {code: "INVALID_PEER"};
+        const callerId = numeric(query.get("peer_id")), viewer = numeric(query.get("av"));
+        if (!callerId || !viewer || callerId === viewer) return {code: "INVALID_PEER"};
+        const ownerId = owner();
+        if (!ownerId) return {code: "OWNER_ID_MISSING"};
+        if (viewer !== ownerId) return {code: "OWNER_MISMATCH"};
+        return {code: "RESOLVED", peer: {ownerId, callerId}, method: "call-url"};
+      }
       return inspectCard(document.body, "call",url.searchParams.get("call_id"));
     } catch { return {code: "RING_CHANGED"}; }
   }

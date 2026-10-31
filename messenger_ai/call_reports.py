@@ -20,10 +20,10 @@ DEFAULT_SUMMARY_MODEL = "gemini-3.5-flash-lite"
 MAX_TRANSCRIPT = 24000
 MAX_BODY = 5000
 IDENTITY_NOTES = {
-    "EXTENSION_METADATA_MISSING": "tiện ích chưa gửi metadata; kiểm tra tự nhận, Reload 0.6.4 và tải lại Facebook",
-    "MAIN_BRIDGE_MISSING": "chưa nạp bộ đọc danh tính; Reload tiện ích 0.6.4 rồi tải lại Facebook",
+    "EXTENSION_METADATA_MISSING": "tiện ích chưa gửi metadata; kiểm tra tự nhận, Reload 0.6.5 và tải lại Facebook",
+    "MAIN_BRIDGE_MISSING": "chưa nạp bộ đọc danh tính; Reload tiện ích 0.6.5 rồi tải lại Facebook",
     "OWNER_ID_MISSING": "chưa đọc được ID tài khoản đang đăng nhập Chrome",
-    "OWNER_MISMATCH": "tài khoản Chrome khác tài khoản bot đã chọn ở bộ cài",
+    "OWNER_MISMATCH": "tài khoản trong thông tin cuộc gọi/Chrome không khớp tài khoản đã xác minh",
     "CALLER_ID_MISSING": "giao diện cuộc gọi chưa có ID người gọi trong các nguồn được hỗ trợ",
     "CALLER_AMBIGUOUS": "bảng gọi đến chứa nhiều ID người gọi, không chọn thay",
     "GROUP_CALL": "metadata cho biết là cuộc gọi nhóm",

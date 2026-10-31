@@ -9,7 +9,7 @@ Hỗ trợ **NVIDIA NIM, Google AI Studio, Cloudflare Workers AI và Groq**. Bot
 - **Đã cài bot:** xem [lệnh thường dùng](#1-lệnh-thường-dùng) và [kiểm tra nguồn/model](#2-kiểm-tra-ai-nguồn-và-model).
 - **Cài lần đầu:** bắt đầu từ [cài đặt](#3-cài-đặt-lần-đầu), sau đó chọn phạm vi rep và chạy thử.
 - **AI trong cuộc gọi Chrome máy tính:** xem [Call Lab](experimental/CALL_LAB.md). Relay đã thử với Google thật; người dùng xác nhận cầu nối 0.1.1 hoạt động trên Chrome Windows. Các phần mới ở bản VPS cần kiểm tra riêng.
-- **Gọi AI chạy hoàn toàn trên Ubuntu VPS:** xem [cài Chrome, âm thanh ảo và tự nhận cuộc gọi](deploy/CALL_VPS.md). Bản 0.6.4 tìm bảng gọi theo tầng trong cây React rồi chỉ đọc nhánh của bảng đó, tránh tốn giới hạn duyệt ở các nhánh khác của trang; giữ thời gian chờ mặc định 25 giây để bạn nghe trước. Cần đăng nhập Facebook và kiểm tra cuộc gọi trên VPS trước khi bật tự động.
+- **Gọi AI chạy hoàn toàn trên Ubuntu VPS:** xem [cài Chrome, âm thanh ảo và tự nhận cuộc gọi](deploy/CALL_VPS.md). Bản 0.6.5 ưu tiên ID trong URL cửa sổ gọi, đối chiếu tài khoản và đúng phiên trước khi dùng; giữ thời gian chờ mặc định 25 giây để bạn nghe trước. Cần đăng nhập Facebook và kiểm tra cuộc gọi trên VPS trước khi bật tự động.
 
 ## 1. Lệnh thường dùng
 
@@ -79,7 +79,9 @@ systemctl restart messenger-ai
 
 Sau khi phần AI tham gia cuộc gọi kết thúc, host tạo bản tóm tắt ngắn và bot nhắn vào cuộc trò chuyện của **người gọi đã xác định từ lượt gọi đến mà AI tự nhận**. Nếu giao diện không cho xác định chắc người đó, giữ bản riêng `.unrouted.json` và báo log; không đoán theo tên, chat đang mở hoặc lời nói. Chỉ nhận dạng lời nói khi bật tính năng này, không ghi file âm thanh. Bản tóm tắt dựa vào phần AI nghe, có thể thiếu khi nhường người thật hoặc nhận dạng sai.
 
-Mặc định dùng `gemini-3.5-flash-lite`, một request Google bổ sung sau mỗi phiên có lời người gọi; tính vào quota/phí project Google, tách bộ đếm của bot text. Đổi bằng `--summary-model MÃ_MODEL`. Host và bot nhắn tin đều cần chạy, bot phải ở chế độ gửi thật. Sau cập nhật host, **Reload tiện ích trong Chrome VPS, xác nhận 0.6.4 và tải lại Facebook** để nhận thông tin người gọi. Giữ các lựa chọn giọng, persona, chờ tự nhận và mã kết nối hiện có.
+Mặc định dùng `gemini-3.5-flash-lite`, một request Google bổ sung sau mỗi phiên có lời người gọi; tính vào quota/phí project Google, tách bộ đếm của bot text. Đổi bằng `--summary-model MÃ_MODEL`. Host và bot nhắn tin đều cần chạy, bot phải ở chế độ gửi thật. Sau cập nhật host, **Reload tiện ích trong Chrome VPS, xác nhận 0.6.5 và tải lại Facebook** để nhận thông tin người gọi. Giữ các lựa chọn giọng, persona, chờ tự nhận và mã kết nối hiện có.
+
+Trong cửa sổ gọi, bản 0.6.5 thử `peer_id` cùng `av` trước React: hai ID phải hợp lệ, khác nhau, `av` khớp tài khoản Chrome đọc độc lập, loại thread thuộc chat cá nhân và `call_id` đúng phiên AI vừa tự nhận. Nếu URL và bảng gọi cho hai người khác nhau thì giữ báo cáo riêng. Log thành công có `đã gắn người gọi từ URL cửa sổ gọi đúng phiên`; không ghi URL đầy đủ, nonce hay ID vào log và không gửi thông tin định tuyến sang Google.
 
 Nếu vẫn giữ `.unrouted.json`, tìm dòng `Tóm tắt: cấu trúc nhận diện` gồm nguồn đọc, số node/props/state/context và tên trường đã lọc kèm kiểu dữ liệu. Có `roots` (container hợp lệ), `walked` (fiber đã tìm qua) và `matched` (fiber gắn với DOM bảng gọi). Bản 0.6.4 thêm `limit` khi chạm giới hạn, phân biệt tìm cây, nhánh bảng gọi, thời gian hay metadata. Không ghi giá trị ID, tên người hoặc lời nói. Cách lấy log nằm trong hướng dẫn VPS; kiểm thử mô phỏng chưa bảo đảm đọc được mọi giao diện Facebook.
 

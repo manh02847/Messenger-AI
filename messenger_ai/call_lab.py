@@ -423,10 +423,14 @@ class CallRelay:
                             )
                             if control.transcript.identity_diagnostics:
                                 self.log("Tóm tắt: cấu trúc nhận diện — " + describe_identity_diagnostics(control.transcript.identity_diagnostics))
-                            elif not isinstance(identity, dict) or identity.get("version") != "0.6.4":
-                                self.log("Tóm tắt: tiện ích chưa gửi chẩn đoán 0.6.4; Reload tiện ích rồi tải lại Facebook.")
+                            elif not isinstance(identity, dict) or identity.get("version") != "0.6.5":
+                                self.log("Tóm tắt: tiện ích chưa gửi chẩn đoán 0.6.5; Reload tiện ích rồi tải lại Facebook.")
                         else:
-                            self.log("Tóm tắt: đã gắn người gọi của đúng lượt tự nhận; không log ID.")
+                            identity = data.get("summaryIdentity")
+                            if isinstance(identity, dict) and identity.get("method") == "call-url":
+                                self.log("Tóm tắt: đã gắn người gọi từ URL cửa sổ gọi đúng phiên; không log ID.")
+                            else:
+                                self.log("Tóm tắt: đã gắn người gọi của đúng lượt tự nhận; không log ID.")
                     control.transcript.start()
                 await google.send(
                     json.dumps(
