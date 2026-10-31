@@ -20,15 +20,15 @@ DEFAULT_SUMMARY_MODEL = "gemini-3.5-flash-lite"
 MAX_TRANSCRIPT = 24000
 MAX_BODY = 5000
 IDENTITY_NOTES = {
-    "EXTENSION_METADATA_MISSING": "tiện ích chưa gửi metadata; kiểm tra tự nhận, Reload 0.6.3 và tải lại Facebook",
-    "MAIN_BRIDGE_MISSING": "chưa nạp bộ đọc danh tính; Reload tiện ích 0.6.3 rồi tải lại Facebook",
+    "EXTENSION_METADATA_MISSING": "tiện ích chưa gửi metadata; kiểm tra tự nhận, Reload 0.6.4 và tải lại Facebook",
+    "MAIN_BRIDGE_MISSING": "chưa nạp bộ đọc danh tính; Reload tiện ích 0.6.4 rồi tải lại Facebook",
     "OWNER_ID_MISSING": "chưa đọc được ID tài khoản đang đăng nhập Chrome",
     "OWNER_MISMATCH": "tài khoản Chrome khác tài khoản bot đã chọn ở bộ cài",
     "CALLER_ID_MISSING": "giao diện cuộc gọi chưa có ID người gọi trong các nguồn được hỗ trợ",
     "CALLER_AMBIGUOUS": "bảng gọi đến chứa nhiều ID người gọi, không chọn thay",
     "GROUP_CALL": "metadata cho biết là cuộc gọi nhóm",
     "RING_CHANGED": "bảng cuộc gọi đã đổi trong lúc kiểm tra danh tính",
-    "CALL_CARD_TOO_LARGE": "metadata bảng gọi vượt giới hạn đọc",
+    "CALL_CARD_TOO_LARGE": "bộ đọc danh tính chạm giới hạn duyệt/metadata",
     "INVALID_PEER": "metadata người gọi chưa hợp lệ",
 }
 REPORT_NAME = re.compile(r"([a-f0-9]{32})\.json\Z")
@@ -51,8 +51,10 @@ def clean_identity_diagnostics(value: object) -> dict:
     if isinstance(value.get("reactTypes"), list):
         result["reactTypes"] = [item for item in value["reactTypes"][:5] if item in ("props", "fiber", "internal", "container", "other")]
     for key in ("nodes", "props", "fibers", "hooks", "contexts", "maps", "roots", "walked", "matched"):
-        if type(value.get(key)) is int and 0 <= value[key] <= 10000:
+        if type(value.get(key)) is int and 0 <= value[key] <= (50000 if key == "walked" else 10000):
             result[key] = value[key]
+    if value.get("limit") in ("dom", "roots", "search", "branch", "time", "metadata", "cycle", "tree"):
+        result["limit"] = value["limit"]
     fields = []
     for item in value.get("fields", [])[:40] if isinstance(value.get("fields"), list) else []:
         if not isinstance(item, str) or len(item) > 150:
@@ -71,6 +73,8 @@ def clean_identity_diagnostics(value: object) -> dict:
 def describe_identity_diagnostics(value: dict) -> str:
     parts = ["nguồn=" + ("cửa sổ gọi" if value["source"] == "call" else "bảng đổ chuông")]
     parts.extend(f"{key}={value[key]}" for key in ("nodes", "props", "fibers", "hooks", "contexts", "maps", "roots", "walked", "matched") if key in value)
+    if "limit" in value:
+        parts.append("limit=" + value["limit"])
     if "reactTypes" in value:
         parts.append("react=" + (",".join(value["reactTypes"]) or "none"))
     if value.get("fields"):

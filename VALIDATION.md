@@ -1,5 +1,13 @@
 # Kết quả kiểm tra
 
+## Tìm bảng gọi trước khi hết ngân sách cây React — 0.6.4, 31/10/2026
+
+- Log VPS thật của bản 0.6.3 có `roots=1; walked=10000; matched=0; props=0; fibers=0`: đã tìm được container, nhưng chạm giới hạn trước khi tới bảng gọi. Thuật toán cũ duyệt sâu và yêu cầu quét xong toàn bộ cây trang nên nhánh không liên quan có thể làm hết ngân sách. Chưa có bằng chứng về schema ID sau bước tìm này.
+- Đổi bước tìm bảng đổ chuông sang breadth-first; dừng tìm toàn trang khi khớp chính DOM của bảng đã đánh dấu, rồi duyệt đủ cây con đó trước khi đọc danh tính. Tiếp tục dùng liên kết của cây hiện tại, bỏ alternate/pending/virtual children và kiểm tra hết người mâu thuẫn trong bảng. Bước tìm chỉ đọc liên kết/stateNode; props của nhánh khác không làm người nhận. Cửa sổ gọi tiếp tục chỉ dùng metadata khớp call_id.
+- Giới hạn cấu trúc 50.000 fiber và 250 ms, cùng các giới hạn DOM/root/metadata có sẵn; báo cáo riêng nếu không hoàn thành phần cần kiểm tra. Chẩn đoán `limit` dùng tập mã cố định để phân biệt search, branch, time, metadata, dom, roots, cycle, tree; `walked` được lọc với ngưỡng mới, các bộ đếm khác giữ ngưỡng cũ. Host loại bỏ mã tự do và giá trị vượt ngưỡng, không đưa chẩn đoán sang Google.
+- Worker thử thêm nguồn ở cửa sổ gọi khi bảng đổ chuông hết giới hạn, với các kiểm tra call_id/peer/phiên/người thật như trước. Kết quả người gọi mâu thuẫn không được thay bằng nguồn sau.
+- **141 kiểm thử Python liên quan đạt, 1 fixture Chromium/WebRTC bỏ qua**; wrapper chạy các bộ Node âm thanh, phiên, tự nhận và danh tính. Bộ caller có 48 ca, thêm 5 ca về nhánh feed sâu hơn giới hạn cũ, cây nhiều nhánh, xung đột trong bảng sau khi dừng tìm toàn trang, giới hạn search/thời gian và lọc log. Bộ worker thêm 2 ca: đọc cửa sổ gọi sau khi hết giới hạn, từ chối thay người nhận đã mâu thuẫn. Relay WebSocket với Google giả kiểm tra bộ đếm trên 10.000/mã giới hạn được lưu/log đúng và không sang Google. Ruff/whitespace đạt. Đây là kiểm thử mô phỏng thuật toán và giao thức; chưa xác nhận gửi tóm tắt trên Facebook thật sau sửa. Cần Reload **0.6.4**, tải lại Facebook và thử cuộc gọi mới.
+
 ## Đọc React từ container khi DOM không có fiber/props — 0.6.3, 31/10/2026
 
 - Ảnh Console thật của người dùng cho thấy `CallLabCaller` đã nạp, DOM có một `__reactContainer$` chứa các trường fiber, còn các phần tử khác chỉ lộ events/handles/listeners; không có `__reactFiber$` hoặc `__reactProps$`. Bộ đọc 0.6.2 không có đường vào cây trong trường hợp này. Đây là bằng chứng về chỗ thiếu trong bộ đọc; ảnh chưa cho biết schema ID người gọi bên trong cây.

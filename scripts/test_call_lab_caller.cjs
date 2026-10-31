@@ -66,7 +66,8 @@ test('root-only React DOM resolves just the branch rendering the marked incoming
 
 test('container anchor uses root.current, not the initial, alternate or pending tree',()=>{
   const f=containerFixture();
-  f.old.child={tag:0,stateNode:f.button,memoizedProps:{callerID:'333'}};
+  f.old.child={tag:5,stateNode:f.scope,memoizedProps:{callerID:'333'},
+    child:{tag:5,stateNode:f.button,memoizedProps:{}}};
   f.component.pendingProps={callerID:'444'};
   assert.equal(f.read().peer.callerId,'222');
   f.root.current=f.old;
@@ -127,16 +128,70 @@ test('container fallback never invokes expando, fiber or root getters',()=>{
   assert.equal(f.read().peer.callerId,'222');
 });
 
-test('a cyclic or oversized current tree cannot return a partial caller guess',()=>{
+test('a cyclic or oversized call-card subtree cannot return a partial caller guess',()=>{
   const cycle=containerFixture();cycle.answer.child=cycle.card;
   assert.equal(cycle.read().code,'CALL_CARD_TOO_LARGE');
   const large=containerFixture();
-  let end=large.unrelated;
-  for(let i=0;i<10000;i++){end.child={tag:0};end=end.child;}
+  let end=large.answer;
+  for(let i=0;i<50000;i++){end.child={tag:0};end=end.child;}
   const result=large.read();
   assert.equal(result.code,'CALL_CARD_TOO_LARGE');
-  assert.equal(result.diagnostics.walked,10000);
+  assert.ok(result.diagnostics.walked<=50000);
+  assert.ok(['branch','time'].includes(result.diagnostics.limit));
+  assert.ok(result.diagnostics.matched>0);
   assert.equal(result.peer,undefined);
+});
+
+test('a deep unrelated feed larger than the old 10000-fiber cap cannot starve the call card',()=>{
+  const f=containerFixture();
+  let end=f.unrelated;
+  for(let i=0;i<20000;i++){end.child={tag:0};end=end.child;}
+  assert.equal(f.read().peer.callerId,'222');
+  const diagnostic=containerFixture({callInfo:{peerID:'222'}});
+  diagnostic.unrelated.child=f.unrelated.child;
+  const result=diagnostic.read();
+  assert.equal(result.code,'CALLER_ID_MISSING');
+  assert.ok(result.diagnostics.walked<100);
+  assert.equal(result.diagnostics.matched,2);
+});
+
+test('breadth-first search reaches the overlay before descending a feed with many branches',()=>{
+  const f=containerFixture();
+  const wrapper={tag:0,child:f.card};
+  f.unrelated.sibling=wrapper;
+  let sibling=null;
+  for(let i=0;i<1000;i++) {
+    let child={tag:0,sibling};sibling=child;
+    for(let j=0;j<30;j++){child.child={tag:0};child=child.child;}
+  }
+  f.unrelated.child=sibling;
+  assert.equal(f.read().peer.callerId,'222');
+});
+
+test('the whole selected card is inspected for conflicting profiles after the page search stops',()=>{
+  const f=containerFixture();
+  const avatar={nodeType:1,getAttribute:()=>null};f.nodes.push(avatar);
+  f.card.child.sibling={tag:0,memoizedProps:{callerId:'333'},
+    child:{tag:5,stateNode:avatar,memoizedProps:{}}};
+  let end=f.unrelated;
+  for(let i=0;i<20000;i++){end.child={tag:0};end=end.child;}
+  assert.equal(f.read().code,'CALLER_AMBIGUOUS');
+});
+
+test('an exhausted search or wall-clock deadline keeps every caller private',()=>{
+  const absent=containerFixture();absent.unrelated.sibling=null;
+  let end=absent.unrelated;
+  for(let i=0;i<50000;i++){end.child={tag:0};end=end.child;}
+  const result=absent.read();
+  assert.equal(result.code,'CALL_CARD_TOO_LARGE');
+  assert.ok(['search','time'].includes(result.diagnostics.limit));
+  assert.equal(result.peer,undefined);
+  const slow=containerFixture();let elapsed=0;
+  slow.context.performance={now:()=>{elapsed+=200;return elapsed;}};
+  const timeout=slow.read();
+  assert.equal(timeout.code,'CALL_CARD_TOO_LARGE');
+  assert.equal(timeout.diagnostics.limit,'time');
+  assert.equal(timeout.peer,undefined);
 });
 
 test('root-only active call state still needs the exact call_id before routing participants',()=>{
@@ -310,10 +365,19 @@ test('invalid peer objects or unrecognized diagnostic text never leave content',
 test('root traversal counters survive the content boundary without unbounded or private fields',async()=>{
   const f=contentFixture(), waiting=f.command('auto-identity');
   f.reply({code:'CALLER_ID_MISSING',diagnostics:{source:'ring',reactTypes:['container','other'],
-    roots:1,walked:864,matched:43,nodes:10001,contexts:-1,maps:true,token:'DO_NOT_EXPORT',fields:[]}});
+    roots:1,walked:18640,matched:43,limit:'time',nodes:10001,contexts:-1,maps:true,token:'DO_NOT_EXPORT',fields:[]}});
   const result=await waiting;
-  assert.equal(result.summaryIdentity.version,'0.6.3');
+  assert.equal(result.summaryIdentity.version,'0.6.4');
   assert.deepEqual(JSON.parse(JSON.stringify(result.summaryIdentity.diagnostics)),{source:'ring',reactTypes:['container','other'],
-    roots:1,walked:864,matched:43,fields:[]});
+    roots:1,walked:18640,matched:43,limit:'time',fields:[]});
+  assert.ok(!JSON.stringify(result).includes('DO_NOT_EXPORT'));
+});
+
+test('unknown limit text and search counts above the cap never leave content',async()=>{
+  const f=contentFixture(), waiting=f.command('auto-identity');
+  f.reply({code:'CALL_CARD_TOO_LARGE',diagnostics:{source:'ring',walked:50001,limit:'DO_NOT_EXPORT'}});
+  const result=await waiting;
+  assert.equal(result.summaryIdentity.diagnostics.walked,undefined);
+  assert.equal(result.summaryIdentity.diagnostics.limit,undefined);
   assert.ok(!JSON.stringify(result).includes('DO_NOT_EXPORT'));
 });

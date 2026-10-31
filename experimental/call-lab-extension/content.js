@@ -34,13 +34,15 @@
       if (Array.isArray(diagnostics.reactTypes)) clean.reactTypes = diagnostics.reactTypes
         .filter(value => ["props","fiber","internal","container","other"].includes(value)).slice(0,5);
       for (const key of ["nodes", "props", "fibers", "hooks", "contexts", "maps", "roots", "walked", "matched"]) {
-        if (Number.isInteger(diagnostics[key]) && diagnostics[key] >= 0 && diagnostics[key] <= 10000) clean[key] = diagnostics[key];
+        if (Number.isInteger(diagnostics[key]) && diagnostics[key] >= 0
+            && diagnostics[key] <= (key === "walked" ? 50000 : 10000)) clean[key] = diagnostics[key];
       }
+      if (["dom","roots","search","branch","time","metadata","cycle","tree"].includes(diagnostics.limit)) clean.limit = diagnostics.limit;
       clean.fields = Array.isArray(diagnostics.fields) ? diagnostics.fields.filter(value => typeof value === "string"
         && value.length <= 150 && /^(?:props|state|context)(?:\.(?:[A-Za-z_]{1,50}|\[\])){1,12}=(?:null|undefined|boolean|string|numeric-string|owner-id|call-id|number|object|array|map|set|function|bigint|symbol)$/.test(value)).slice(0,40) : [];
     }
     return {ok: true, ...(valid ? {summaryPeer: {ownerId: peer.ownerId, callerId: peer.callerId}} : {}),
-      summaryIdentity: {version: "0.6.3", code: valid ? "RESOLVED" : code === "RESOLVED" ? "INVALID_PEER" : code,
+      summaryIdentity: {version: "0.6.4", code: valid ? "RESOLVED" : code === "RESOLVED" ? "INVALID_PEER" : code,
         ...(clean.source ? {diagnostics: clean} : {})}};
   }
   async function incomingIdentity(incoming, ringId) {

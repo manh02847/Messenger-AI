@@ -249,15 +249,27 @@ test('a metadata-only caller lookup is bound to the accepted ring and included i
   await f.popup('stop');
 });
 
-test('a missing ring identity is resolved from the exact connected call window before ready',async()=>{
+for (const reason of ['CALLER_ID_MISSING','CALL_CARD_TOO_LARGE']) test(`a ring with ${reason} can use the exact connected call window before ready`,async()=>{
   const f=autoFixture({callURL:'https://www.facebook.com/groupcall/test?call_id=one',
-    lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryIdentity:{code:'CALLER_ID_MISSING'}}),
+    lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryIdentity:{code:reason}}),
     lookupActive:async msg=>({ok:true,callKey:msg.callKey,summaryPeer:{ownerId:'111',callerId:'222'},summaryIdentity:{code:'RESOLVED'}})});
   await f.popup('auto',{autoEnabled:true});await f.incoming(42);
   const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
   for(let i=0;i<12;i++)await flush();
   assert.equal(f.page.find(msg=>msg.command==='call-identity').tabId,84);
   assert.deepEqual(ws.sent.find(msg=>msg.type==='ready').summaryPeer,{ownerId:'111',callerId:'222'});
+  await f.popup('stop');
+});
+
+test('an ambiguous ring identity cannot be replaced by a connected-window recipient',async()=>{
+  const f=autoFixture({callURL:'https://www.facebook.com/groupcall/test?call_id=one',
+    lookupIdentity:async msg=>({ok:true,ringId:msg.ringId,summaryIdentity:{code:'CALLER_AMBIGUOUS'}}),
+    lookupActive:async msg=>({ok:true,callKey:msg.callKey,summaryPeer:{ownerId:'111',callerId:'222'}})});
+  await f.popup('auto',{autoEnabled:true});await f.incoming(42);
+  const ws=f.sockets[0];ws.open();ws.receive({type:'google_ready'});
+  for(let i=0;i<12;i++)await flush();
+  assert.ok(!f.page.some(msg=>msg.command==='call-identity'));
+  assert.equal(ws.sent.find(msg=>msg.type==='ready').summaryPeer,undefined);
   await f.popup('stop');
 });
 

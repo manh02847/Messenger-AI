@@ -59,6 +59,7 @@
       if (!fieldSet.has(item)) { fieldSet.add(item); diagnostics.fields.push(item); }
     }
     const fail = code => {
+      if (code === "CALL_CARD_TOO_LARGE" && !diagnostics.limit) diagnostics.limit = "metadata";
       const rank = field => /caller|callee|participant|inviter/i.test(field) ? 0 : /peer/i.test(field) ? 1 : /user.*id/i.test(field) ? 2 : 3;
       diagnostics.fields.sort((a,b)=>rank(a)-rank(b));
       return {code, diagnostics};
@@ -191,8 +192,9 @@
       // leaving only __reactContainer$ on the DOM. Locate the current tree,
       // then read metadata solely on branches rendering this exact call card.
       // Root props, sibling contacts, alternate and pending trees are excluded.
+      const stop = limit => { diagnostics.limit = limit; incomplete = true; return false; };
       const elements = [document, ...document.querySelectorAll("*")];
-      if (elements.length > 10000) { incomplete = true; return; }
+      if (elements.length > 10000) { stop("dom"); return; }
       const roots = new Set();
       for (const element of elements) for (const key of Object.getOwnPropertyNames(element)) {
         if (!key.startsWith("__reactContainer$")) continue;
@@ -201,25 +203,58 @@
         if (own(anchor, "tag") !== 3 || own(current, "tag") !== 3
             || own(current, "stateNode") !== root || own(root, "containerInfo") !== element) continue;
         roots.add(current);
-        if (roots.size > 16) { incomplete = true; return; }
+        if (roots.size > 16) { stop("roots"); return; }
       }
       diagnostics.roots = roots.size;
-      const hosts = new Set(nodes), visited = new Set(), parents = new Map(), matched = [];
-      const stack = [...roots].map(fiber => [fiber, null]);
-      while (stack.length) {
-        const [fiber, parent] = stack.pop();
-        if (!fiber || typeof fiber !== "object") continue;
-        if (visited.has(fiber) || visited.size >= 10000) { incomplete = true; return; }
-        visited.add(fiber);
-        parents.set(fiber, parent);
-        diagnostics.walked++;
-        if (hosts.has(own(fiber, "stateNode"))) { matched.push(fiber); diagnostics.matched++; }
-        const sibling = own(fiber, "sibling"), child = own(fiber, "child");
-        if (parent && sibling) stack.push([sibling, parent]);
-        if (child) stack.push([child, fiber]);
+      const hosts = new Set(nodes), examined = new Set(), parents = new Map(), matched = [];
+      const now = () => globalThis.performance?.now?.() ?? Date.now();
+      const deadline = now() + 250;
+      function withinBudget(fiber, phase) {
+        if (now() > deadline) return stop("time");
+        if (!examined.has(fiber) && examined.size >= 50000) return stop(phase);
+        examined.add(fiber);
+        diagnostics.walked = examined.size;
+        return true;
       }
-      // Complete the bounded walk before consuming any identity: partial
-      // results must not hide another matching branch or conflicting caller.
+      function children(fiber, queue, discovered, phase) {
+        for (let child = own(fiber, "child"); child; child = own(child, "sibling")) {
+          if (typeof child !== "object") return stop("tree");
+          if (discovered.has(child)) return stop("cycle");
+          if (discovered.size >= 50000) return stop(phase);
+          if (now() > deadline) return stop("time");
+          discovered.add(child);
+          parents.set(child, fiber);
+          queue.push(child);
+        }
+        return true;
+      }
+      const queue = [...roots], discovered = new Set(roots);
+      for (const root of roots) parents.set(root, null);
+      const addMatch = fiber => { matched.push(fiber); diagnostics.matched = matched.length; };
+      let card = null;
+      // Breadth-first search reaches overlays before spending the budget deep
+      // in the feed. Do not read any page-wide metadata while locating the card.
+      for (let head = 0; head < queue.length; head++) {
+        const fiber = queue[head];
+        if (!withinBudget(fiber, "search")) return;
+        if (source === "ring" && own(fiber, "stateNode") === scope) { card = fiber; break; }
+        if (source === "call" && hosts.has(own(fiber, "stateNode"))) addMatch(fiber);
+        if (!children(fiber, queue, discovered, "search")) return;
+      }
+      if (source === "ring") {
+        if (!card) return;
+        // Finding the exact marked card ends the page-wide search. Complete
+        // only its current subtree so conflicting people in the card are still
+        // detected, regardless of the size of unrelated page branches.
+        const branch = [card], branchSeen = new Set(branch);
+        for (let head = 0; head < branch.length; head++) {
+          const fiber = branch[head];
+          if (!withinBudget(fiber, "branch")) return;
+          if (hosts.has(own(fiber, "stateNode"))) addMatch(fiber);
+          if (!children(fiber, branch, branchSeen, "branch")) return;
+        }
+      }
+      // Read identities only after the selected subtree has been fully checked.
       containerBranches = true;
       for (const fiber of matched) inspectBranch(fiber, item => parents.get(item));
     }

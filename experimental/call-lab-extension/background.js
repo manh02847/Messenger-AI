@@ -272,7 +272,7 @@ async function prepareAutomatic(state, requested, revision) {
     const found = await findCall(revision, state.id);
     if (found.tab) {
       state.tabId = found.tab.id; state.callKey = callIdentity(found.tab.url);
-      if (!state.summaryPeer && state.summaryIdentity?.code === "CALLER_ID_MISSING" && state.callKey) {
+      if (!state.summaryPeer && ["CALLER_ID_MISSING", "CALL_CARD_TOO_LARGE"].includes(state.summaryIdentity?.code) && state.callKey) {
         let connected;
         try {connected = await content(state,"call-identity",{callKey:state.callKey});} catch {}
         if (current !== state || !automation.enabled || attempt !== revision) throw new Error("CANCELLED");

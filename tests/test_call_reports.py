@@ -387,6 +387,7 @@ def test_unknown_identity_diagnostics_do_not_log_external_values(value):
 def test_structural_diagnostics_only_keep_schema_shapes_and_bounded_counts():
     clean = clean_identity_diagnostics({"source":"call", "nodes":120, "props":True,
         "fibers":-1, "hooks":99999999, "contexts":2, "cookie":"PRIVATE_SECRET", "callerId":"222",
+        "walked":50001,"limit":"PRIVATE_TEXT",
         "fields":["context.memoizedValue.participants=map", "props.otherUserFbId=numeric-string",
                   "props.callID=call-id", "props.userID=owner-id",
                   "props.userAlice=string", "props.user123456789=number", "props.callerID=222", "PRIVATE_TEXT"]})
@@ -516,7 +517,7 @@ async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_g
             await receive(ws)
             await ws.send(json.dumps({"type": "ready", "summaryPeer": {"ownerId": browser_owner, "callerId": "222"},
                 "summaryIdentity":{"code":"RESOLVED", "diagnostics":{"source":"call","nodes":120,"hooks":2,
-                    "roots":1,"walked":864,"matched":43,
+                    "roots":1,"walked":18640,"matched":43,"limit":"search",
                     "fields":["state.memoizedState.participants=map","props.userAlice=string"],"token":"PRIVATE_DIAGNOSTIC"}}}))
             await receive(ws)
             await receive(ws)
@@ -545,6 +546,7 @@ async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_g
         assert paths[0].name.endswith(".unrouted.json")
         raw = json.loads(paths[0].read_text())
         assert raw["identity_diagnostics"]["fields"] == ["state.memoizedState.participants=map"]
-        assert raw["identity_diagnostics"]["walked"] == 864
-        assert any("roots=1; walked=864; matched=43" in line for line in logs)
+        assert raw["identity_diagnostics"]["walked"] == 18640
+        assert raw["identity_diagnostics"]["limit"] == "search"
+        assert any("roots=1; walked=18640; matched=43; limit=search" in line for line in logs)
         assert any("Tóm tắt: cấu trúc nhận diện" in line for line in logs)
