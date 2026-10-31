@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Messenger AI — Cuộc gọi",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Gemini Live cho cuộc gọi Messenger, bật thủ công hoặc tự nhận theo lựa chọn.",
   "minimum_chrome_version": "116",
   "permissions": ["storage"],

@@ -20,8 +20,8 @@ DEFAULT_SUMMARY_MODEL = "gemini-3.5-flash-lite"
 MAX_TRANSCRIPT = 24000
 MAX_BODY = 5000
 IDENTITY_NOTES = {
-    "EXTENSION_METADATA_MISSING": "tiện ích chưa gửi metadata; kiểm tra tự nhận, Reload 0.6.2 và tải lại Facebook",
-    "MAIN_BRIDGE_MISSING": "chưa nạp bộ đọc danh tính; Reload tiện ích 0.6.2 rồi tải lại Facebook",
+    "EXTENSION_METADATA_MISSING": "tiện ích chưa gửi metadata; kiểm tra tự nhận, Reload 0.6.3 và tải lại Facebook",
+    "MAIN_BRIDGE_MISSING": "chưa nạp bộ đọc danh tính; Reload tiện ích 0.6.3 rồi tải lại Facebook",
     "OWNER_ID_MISSING": "chưa đọc được ID tài khoản đang đăng nhập Chrome",
     "OWNER_MISMATCH": "tài khoản Chrome khác tài khoản bot đã chọn ở bộ cài",
     "CALLER_ID_MISSING": "giao diện cuộc gọi chưa có ID người gọi trong các nguồn được hỗ trợ",
@@ -50,7 +50,7 @@ def clean_identity_diagnostics(value: object) -> dict:
     result = {"source": value["source"]}
     if isinstance(value.get("reactTypes"), list):
         result["reactTypes"] = [item for item in value["reactTypes"][:5] if item in ("props", "fiber", "internal", "container", "other")]
-    for key in ("nodes", "props", "fibers", "hooks", "contexts", "maps"):
+    for key in ("nodes", "props", "fibers", "hooks", "contexts", "maps", "roots", "walked", "matched"):
         if type(value.get(key)) is int and 0 <= value[key] <= 10000:
             result[key] = value[key]
     fields = []
@@ -70,7 +70,7 @@ def clean_identity_diagnostics(value: object) -> dict:
 
 def describe_identity_diagnostics(value: dict) -> str:
     parts = ["nguồn=" + ("cửa sổ gọi" if value["source"] == "call" else "bảng đổ chuông")]
-    parts.extend(f"{key}={value[key]}" for key in ("nodes", "props", "fibers", "hooks", "contexts", "maps") if key in value)
+    parts.extend(f"{key}={value[key]}" for key in ("nodes", "props", "fibers", "hooks", "contexts", "maps", "roots", "walked", "matched") if key in value)
     if "reactTypes" in value:
         parts.append("react=" + (",".join(value["reactTypes"]) or "none"))
     if value.get("fields"):

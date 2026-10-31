@@ -47,7 +47,8 @@
     return Array.isArray(value) ? "array" : typeof value;
   }
   function inspectCard(scope, source, expectedCall = "") {
-    const diagnostics = {source, nodes: 0, props: 0, fibers: 0, hooks: 0, contexts: 0, maps: 0, reactTypes: [], fields: []};
+    const diagnostics = {source, nodes: 0, props: 0, fibers: 0, hooks: 0, contexts: 0, maps: 0,
+      roots: 0, walked: 0, matched: 0, reactTypes: [], fields: []};
     const fieldSet = new Set();
     function note(path, value) {
       const type = numeric(value)===ownerId ? "owner-id"
@@ -70,7 +71,7 @@
     diagnostics.nodes = nodes.length;
     if (nodes.length > (source === "call" ? 1500 : 250)) return fail("CALL_CARD_TOO_LARGE");
     const callers = new Set(), seen = Array.from({length:4},()=>new Set()), fibers = new Set(), maps = new Set(), fallback = [];
-    let remaining = 4000, incomplete = false, group = false;
+    let remaining = 4000, incomplete = false, group = false, containerBranches = false;
     const add = value => { const id = numeric(value); if (id && id !== ownerId) callers.add(id); };
     function recordCall(value, path = "") {
       const values=["callID","callId","call_id"].map(key=>own(value,key));
@@ -133,6 +134,9 @@
         const item = descriptor.value;
         const nextPath = path + "." + schemaKey(key);
         note(nextPath, item);
+        // The container fallback already finds rendered child fibers. Virtual
+        // children may describe suspended/unmounted work and add deep duplicates.
+        if (containerBranches && key === "children") continue;
         if (SKIP.has(key)) {
           if (key === "current" && /^(?:state|context)\./.test(path) && item && typeof item === "object") {
             let prototype;
@@ -168,6 +172,57 @@
         if(value) {diagnostics.contexts++;fallback.push([value,"context.memoizedValue",false]);}
       }
     }
+    function inspectBranch(start, parentOf = fiber => own(fiber, "return")) {
+      let fiber = start;
+      for (let i = 0; fiber && i < 40; i++, fiber = parentOf(fiber)) {
+        const host = own(fiber, "stateNode");
+        if (host && host !== scope && typeof host.nodeType === "number" && !scope.contains(host)) break;
+        if (own(fiber, "tag") === 3) break;
+        inspectFiber(fiber, source === "ring");
+        if (host === scope) {
+          fiber = parentOf(fiber);
+          for (let j = 0; fiber && j < 4 && own(fiber, "tag") !== 3; j++, fiber = parentOf(fiber)) inspectFiber(fiber, false);
+          break;
+        }
+      }
+    }
+    function inspectContainers() {
+      // React can store per-element fibers/props in private WeakMaps while
+      // leaving only __reactContainer$ on the DOM. Locate the current tree,
+      // then read metadata solely on branches rendering this exact call card.
+      // Root props, sibling contacts, alternate and pending trees are excluded.
+      const elements = [document, ...document.querySelectorAll("*")];
+      if (elements.length > 10000) { incomplete = true; return; }
+      const roots = new Set();
+      for (const element of elements) for (const key of Object.getOwnPropertyNames(element)) {
+        if (!key.startsWith("__reactContainer$")) continue;
+        if (!diagnostics.reactTypes.includes("container")) diagnostics.reactTypes.push("container");
+        const anchor = own(element, key), root = own(anchor, "stateNode"), current = own(root, "current");
+        if (own(anchor, "tag") !== 3 || own(current, "tag") !== 3
+            || own(current, "stateNode") !== root || own(root, "containerInfo") !== element) continue;
+        roots.add(current);
+        if (roots.size > 16) { incomplete = true; return; }
+      }
+      diagnostics.roots = roots.size;
+      const hosts = new Set(nodes), visited = new Set(), parents = new Map(), matched = [];
+      const stack = [...roots].map(fiber => [fiber, null]);
+      while (stack.length) {
+        const [fiber, parent] = stack.pop();
+        if (!fiber || typeof fiber !== "object") continue;
+        if (visited.has(fiber) || visited.size >= 10000) { incomplete = true; return; }
+        visited.add(fiber);
+        parents.set(fiber, parent);
+        diagnostics.walked++;
+        if (hosts.has(own(fiber, "stateNode"))) { matched.push(fiber); diagnostics.matched++; }
+        const sibling = own(fiber, "sibling"), child = own(fiber, "child");
+        if (parent && sibling) stack.push([sibling, parent]);
+        if (child) stack.push([child, fiber]);
+      }
+      // Complete the bounded walk before consuming any identity: partial
+      // results must not hide another matching branch or conflicting caller.
+      containerBranches = true;
+      for (const fiber of matched) inspectBranch(fiber, item => parents.get(item));
+    }
     function profileLink(href) {
       if (typeof href !== "string" || href.length > 2048) return;
       try {
@@ -192,22 +247,11 @@
         }
         if (key.startsWith("__reactProps$")) {diagnostics.props++;inspect(own(node, key),0,source==="ring");}
         if (key.startsWith("__reactFiber$")) {
-          let fiber = own(node, key);
-          for (let i = 0; fiber && i < 40; i++, fiber = own(fiber, "return")) {
-            const host = own(fiber, "stateNode");
-            if (host && host !== scope && typeof host.nodeType === "number" && !scope.contains(host)) break;
-            if (own(fiber, "tag") === 3) break;
-            inspectFiber(fiber, source==="ring");
-            if (own(fiber, "stateNode") === scope) {
-              fiber = own(fiber, "return");
-              // A few call components may sit immediately above a portal/card.
-              for (let j = 0; fiber && j < 4; j++, fiber = own(fiber, "return")) inspectFiber(fiber, false);
-              break;
-            }
-          }
+          inspectBranch(own(node, key));
         }
       }
     }
+    if (!callers.size && !group && !fibers.size) inspectContainers();
     if (!callers.size && !group) for (const [value,path,proof] of fallback) inspect(value, 0, false, path,proof);
     if (group) return fail("GROUP_CALL");
     if (incomplete) return fail("CALL_CARD_TOO_LARGE");

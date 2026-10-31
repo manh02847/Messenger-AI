@@ -516,6 +516,7 @@ async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_g
             await receive(ws)
             await ws.send(json.dumps({"type": "ready", "summaryPeer": {"ownerId": browser_owner, "callerId": "222"},
                 "summaryIdentity":{"code":"RESOLVED", "diagnostics":{"source":"call","nodes":120,"hooks":2,
+                    "roots":1,"walked":864,"matched":43,
                     "fields":["state.memoizedState.participants=map","props.userAlice=string"],"token":"PRIVATE_DIAGNOSTIC"}}}))
             await receive(ws)
             await receive(ws)
@@ -544,4 +545,6 @@ async def test_relay_binds_only_initial_ready_call_peer_and_never_passes_it_to_g
         assert paths[0].name.endswith(".unrouted.json")
         raw = json.loads(paths[0].read_text())
         assert raw["identity_diagnostics"]["fields"] == ["state.memoizedState.participants=map"]
+        assert raw["identity_diagnostics"]["walked"] == 864
+        assert any("roots=1; walked=864; matched=43" in line for line in logs)
         assert any("Tóm tắt: cấu trúc nhận diện" in line for line in logs)

@@ -38,6 +38,118 @@ test('React fiber props of the incoming card resolve its caller',()=>{
   assert.equal(fixture({fiber:true,props:{callInfo:{callerId:'222'}}}).read().peer.callerId,'222');
 });
 
+function containerFixture(props={callInfo:{callerId:'222'}}) {
+  const f=fixture();
+  delete f.button.__reactProps$test;
+  // Match the user's real DOM: only the root has a React fiber carrier;
+  // call elements have event/listener/handle sets and no fiber/props expando.
+  f.button.__reactEvents$test=new Set();
+  f.button.__reactHandles$test=new Set();
+  f.button.__reactListeners$test=new Set();
+  const element={nodeType:1}, root={containerInfo:element};
+  const current={tag:3,stateNode:root,memoizedProps:{callerID:'999'}};
+  const old={tag:3,stateNode:root,memoizedProps:{callerID:'888'}};
+  const unrelated={tag:0,memoizedProps:{callerID:'777',participants:['111','777','666']},return:current};
+  const card={tag:5,stateNode:f.scope,memoizedProps:{},return:current};
+  const component={tag:0,memoizedProps:props,return:card};
+  const answer={tag:5,stateNode:f.button,memoizedProps:{},return:component};
+  current.child=unrelated;unrelated.sibling=card;card.child=component;component.child=answer;
+  root.current=current;old.alternate=current;current.alternate=old;
+  element.__reactContainer$test=old;
+  f.context.document.querySelectorAll=selector=>selector==='*'?[element,f.scope,...f.nodes]:f.nodes;
+  return {...f,element,root,current,old,unrelated,card,component,answer};
+}
+
+test('root-only React DOM resolves just the branch rendering the marked incoming card',()=>{
+  assert.equal(containerFixture().read().peer.callerId,'222');
+});
+
+test('container anchor uses root.current, not the initial, alternate or pending tree',()=>{
+  const f=containerFixture();
+  f.old.child={tag:0,stateNode:f.button,memoizedProps:{callerID:'333'}};
+  f.component.pendingProps={callerID:'444'};
+  assert.equal(f.read().peer.callerId,'222');
+  f.root.current=f.old;
+  assert.equal(f.read().peer.callerId,'333');
+});
+
+test('container branches use rendered children and their current parents rather than virtual child props',()=>{
+  const f=containerFixture();
+  f.component.return=f.unrelated;
+  f.card.memoizedProps={children:{props:{callerID:'555'}}};
+  let child=f.card.memoizedProps.children;
+  for(let i=0;i<20;i++){child.props.children={props:{}};child=child.props.children;}
+  assert.equal(f.read().peer.callerId,'222');
+});
+
+test('a caller is never recovered from an alternate whose DOM node is absent from the current tree',()=>{
+  const f=containerFixture();
+  f.old.child=f.card;f.current.child=f.unrelated;f.unrelated.sibling=null;
+  assert.equal(f.read().code,'CALLER_ID_MISSING');
+});
+
+test('portal cards can be found even when the root DOM container is not a card ancestor',()=>{
+  const f=containerFixture();
+  const outside={nodeType:1};
+  const host={tag:5,stateNode:outside,memoizedProps:{callerID:'555'},return:f.current};
+  const portal={tag:4,stateNode:{containerInfo:{}},memoizedProps:{callerID:'666'},return:host};
+  f.current.child=host;host.child=portal;portal.child=f.card;f.card.return=portal;
+  assert.equal(f.scope.contains(f.element),false);
+  assert.equal(f.read().peer.callerId,'222');
+});
+
+test('container metadata exposes only scoped field shapes and bounded traversal counts',()=>{
+  const f=containerFixture({callInfo:{peerID:'222',name:'PRIVATE_NAME',token:'PRIVATE_TOKEN'}});
+  const result=f.read();
+  assert.equal(result.code,'CALLER_ID_MISSING');
+  assert.equal(result.diagnostics.roots,1);
+  assert.equal(result.diagnostics.walked,5);
+  assert.equal(result.diagnostics.matched,2);
+  assert.ok(result.diagnostics.fibers>0);
+  assert.ok(result.diagnostics.reactTypes.includes('container'));
+  assert.ok(result.diagnostics.fields.includes('props.callInfo.peerID=numeric-string'));
+  for(const text of ['PRIVATE_NAME','PRIVATE_TOKEN','222','777','888','999'])assert.ok(!JSON.stringify(result).includes(text));
+});
+
+test('a root carrier must belong to its DOM container and current HostRoot',()=>{
+  for(const invalidate of [f=>f.root.containerInfo={}, f=>f.current.tag=5,
+    f=>f.current.stateNode={}, f=>f.root.current=null, f=>f.old.tag=0]) {
+    const f=containerFixture();invalidate(f);
+    assert.equal(f.read().code,'CALLER_ID_MISSING');
+  }
+});
+
+test('container fallback never invokes expando, fiber or root getters',()=>{
+  const f=containerFixture();
+  Object.defineProperty(f.element,'__reactContainer$getter',{get(){throw Error('Do not run root getter');}});
+  Object.defineProperty(f.unrelated,'memoizedProps',{get(){throw Error('Do not inspect unrelated props');}});
+  Object.defineProperty(f.card,'pendingProps',{get(){throw Error('Do not inspect pending props');}});
+  assert.equal(f.read().peer.callerId,'222');
+});
+
+test('a cyclic or oversized current tree cannot return a partial caller guess',()=>{
+  const cycle=containerFixture();cycle.answer.child=cycle.card;
+  assert.equal(cycle.read().code,'CALL_CARD_TOO_LARGE');
+  const large=containerFixture();
+  let end=large.unrelated;
+  for(let i=0;i<10000;i++){end.child={tag:0};end=end.child;}
+  const result=large.read();
+  assert.equal(result.code,'CALL_CARD_TOO_LARGE');
+  assert.equal(result.diagnostics.walked,10000);
+  assert.equal(result.peer,undefined);
+});
+
+test('root-only active call state still needs the exact call_id before routing participants',()=>{
+  for(const callID of ['one','two',undefined]) {
+    const f=containerFixture({});
+    f.component.memoizedState={memoizedState:{callID,participants:['111','222']}};
+    f.context.location.href='https://www.facebook.com/groupcall/test?call_id=one';
+    const result=f.api.readActive(f.context.location.href);
+    assert.equal(result.code,callID==='one'?'RESOLVED':'CALLER_ID_MISSING');
+    if(result.peer)assert.equal(result.peer.callerId,'222');
+  }
+});
+
 test('a hook/context participant collection requires the verified owner and exactly one other profile',()=>{
   const active=f=>{f.context.location.href='https://www.facebook.com/groupcall/test?call_id=one';return f.api.readActive(f.context.location.href);};
   for(const value of [['111','222'],[{id:'111'},{id:'222'}],new Map([['111',{}],['222',{}]])]) {
@@ -192,5 +304,16 @@ test('invalid peer objects or unrecognized diagnostic text never leave content',
   const f=contentFixture(), waiting=f.command('auto-identity');
   f.reply({code:'RESOLVED',peer:{ownerId:'111',callerId:'222',token:'DO_NOT_EXPORT'}});
   const result=await waiting;assert.equal(result.summaryPeer,undefined);assert.equal(result.summaryIdentity.code,'INVALID_PEER');
+  assert.ok(!JSON.stringify(result).includes('DO_NOT_EXPORT'));
+});
+
+test('root traversal counters survive the content boundary without unbounded or private fields',async()=>{
+  const f=contentFixture(), waiting=f.command('auto-identity');
+  f.reply({code:'CALLER_ID_MISSING',diagnostics:{source:'ring',reactTypes:['container','other'],
+    roots:1,walked:864,matched:43,nodes:10001,contexts:-1,maps:true,token:'DO_NOT_EXPORT',fields:[]}});
+  const result=await waiting;
+  assert.equal(result.summaryIdentity.version,'0.6.3');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.summaryIdentity.diagnostics)),{source:'ring',reactTypes:['container','other'],
+    roots:1,walked:864,matched:43,fields:[]});
   assert.ok(!JSON.stringify(result).includes('DO_NOT_EXPORT'));
 });
