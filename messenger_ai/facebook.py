@@ -114,9 +114,11 @@ class FacebookTransport:
         if not self.closing:
             state = status.get("state")
             if state in {
+                "starting",
                 "connected",
                 "reconnecting",
                 "auth_required",
+                "fatal",
                 "failed",
                 "stopped",
             }:
@@ -219,6 +221,27 @@ class FacebookTransport:
         if self.listener is None or self.closing or not self.own_id.isdigit():
             raise RuntimeError("Messenger chưa sẵn sàng gửi thông báo cho chính mình.")
         return await self.listener.send_e2ee_message(self.own_id + "@msgr", text)
+
+    def notification_ready(self) -> bool:
+        """Check the SDK's live handshake events without waiting or sending RPCs."""
+        if (
+            self.listener is None
+            or self.closing
+            or (self.task is not None and self.task.done())
+        ):
+            return False
+        status = getattr(self.listener, "connection_state", "connected")
+        if not isinstance(status, str):
+            return False
+        if status in {"auth_required", "fatal", "stopped"}:
+            return False
+        wait = getattr(self.listener, "wait_until_connected", None)
+        if callable(wait):
+            try:
+                return bool(wait(0, require_e2ee=True))
+            except Exception:
+                return False
+        return status == "connected"
 
     async def notify_caller(self, caller_id: str, text: str) -> dict:
         if (

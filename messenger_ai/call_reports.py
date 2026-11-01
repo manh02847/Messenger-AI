@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 import json
 import math
@@ -381,7 +381,7 @@ def read_report(path: Path) -> dict:
 
 
 class ReportSender:
-    def __init__(self, settings, state, transport, *, log=print):
+    def __init__(self, settings, state, transport, *, log=print, settings_loader=None):
         self.settings, self.state, self.transport, self.log = (
             settings,
             state,
@@ -390,39 +390,89 @@ class ReportSender:
         )
         self.warned: set[str] = set()
         self.stopped = asyncio.Event()
+        self.settings_loader = settings_loader
+        self.notices: dict[str, float] = {}
+
+    def notice(self, reason: str, text: str) -> None:
+        now = time.monotonic()
+        if reason not in self.notices or now - self.notices[reason] >= 60:
+            self.log(text)
+            self.notices[reason] = now
+
+    def refresh_settings(self) -> bool:
+        if self.settings_loader is None:
+            return True
+        names = ("call_summary_inbox", "call_summary_owner_id", "call_summary_target")
+        try:
+            loaded = self.settings_loader()
+            updated = replace(self.settings, **{name: getattr(loaded, name) for name in names})
+        except Exception:
+            self.notice("config", "Tóm tắt: chưa đọc được cấu hình hộp gửi hợp lệ; giữ các bản chờ.")
+            return False
+        changed = any(getattr(updated, name) != getattr(self.settings, name) for name in names)
+        self.settings = updated
+        if changed:
+            self.warned.clear()
+            self.notices.clear()
+            self.log("Tóm tắt: đã nạp lại cấu hình hộp gửi.")
+        elif "config" in self.notices:
+            self.log("Tóm tắt: cấu hình đã hợp lệ trở lại; tiếp tục đọc hộp gửi.")
+            self.notices.pop("config", None)
+        return True
 
     def stop(self) -> None:
         self.stopped.set()
 
     async def tick(self) -> None:
+        if not self.refresh_settings():
+            return
         root = Path(self.settings.call_summary_inbox)
-        if (
-            not self.settings.call_summary_inbox
-            or root.is_symlink()
-            or not root.is_dir()
-        ):
+        if not self.settings.call_summary_inbox:
+            if "disabled" not in self.notices:
+                self.notice("disabled", "Tóm tắt: chưa bật hộp gửi cho bot nhắn tin này.")
+            return
+        if root.is_symlink() or not root.is_dir():
+            self.notice("inbox", "Tóm tắt: hộp gửi chưa tồn tại hoặc đường dẫn chưa hợp lệ; giữ các bản chờ.")
             return
         if self.transport.own_id != self.settings.call_summary_owner_id:
-            if "owner" not in self.warned:
-                self.log(
-                    "ID tài khoản hiện tại không khớp hộp tóm tắt; không gửi thông báo."
-                )
-                self.warned.add("owner")
+            self.notice("owner", "ID tài khoản hiện tại không khớp hộp tóm tắt; không gửi thông báo.")
             return
-        listener = getattr(self.transport, "listener", None)
-        if (
-            listener is not None
-            and getattr(listener, "connection_state", "connected") != "connected"
-        ):
+        try:
+            with os.scandir(root) as entries:
+                paths = sorted(
+                    root / entry.name
+                    for entry in entries
+                    if REPORT_NAME.fullmatch(entry.name)
+                )[:200]
+        except OSError:
+            self.notice("access", "Tóm tắt: chưa đọc được hộp gửi; kiểm tra quyền truy cập.")
             return
-        for path in sorted(
-            p for p in root.glob("*.json") if REPORT_NAME.fullmatch(p.name)
-        )[:200]:
+        if not paths:
+            return
+        for index, path in enumerate(paths):
             if self.stopped.is_set():
                 return
+            listener = getattr(self.transport, "listener", None)
+            ready = getattr(self.transport, "notification_ready", None)
+            connected = (
+                ready()
+                if callable(ready)
+                else listener is None
+                or getattr(listener, "connection_state", "connected") == "connected"
+            )
+            if not connected:
+                self.notice(
+                    "connection",
+                    f"Tóm tắt: có {len(paths) - index} bản chờ; đợi kết nối Messenger mã hóa sẵn sàng.",
+                )
+                return
+            if "connection" in self.notices:
+                self.log("Tóm tắt: kết nối Messenger đã sẵn sàng trở lại; tiếp tục gửi bản chờ.")
+                self.notices.pop("connection", None)
             try:
                 report = read_report(path)
             except (ValueError, OSError, UnicodeError):
+                self.notice("report", "Tóm tắt: có bản chờ chưa đọc/kiểm tra được; giữ nguyên, chưa gửi bản đó.")
                 continue
             report_id = report["id"]
             if self.settings.dry_run:
@@ -458,6 +508,7 @@ class ReportSender:
             outbox_id = self.state.begin_send(
                 thread, report["body"], time.time(), kind="summary"
             )
+            self.log("Tóm tắt: đang gửi một bản chờ.")
             try:
                 async with asyncio.timeout(15):
                     result = (
@@ -488,11 +539,12 @@ class ReportSender:
                 )
 
     async def run(self) -> None:
+        self.log("Tóm tắt: bộ gửi nền đã khởi động; tự kiểm tra hộp gửi mỗi 2 giây.")
         while not self.stopped.is_set():
             try:
                 await self.tick()
             except Exception:
-                self.log("Chưa đọc/gửi được hộp tóm tắt; kiểm tra quyền truy cập.")
+                self.notice("worker", "Chưa đọc/gửi được hộp tóm tắt; kiểm tra quyền truy cập/kết nối.")
             try:
                 await asyncio.wait_for(self.stopped.wait(), 2)
             except TimeoutError:

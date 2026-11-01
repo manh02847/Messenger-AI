@@ -781,11 +781,14 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                 bot = ReplyBot(
                     settings, state, ai, transport, transport.own_id, image_ai=image_ai
                 )
-                if settings.call_summary_inbox:
-                    from .call_reports import ReportSender
+                from .call_reports import ReportSender
 
-                    report_sender = ReportSender(settings, state, transport)
-                    report_task = asyncio.create_task(report_sender.run())
+                # Routing may be enabled by the call installer while this bot
+                # is already running. Keep its reader alive even when disabled.
+                report_sender = ReportSender(
+                    settings, state, transport, settings_loader=Settings.load
+                )
+                report_task = asyncio.create_task(report_sender.run())
                 print("Cảm xúc tin nhắn:", settings.reaction_mode)
                 print(f"AI: {ai.description}")
                 from .features import describe

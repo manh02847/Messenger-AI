@@ -1,5 +1,13 @@
 # Kết quả kiểm tra
 
+## Hộp gửi tóm tắt tự nạp cấu hình và tiếp tục sau reconnect — 01/11/2026
+
+- Người dùng xác nhận báo cáo đã vào hộp đúng tài khoản và gửi được sau khi restart bot text. Tái hiện được lỗi vòng đời: CLI cũ chỉ khởi tạo bộ gửi nếu hộp gửi đã bật trong cấu hình lúc khởi động; bộ cài bật sau đó không tạo reader hoặc cập nhật routing trong process cũ. Đây là một nguyên nhân đã kiểm chứng; chưa có log đủ để quy mọi lần chờ trên VPS cho cùng lỗi này.
+- Luôn khởi chạy bộ đọc trong chế độ bot nhắn tin, kiểm tra mỗi 2 giây và nạp lại đúng ba trường inbox/owner/target. Không đổi model, persona hay cờ live/preview của process. Cấu hình lỗi tạm dừng gửi, đọc được trở lại thì tiếp tục; đổi owner vẫn phải khớp tài khoản kết nối thật, đổi target không gán lại người nhận bản đã xếp hàng.
+- Đối chiếu [SDK fbchat-v2 v2.3.4 được ghim](https://github.com/m008v/fbchat-v2/blob/aa7abd0386ef1d4cabf8ce592d0f2cf308d8f4f6/src/_messaging/_listening_e2ee.py): `connection_state` là chuỗi; `wait_until_connected(0, require_e2ee=True)` kiểm tra các event handshake không chờ và không gửi RPC. Bộ gửi dùng API này thay vì chỉ dựa nhãn trạng thái; không gửi khi listener đã dừng, process đang đóng hoặc SDK yêu cầu đăng nhập/báo lỗi cuối. SDK tiếp tục chịu trách nhiệm reconnect; không thêm vòng restart đăng nhập.
+- Bổ sung log cố định, giới hạn lặp cho cấu hình, đường/quyền đọc hộp gửi, tài khoản, nội dung file không hợp lệ và chờ kết nối; báo khi nạp route hoặc kết nối hồi phục, bắt đầu gửi và kết quả. Không log lỗi gốc, đường dẫn riêng, ID, cookie hoặc nội dung. Giữ claim bền, timeout gửi 15 giây và quy tắc không tự replay `.unknown.json`/`.sending.json`/`.unrouted.json`.
+- **1.514 kiểm thử đạt, 1 fixture Chromium/WebRTC bỏ qua** trong toàn bộ bộ kiểm tra. Thêm 17 ca hồi quy dùng SQLite và hộp gửi tạm, gồm bật route sau khi CLI đang chạy, giữ preview/live, đổi owner/target, cấu hình lỗi rồi hồi phục, handshake E2EE mất rồi có lại, mất kết nối giữa hai báo cáo vẫn giữ bản sau chưa claim, trạng thái cuối, listener dừng, quyền đọc và file lỗi; các ca gửi không rõ kết quả/chống trùng hiện có tiếp tục đạt. Ruff/whitespace đạt. Không có phiên Facebook/VPS trong môi trường phát triển; chưa xác nhận bản sửa bằng gửi Messenger thật. Chỉ cần cập nhật/restart bot text để nạp code; host và tiện ích giữ 0.6.5.
+
 ## Nhận người gọi từ peer_id/av của đúng cửa sổ gọi — 0.6.5, 31/10/2026
 
 - Log thật 0.6.4 đã vào đúng bảng gọi (`matched=66`, props/fibers đều có dữ liệu) nhưng chạm giới hạn metadata; chưa thấy trường caller rõ ràng trong chẩn đoán. Người dùng cung cấp URL popup có `peer_id`, `av`, `thread_type=15` và `call_id`. Dùng hình dạng các tham số này làm nguồn mới; không lưu URL, giá trị ID, nonce hoặc server_info_data thật vào repo.

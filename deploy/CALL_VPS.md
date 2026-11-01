@@ -153,11 +153,25 @@ Từ 0.6.3, nếu bảng gọi không có `__reactFiber$`/`__reactProps$`, bộ 
 
 Từ 0.6.4, bước tìm bảng đổ chuông duyệt theo tầng. Khi khớp đúng DOM bảng gọi, dừng tìm trên toàn trang và duyệt đủ cây con của bảng trước khi đọc danh tính, vẫn kiểm tra xung đột trong bảng. Giới hạn cấu trúc tối đa 50.000 fiber và 250 ms; DOM/container và metadata vẫn có giới hạn riêng. `limit=search` là chạm ngân sách khi tìm, `branch` là nhánh bảng gọi quá lớn, `time` là hết thời gian, `metadata` là dữ liệu quá sâu/lớn; `dom`, `roots`, `cycle`, `tree` cho biết giới hạn DOM/root hoặc liên kết cây không hợp lệ. Chỉ log mã hữu hạn, không ghi dữ liệu trang vào thông báo lỗi.
 
-Để gửi về **cho chính mình** như bản trước, dùng `install --call-summaries --summary-target self` rồi restart bot text. Cấu hình cũ giữ `self` đến khi bạn chọn `caller`. Bản đã xếp hàng giữ đích cũ; đổi chế độ không tự chuyển bản cũ sang người nhận mới.
+Để gửi về **cho chính mình** như bản trước, dùng `install --call-summaries --summary-target self`. Cấu hình cũ giữ `self` đến khi bạn chọn `caller`. Bản đã xếp hàng giữ đích cũ; đổi chế độ không tự chuyển bản cũ sang người nhận mới.
 
 Mặc định dùng `gemini-3.5-flash-lite`, thêm một request Google sau mỗi phiên có nội dung. Đổi model bằng `--summary-model MÃ_MODEL`. Tóm tắt chạy riêng sau gọi để không giữ cuộc gọi mới chờ. Quota/phí thuộc project Google, không qua bộ đếm ngày của bot text. Nếu nguồn tóm tắt lỗi, gửi báo cáo ghi rõ chưa tóm tắt được và kèm trích đoạn lời người gọi được nhận dạng; không tự bịa một bản tổng kết.
 
 Nhận dạng input/output chỉ bật khi đã chọn `--call-summaries`. Không ghi âm; bản nhận dạng đầy đủ chỉ giữ trong RAM, tối đa 24.000 ký tự gần nhất và 200 lượt, báo rõ nếu rút bớt. Tóm tắt/trích đoạn dự phòng được xếp vào hộp gửi riêng trên VPS, không log nội dung. Hộp nằm dưới `/var/spool/messenger-ai-call`, chỉ user host và nhóm của bot nhận đọc/ghi được. Bot gửi thật thì xóa bản tạm sau khi xác nhận ID tin; chạy preview thì giữ chờ và chưa gửi.
+
+Bot nhắn tin luôn chạy bộ đọc hộp gửi, kể cả khi chưa bật tóm tắt lúc khởi động. Mỗi lượt kiểm tra cách nhau 2 giây; bot tự nạp lại `call_summary_inbox`, `call_summary_owner_id`, `call_summary_target`, không thay chế độ gửi thật/xem trước hoặc model của process. Cấu hình đang lỗi thì tạm dừng gửi và thử đọc lại. Kết nối dùng trạng thái handshake E2EE thực tế của thư viện; khi hồi phục, các bản chưa bắt đầu gửi tiếp tục được xử lý. Không tự vượt lỗi đăng nhập, không tự gửi lại bản chưa rõ kết quả.
+
+Nếu chỉ sửa lỗi hộp gửi chờ với host/tiện ích 0.6.5 đã chạy được, cập nhật **bot nhắn tin**:
+
+```bash
+cd ~/messenger-ai-bot
+git pull --ff-only
+systemctl restart messenger-ai
+journalctl -u messenger-ai --since "5 min ago" --no-pager |
+  grep -Ei 'tóm tắt|Trạng thái Messenger'
+```
+
+Acc 2 dùng `~/messenger-ai-bot-2` và `messenger-ai-2`. Không cần chạy lại bộ cài gọi hoặc Reload Chrome cho riêng thay đổi bộ gửi này. Log khởi động có `Tóm tắt: bộ gửi nền đã khởi động`; log chờ cho biết chưa bật hộp gửi, cấu hình/quyền đọc chưa hợp lệ, tài khoản không khớp, bản không qua kiểm tra hoặc đang đợi kết nối Messenger mã hóa. Lý do lặp được giới hạn tối đa một lần/phút; khi kết nối hồi phục sẽ báo tiếp tục gửi. Khoảng 2 giây là nhịp đọc hộp gửi, không bao gồm thời gian Google tạo tóm tắt hoặc gửi tin.
 
 Khi gửi chưa rõ kết quả, giữ file `.unknown.json`; nếu process dừng giữa lúc gửi, có thể còn `.sending.json`. Không tự gửi lại các bản này để tránh trùng. `.unrouted.json` là bản chưa xác định được người nhận hoặc cấu hình nơi nhận đã thay đổi, không tự gửi. Bạn có thể mở bản riêng để đọc lại khi cần. Nếu chưa thấy tin, kiểm tra log `messenger-ai-call` và service bot text; kiểm tra bot không ở preview, ID tài khoản còn khớp và thư mục hộp gửi đọc được. Đường gửi người gọi và emoji tự chọn cần thử với Facebook thật sau cập nhật.
 

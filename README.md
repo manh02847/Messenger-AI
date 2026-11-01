@@ -85,7 +85,21 @@ Trong cửa sổ gọi, bản 0.6.5 thử `peer_id` cùng `av` trước React: h
 
 Nếu vẫn giữ `.unrouted.json`, tìm dòng `Tóm tắt: cấu trúc nhận diện` gồm nguồn đọc, số node/props/state/context và tên trường đã lọc kèm kiểu dữ liệu. Có `roots` (container hợp lệ), `walked` (fiber đã tìm qua) và `matched` (fiber gắn với DOM bảng gọi). Bản 0.6.4 thêm `limit` khi chạm giới hạn, phân biệt tìm cây, nhánh bảng gọi, thời gian hay metadata. Không ghi giá trị ID, tên người hoặc lời nói. Cách lấy log nằm trong hướng dẫn VPS; kiểm thử mô phỏng chưa bảo đảm đọc được mọi giao diện Facebook.
 
-Muốn gửi về cho chính mình như trước, dùng `install --call-summaries --summary-target self` rồi restart bot text. Bản cài cũ giữ lựa chọn gửi cho chính mình đến khi bạn đổi sang `caller`; báo cáo cũ không tự đổi người nhận.
+Muốn gửi về cho chính mình như trước, dùng `install --call-summaries --summary-target self`. Bản cài cũ giữ lựa chọn gửi cho chính mình đến khi bạn đổi sang `caller`; báo cáo cũ không tự đổi người nhận.
+
+Bot nhắn tin kiểm tra hộp gửi mỗi 2 giây, tự nạp lại đường hộp gửi, tài khoản nhận và lựa chọn `caller`/`self` khi bộ cài thay cấu hình. Không cần restart chỉ để áp dụng ba mục này; chế độ gửi thật/xem trước của process vẫn giữ nguyên. Nếu kết nối Messenger mã hóa chưa sẵn sàng, báo cáo chưa gửi được giữ chờ và tiếp tục khi kết nối hồi phục. Log báo riêng lỗi cấu hình, tài khoản không khớp, quyền đọc, bản không hợp lệ hoặc đang đợi kết nối; không in nội dung tóm tắt.
+
+Đã có tiện ích 0.6.5 và chỉ cập nhật phần gửi tóm tắt đang chờ, chạy:
+
+```bash
+cd ~/messenger-ai-bot
+git pull --ff-only
+systemctl restart messenger-ai
+journalctl -u messenger-ai --since "5 min ago" --no-pager |
+  grep -Ei 'tóm tắt|Trạng thái Messenger'
+```
+
+Lần cập nhật code này cần restart bot nhắn tin để nạp bản sửa. Không cần cài lại host gọi hay Reload tiện ích. Nếu dùng acc 2, đổi thư mục thành `~/messenger-ai-bot-2` và service thành `messenger-ai-2`. Bản `.unknown.json`/`.sending.json` chưa rõ kết quả và `.unrouted.json` thiếu nơi nhận vẫn giữ riêng, không tự gửi lại.
 
 Tắt tóm tắt **các cuộc gọi mới**:
 
