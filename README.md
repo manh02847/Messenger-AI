@@ -814,6 +814,22 @@ Acc 2 đổi thư mục thành `~/messenger-ai-bot-2` và cả hai tên service 
 
 `SIGNAL_MAC_INVALID`, `SIGNAL_NO_VALID_SESSION`, `SIGNAL_IDENTITY_UNTRUSTED`, `SIGNAL_PREKEY_MISSING` giúp phân biệt các lỗi Signal. `BRIDGE_NON_JSON_LINE` đếm dòng ngoài giao thức JSON, riêng nó chưa chứng minh nguyên nhân. `unique_failed_messages` giúp phân biệt nhiều tin khác nhau với các lần retry cùng tin. Đây là công cụ chẩn đoán, chưa phải bản sửa lỗi giải mã.
 
+### Thử phục hồi cache session Signal khi đã xác nhận lỗi MAC/session
+
+Nếu kết quả quan sát xác nhận `SIGNAL_MAC_INVALID` cùng `SIGNAL_NO_VALID_SESSION`, có thể thử làm mới **mục sessions của đúng acc**. Công cụ sau kiểm tra schema thiết bị 2.3.4 và `jid_user` khớp cookie hiệu lực, sao lưu nguyên file với quyền `0600`, rồi ghi atomically chỉ `sessions={}`. Identity/noise key, signed prekey, UUID/JID, identities, pre_keys, sender_keys và các trường khác được giữ nguyên; cookie, persona, ngữ cảnh và outbox không bị sửa. Các peer của acc này sẽ cần thiết lập lại session khi có tin mới.
+
+```bash
+cd ~/messenger-ai-bot && git pull --ff-only && (
+  trap 'systemctl start messenger-ai' EXIT
+  systemctl stop messenger-ai &&
+  .venv/bin/python -m scripts.repair_signal_sessions --apply
+)
+```
+
+Acc 2 đổi thư mục thành `~/messenger-ai-bot-2` và hai tên service thành `messenger-ai-2`. Không có cờ `--apply` thì chỉ kiểm tra. Nếu bot/discover còn giữ khóa, khác tài khoản, file sai schema hoặc đường dẫn là symlink/hardlink, công cụ từ chối. File đã không còn sessions thì báo `no_sessions_to_clear` và không viết lại. Khi có thay đổi, JSON trả `status=applied`, số session đã bỏ và tên backup dưới `data/`. Bản sao lưu chứa khóa thiết bị, giữ riêng trên VPS.
+
+Sau khi service kết nối lại, nhờ tài khoản khác gửi **tin mới** để thử. Bước này chưa bảo đảm khắc phục mọi lỗi MAC: nếu vẫn lỗi, gửi JSON trạng thái và chạy lại lượt chẩn đoán. Tin cũ đã lỗi có thể không được gửi/giải mã lại. Không tự xóa toàn bộ file thiết bị hay pair identity mới chỉ vì một lượt lỗi.
+
 Nếu đọc ảnh lỗi, gửi một ảnh mới rồi lấy riêng dòng log đã ẩn dữ liệu riêng tư (system service acc 1):
 
 ```bash
