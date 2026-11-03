@@ -794,6 +794,26 @@ Biến chỉ đặt trong phiên SSH chưa chắc được truyền vào systemd
 | Bridge lỗi checksum/phiên bản | Dừng bot, chạy `doctor`; tải lại tài sản đã ghim qua `setup_bot.py`, không dùng binary không khớp checksum |
 | Git không cho pull vì có sửa cục bộ | Lưu lại và xử lý thay đổi của bạn trước; không reset xóa cấu hình/persona đang cần |
 
+### Chẩn đoán bridge khi tin mới không được nhận
+
+Nếu log lặp `bad json ... details hidden` và `bridge error (payload hidden)`, chạy lượt quan sát riêng để lấy mã lỗi. Công cụ dùng SDK/bridge đã ghim và file thiết bị hiện có; không tạo ReplyBot, không gọi AI hoặc gửi câu trả lời/tóm tắt. Không reset thiết bị hay xóa cấu hình/ngữ cảnh. Chỉ in mã lỗi cố định và số đếm; nguyên log, nội dung, ID và cookie không được xuất ra terminal.
+
+Với system service acc 1, dừng bot trong lúc quan sát và tự bật lại khi lệnh kết thúc:
+
+```bash
+cd ~/messenger-ai-bot && git pull --ff-only && (
+  trap 'systemctl start messenger-ai' EXIT
+  systemctl stop messenger-ai &&
+  .venv/bin/python -m scripts.diagnose_messenger --seconds 30
+)
+```
+
+Chờ dòng `DIAG_READY`, nhờ tài khoản khác gửi một tin mới vào bot và chờ JSON kết quả. Khoảng 30 giây tính sau khi kết nối sẵn sàng; bước đăng nhập/kết nối có thời gian chờ riêng. Công cụ giữ cùng khóa instance nên từ chối nếu bot/discover còn chạy. SDK có thể cập nhật trạng thái E2EE trong file thiết bị như một lần chạy bình thường; không sao chép hoặc pair một thiết bị mới.
+
+Acc 2 đổi thư mục thành `~/messenger-ai-bot-2` và cả hai tên service trong khối lệnh thành `messenger-ai-2`. Lượt này chỉ quan sát; bot trả lời bình thường sau khi service được bật lại. Gửi JSON kết quả để kiểm tra, không bật debug trực tiếp trong service hoặc gửi nguyên payload.
+
+`SIGNAL_MAC_INVALID`, `SIGNAL_NO_VALID_SESSION`, `SIGNAL_IDENTITY_UNTRUSTED`, `SIGNAL_PREKEY_MISSING` giúp phân biệt các lỗi Signal. `BRIDGE_NON_JSON_LINE` đếm dòng ngoài giao thức JSON, riêng nó chưa chứng minh nguyên nhân. `unique_failed_messages` giúp phân biệt nhiều tin khác nhau với các lần retry cùng tin. Đây là công cụ chẩn đoán, chưa phải bản sửa lỗi giải mã.
+
 Nếu đọc ảnh lỗi, gửi một ảnh mới rồi lấy riêng dòng log đã ẩn dữ liệu riêng tư (system service acc 1):
 
 ```bash
