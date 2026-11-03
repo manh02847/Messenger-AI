@@ -6,13 +6,14 @@ import contextlib
 import hashlib
 import hmac
 import re
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from .core import Message
+from .core import Message, parse_event
 from .reactions import reaction_emoji
 from .images import (
     MAX_IMAGE_BYTES,
@@ -25,6 +26,33 @@ from .images import (
     validate_attachment,
     validate_media_url,
 )
+
+
+def _owner_message(event: object, own_id: str) -> bool:
+    if not isinstance(event, dict) or event.get("type") not in (
+        "message", "e2eeMessage",
+    ):
+        return False
+    data = event.get("data")
+    sender = data.get("senderId") if isinstance(data, dict) else None
+    return type(sender) in (int, str) and bool(own_id) and str(sender) == own_id
+
+
+def _owner_aware_listener(base, own_id: str, forward):
+    """Keep owner activity ahead of v2.3.4's cross-transport ID deduplication.
+
+    The application checks freshness, scope and durable bot echoes itself.
+    Other people's events continue through the unmodified SDK dispatch path.
+    """
+
+    class Listener(base):
+        def _dispatch(self, event):
+            if _owner_message(event, own_id):
+                forward(event)
+                return
+            super()._dispatch(event)
+
+    return Listener
 
 
 class FacebookTransport:
@@ -43,6 +71,7 @@ class FacebookTransport:
         self.closing = False
         self.media_client: httpx.AsyncClient | None = None
         self.native_reaction_timestamp = False
+        self.handoff_notices: dict[str, float] = {}
 
     async def connect(self) -> None:
         # Import only after setup, so configure/help can run without dependencies.
@@ -58,23 +87,25 @@ class FacebookTransport:
                 "Phiên Facebook chưa hợp lệ. Kiểm tra đăng nhập/checkpoint rồi cập nhật cookie."
             )
         self.own_id = str(data["FacebookID"])
-        self.listener = listeningE2EEEvent(
-            data,
-            binary_path=str(self.binary_path),
-            device_path=str(self.device_path),
-            e2ee_memory_only=False,
-            debug_errors=False,
-        )
         loop = asyncio.get_running_loop()
 
         def forward(event: dict) -> None:
             if isinstance(event, dict) and event.get("type") in (
                 "message",
                 "e2eeMessage",
+                "error",
             ):
                 with contextlib.suppress(RuntimeError):
                     loop.call_soon_threadsafe(self._enqueue, event)
 
+        listener_type = _owner_aware_listener(listeningE2EEEvent, self.own_id, forward)
+        self.listener = listener_type(
+            data,
+            binary_path=str(self.binary_path),
+            device_path=str(self.device_path),
+            e2ee_memory_only=False,
+            debug_errors=False,
+        )
         self.listener.on_message(forward)
         self.listener.set_connection_state_callback(
             lambda status: loop.call_soon_threadsafe(self._status, status)
@@ -127,11 +158,38 @@ class FacebookTransport:
     def _enqueue(self, event: dict) -> None:
         if self.closing:
             return
+        if event.get("type") == "error":
+            data = event.get("data")
+            decrypt = (
+                isinstance(data, dict)
+                and type(data.get("code")) is int
+                and data["code"] == 2
+            )
+            self._handoff_notice(
+                "decrypt" if decrypt else "bridge",
+                "Messenger chưa giải mã được một tin; có thể bỏ sót tin thủ công."
+                if decrypt
+                else "Messenger báo lỗi bridge; chi tiết riêng được giữ ẩn.",
+            )
+            return
+        if _owner_message(event, self.own_id) and parse_event(event) is None:
+            self._handoff_notice(
+                "metadata",
+                "Nhường: nhận tín hiệu tin của bạn nhưng metadata thiếu/sai; chưa xác định được tin và cuộc trò chuyện.",
+            )
+            return
         try:
             self.queue.put_nowait(event)
         except asyncio.QueueFull:
             # Stop instead of dropping a manual message and replying over the owner.
             self.overflowed = True
+
+    def _handoff_notice(self, reason: str, text: str) -> None:
+        now = time.monotonic()
+        previous = self.handoff_notices.get(reason)
+        if previous is None or now - previous >= 60:
+            self.handoff_notices[reason] = now
+            self.log(text)
 
     async def events(self) -> AsyncIterator[dict]:
         while not self.closing:

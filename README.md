@@ -688,6 +688,17 @@ Trong `chat-ai`, dùng `/reset` để xóa ngữ cảnh thử trong RAM. Sửa p
 
 Bot nhường **300 giây (5 phút)** trong cuộc trò chuyện đó, tính lại từ tin thủ công mới nhất. Bản nháp đang soạn bị bỏ khi nhận được tin bạn nhắn. Hết thời gian nhường, bot chỉ rep khi có **tin mới tiếp theo**, không trả lời bù các tin đã bỏ qua.
 
+Tin của chủ tài khoản được đưa qua kiểm tra nhường trước bộ lọc trùng ID của SDK, để bản tin thường thiếu loại chat không làm mất bản E2EE đầy đủ đến sau. JID có mã thiết bị như `222:7@msgr` hoặc `222.3:7@msgr` dùng chung khóa ngữ cảnh/nhường `e2ee:222@msgr`; địa chỉ gốc vẫn dùng khi gửi. Các nhóm và server JID khác không được gộp vào chat riêng. ID tin đã xác nhận do bot gửi được nhận ra ở cả hai kênh; so khớp theo nội dung lúc đang gửi vẫn chỉ áp dụng trong cùng chat.
+
+Khi nhường thành công, log có `Bạn vừa nhắn thủ công` kèm thời gian nhường thực tế. Dòng `Nhường:` giải thích tin bị bỏ vì phạm vi, loại chat/thời gian/metadata hoặc là tin do bot gửi. Nếu Messenger báo không giải mã được tin, bot báo riêng; khi ấy có thể chưa nhận được tin thủ công để nhường. Các lý do lặp được giới hạn một lần/phút, không in ID, nội dung tin hoặc cookie. `bridge bad json` chỉ cho biết bridge phát dòng không đọc được theo giao thức; riêng dòng này chưa xác định được tin nào bị mất.
+
+Sau khi cập nhật code và restart service bot nhắn tin, thử nhắn thủ công lúc AI đang soạn rồi xem log:
+
+```bash
+journalctl -u messenger-ai -u messenger-ai-2 --since "5 min ago" --no-pager |
+  grep -Ei 'thủ công|nhường|giải mã|bridge error'
+```
+
 Một số yêu cầu rõ ràng như “Mạnh tự rep đi” hoặc “Đừng trả lời nữa” cũng kích hoạt nhường; đây là nhận diện theo mẫu, không hiểu mọi cách diễn đạt. AI không tự dừng cuộc trò chuyện chỉ bằng mã `[[HANDOFF]]`.
 
 Bot gom các tin đến sát nhau trong **2,5 giây**. Khi có thêm tin trong lúc AI đang soạn, bản nháp cũ được bỏ để xử lý ngữ cảnh mới. Nếu yêu cầu gửi đã ra mạng thì không bảo đảm thu hồi kịp. Lượt gửi không rõ thành công được ghi nhận và tạm dừng chat, không tự gửi lại.

@@ -31,6 +31,7 @@ class State:
             CREATE TABLE IF NOT EXISTS ai_calls (id INTEGER PRIMARY KEY, day TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread, id);
             CREATE INDEX IF NOT EXISTS outbox_thread ON outbox(thread, at);
+            CREATE INDEX IF NOT EXISTS outbox_message_id ON outbox(message_id);
             CREATE TABLE IF NOT EXISTS call_reports (
                 id TEXT PRIMARY KEY, status TEXT NOT NULL, at REAL NOT NULL
             );
@@ -123,11 +124,11 @@ class State:
     def bot_echo(self, thread: str, message_id: str, text: str, now: float) -> bool:
         row = self.db.execute(
             """
-            SELECT 1 FROM outbox WHERE thread=? AND kind!='reaction' AND (
-                message_id=? OR (status IN ('pending','unknown') AND hash=? AND at>=?)
+            SELECT 1 FROM outbox WHERE kind!='reaction' AND (
+                message_id=? OR (thread=? AND status IN ('pending','unknown') AND hash=? AND at>=?)
             ) LIMIT 1
         """,
-            (thread, message_id, self._hash(text), now - 120),
+            (message_id, thread, self._hash(text), now - 120),
         ).fetchone()
         return row is not None
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
@@ -47,6 +47,12 @@ class Message:
     images: tuple[ImageAttachment, ...] = ()
 
 
+def canonical_thread(thread: str) -> str:
+    # A device/agent suffix changes the delivery address, not the person.
+    match = re.fullmatch(r"e2ee:([1-9][0-9]*)(?:\.[0-9]+)?(?::[0-9]+)?@msgr", thread)
+    return f"e2ee:{match[1]}@msgr" if match else thread
+
+
 def parse_event(event: object) -> Message | None:
     if not isinstance(event, dict) or event.get("type") not in (
         "message",
@@ -80,7 +86,7 @@ def parse_event(event: object) -> Message | None:
         ):
             return None
         return Message(
-            "e2ee:" + jid,
+            canonical_thread("e2ee:" + jid),
             mid,
             str(sender),
             text,
@@ -165,6 +171,14 @@ class ReplyBot:
         self.retry_after: dict[int | tuple[int, bool], float] = {}
         self.budget_retry_at = 0.0
         self.ai_slots: dict[int, asyncio.Lock] = {}
+        self.handoff_notices: dict[str, float] = {}
+
+    def _handoff_notice(self, reason: str, text: str) -> None:
+        now = self.clock()
+        previous = self.handoff_notices.get(reason)
+        if previous is None or now - previous >= 60:
+            self.handoff_notices[reason] = now
+            self.log("Nhường: " + text)
 
     def _wake_retry(self, thread: str) -> None:
         event = self.retry_wakeups.get(thread)
@@ -185,25 +199,46 @@ class ReplyBot:
         if self.closing:
             return
         now = self.clock()
+        own = message.sender_id == self.own_id
+        canonical = canonical_thread(message.thread)
+        if message.thread != canonical:
+            message = replace(message, thread=canonical)
         # An allowlist selects people; it must not authorize groups or unknown
         # thread types. Apply this before saving history or loading any image.
         if not message.is_private:
+            if own:
+                self._handoff_notice(
+                    "private",
+                    "nhận tin của bạn nhưng loại chat là nhóm/chưa xác định; chưa áp dụng vào chat riêng.",
+                )
             return
         if (
             self.settings.reply_scope == "allowlist"
-            and message.thread not in self.settings.allowed_threads
+            and message.thread
+            not in {canonical_thread(value) for value in self.settings.allowed_threads}
         ):
+            if own:
+                self._handoff_notice(
+                    "scope", "nhận tin của bạn ở ngoài phạm vi bot được phép trả lời."
+                )
             return
         if not (
             max(self.started_at - 2, now - self.settings.max_message_age_seconds)
             <= message.timestamp
             <= now + 30
         ):
+            if own:
+                self._handoff_notice(
+                    "age", "nhận tin của bạn nhưng thời gian tin nằm ngoài khoảng nhận tin mới."
+                )
             return
         if not self.state.claim(message.thread, message.id, now):
             return
-        if message.sender_id == self.own_id:
+        if own:
             if self.state.bot_echo(message.thread, message.id, message.text, now):
+                self._handoff_notice(
+                    "echo", "đã nhận tin do chính bot gửi; không kích hoạt nhường thủ công."
+                )
                 return
             if message.thread in self.revisions:
                 self.revisions[message.thread] += 1
@@ -221,7 +256,7 @@ class ReplyBot:
                     self.settings.history_messages,
                 )
             self.log(
-                "Bạn vừa nhắn thủ công: tạm dừng auto rep trong cuộc trò chuyện này."
+                f"Bạn vừa nhắn thủ công: tạm dừng auto rep trong cuộc trò chuyện này {self.settings.manual_pause_seconds:g} giây."
             )
             return
         if not message.text.strip() and not (
