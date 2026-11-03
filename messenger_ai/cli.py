@@ -730,7 +730,7 @@ async def check_ai(*, interactive: bool = False, provider: str | None = None) ->
 async def run(*, discovery: bool, live: bool, preview: bool) -> None:
     from scripts.fetch_assets import ensure_bridge
     from .ai import create_ai, create_vision_ai
-    from .core import Message, ReplyBot, parse_event
+    from .core import ReplyBot, parse_event
     from .facebook import FacebookTransport
     from .state import State
 
@@ -813,7 +813,7 @@ async def run(*, discovery: bool, live: bool, preview: bool) -> None:
                 )
             reported = set()
             async for event in transport.events():
-                message = event if isinstance(event, Message) else parse_event(event)
+                message = parse_event(event)
                 if message is None:
                     continue
                 if discovery:
