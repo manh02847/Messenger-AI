@@ -690,13 +690,17 @@ Bot nhường **300 giây (5 phút)** trong cuộc trò chuyện đó, tính l�
 
 Tin của chủ tài khoản được đưa qua kiểm tra nhường trước bộ lọc trùng ID của SDK, để bản tin thường thiếu loại chat không làm mất bản E2EE đầy đủ đến sau. JID có mã thiết bị như `222:7@msgr` hoặc `222.3:7@msgr` dùng chung khóa ngữ cảnh/nhường `e2ee:222@msgr`; địa chỉ gốc vẫn dùng khi gửi. Các nhóm và server JID khác không được gộp vào chat riêng. ID tin đã xác nhận do bot gửi được nhận ra ở cả hai kênh; so khớp theo nội dung lúc đang gửi vẫn chỉ áp dụng trong cùng chat.
 
-Khi nhường thành công, log có `Bạn vừa nhắn thủ công` kèm thời gian nhường thực tế. Dòng `Nhường:` giải thích tin bị bỏ vì phạm vi, loại chat/thời gian/metadata hoặc là tin do bot gửi. Nếu Messenger báo không giải mã được tin, bot báo riêng; khi ấy có thể chưa nhận được tin thủ công để nhường. Các lý do lặp được giới hạn một lần/phút, không in ID, nội dung tin hoặc cookie. `bridge bad json` chỉ cho biết bridge phát dòng không đọc được theo giao thức; riêng dòng này chưa xác định được tin nào bị mất.
+Khi nhường thành công, log có `Bạn vừa nhắn thủ công` kèm thời gian nhường thực tế. Dòng `Nhường:` giải thích tin bị bỏ vì phạm vi, loại chat/thời gian/metadata hoặc là tin do bot gửi. Các lý do lặp được giới hạn một lần/phút, không in ID, nội dung tin hoặc cookie. `bridge bad json` chỉ cho biết bridge phát dòng không đọc được theo giao thức; riêng dòng này chưa xác định được tin nào bị mất.
+
+Nếu tin chưa giải mã được, bot đọc riêng metadata `UndecryptableMessage` mà bridge hiện có phát ra. Chỉ nhường khi cờ gửi từ chính mình và sender JID cùng khớp tài khoản đang đăng nhập, chat là cá nhân xác định rõ, khác chat với chính mình và thời gian tin hợp lệ. Log có `Đã nhường theo metadata gửi từ tài khoản của bạn`; không cần đọc nội dung, không tạo lịch sử giả và vẫn cho bản giải mã thành công đến sau bổ sung ngữ cảnh. Thiếu/mâu thuẫn metadata thì không đoán người nhận. Nhóm hoặc lỗi từ người khác không tự kích hoạt nhường.
+
+Dòng `E2EE chưa đọc được tin` phân biệt nguồn chính bạn/người khác/không rõ và lỗi thiếu bản mã cho thiết bị/giải mã thất bại. Đây là cách nhận hoạt động để nhường, không khôi phục bản mã hay sửa khóa/session. Tin đã có ID xác nhận trong outbox vẫn được nhận ra là echo của bot, kể cả tóm tắt. Nếu chưa có đủ dữ liệu để nhận ra echo trước ack gửi, bot ưu tiên nhường theo metadata của tài khoản. Không reset thiết bị hay tự gửi lại tin chưa rõ kết quả.
 
 Sau khi cập nhật code và restart service bot nhắn tin, thử nhắn thủ công lúc AI đang soạn rồi xem log:
 
 ```bash
 journalctl -u messenger-ai -u messenger-ai-2 --since "5 min ago" --no-pager |
-  grep -Ei 'thủ công|nhường|giải mã|bridge error'
+  grep -Ei 'thủ công|nhường|E2EE chưa đọc|giải mã|bridge error'
 ```
 
 Một số yêu cầu rõ ràng như “Mạnh tự rep đi” hoặc “Đừng trả lời nữa” cũng kích hoạt nhường; đây là nhận diện theo mẫu, không hiểu mọi cách diễn đạt. AI không tự dừng cuộc trò chuyện chỉ bằng mã `[[HANDOFF]]`.

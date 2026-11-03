@@ -45,6 +45,7 @@ class Message:
     is_private: bool = False
     thread_type: int = 1
     images: tuple[ImageAttachment, ...] = ()
+    metadata_only: bool = False
 
 
 def canonical_thread(thread: str) -> str:
@@ -200,6 +201,8 @@ class ReplyBot:
             return
         now = self.clock()
         own = message.sender_id == self.own_id
+        if message.metadata_only and not own:
+            return
         canonical = canonical_thread(message.thread)
         if message.thread != canonical:
             message = replace(message, thread=canonical)
@@ -232,7 +235,9 @@ class ReplyBot:
                     "age", "nhận tin của bạn nhưng thời gian tin nằm ngoài khoảng nhận tin mới."
                 )
             return
-        if not self.state.claim(message.thread, message.id, now):
+        # A successful later decrypt must still be able to add the real text.
+        claim_id = "unavailable:" + message.id if message.metadata_only else message.id
+        if not self.state.claim(message.thread, claim_id, now):
             return
         if own:
             if self.state.bot_echo(message.thread, message.id, message.text, now):
@@ -256,7 +261,9 @@ class ReplyBot:
                     self.settings.history_messages,
                 )
             self.log(
-                f"Bạn vừa nhắn thủ công: tạm dừng auto rep trong cuộc trò chuyện này {self.settings.manual_pause_seconds:g} giây."
+                f"Đã nhường theo metadata gửi từ tài khoản của bạn {self.settings.manual_pause_seconds:g} giây; nội dung chưa đọc được."
+                if message.metadata_only
+                else f"Bạn vừa nhắn thủ công: tạm dừng auto rep trong cuộc trò chuyện này {self.settings.manual_pause_seconds:g} giây."
             )
             return
         if not message.text.strip() and not (

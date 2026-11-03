@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from .core import Message, parse_event
+from .e2ee_activity import DecryptNotice, undecryptable_notice
 from .reactions import reaction_emoji
 from .images import (
     MAX_IMAGE_BYTES,
@@ -90,6 +91,12 @@ class FacebookTransport:
         loop = asyncio.get_running_loop()
 
         def forward(event: dict) -> None:
+            notice = undecryptable_notice(event, self.own_id)
+            if notice is not None:
+                # Do not move a raw event/body into the application's queue.
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(self._undecryptable, notice)
+                return
             if isinstance(event, dict) and event.get("type") in (
                 "message",
                 "e2eeMessage",
@@ -155,10 +162,10 @@ class FacebookTransport:
             }:
                 self.log(f"Trạng thái Messenger: {state}")
 
-    def _enqueue(self, event: dict) -> None:
+    def _enqueue(self, event: dict | Message) -> None:
         if self.closing:
             return
-        if event.get("type") == "error":
+        if isinstance(event, dict) and event.get("type") == "error":
             data = event.get("data")
             decrypt = (
                 isinstance(data, dict)
@@ -167,7 +174,7 @@ class FacebookTransport:
             )
             self._handoff_notice(
                 "decrypt" if decrypt else "bridge",
-                "Messenger chưa giải mã được một tin; có thể bỏ sót tin thủ công."
+                "Messenger chưa đọc được một tin E2EE (chưa giải mã được hoặc thiết bị thiếu bản mã)."
                 if decrypt
                 else "Messenger báo lỗi bridge; chi tiết riêng được giữ ẩn.",
             )
@@ -191,7 +198,29 @@ class FacebookTransport:
             self.handoff_notices[reason] = now
             self.log(text)
 
-    async def events(self) -> AsyncIterator[dict]:
+    def _undecryptable(self, notice: DecryptNotice) -> None:
+        if self.closing:
+            return
+        sources = {"self": "chính bạn", "other": "người khác", "unknown": "không rõ"}
+        kinds = {
+            "missing_ciphertext": "thiếu bản mã cho thiết bị",
+            "decrypt_failed": "giải mã thất bại",
+            "unknown": "không rõ",
+        }
+        chats = {"private": "riêng", "group": "nhóm", "unknown": "không rõ"}
+        self._handoff_notice(
+            f"unavailable:{notice.source}:{notice.kind}:{notice.chat}",
+            f"E2EE chưa đọc được tin: nguồn={sources[notice.source]}; lỗi={kinds[notice.kind]}; chat={chats[notice.chat]}.",
+        )
+        if notice.activity is not None:
+            self._enqueue(notice.activity)
+        elif notice.source == "self":
+            self._handoff_notice(
+                "unavailable-route",
+                "Nhường: metadata E2EE chưa xác định được đúng chat/người gửi/thời gian; không đoán cuộc trò chuyện.",
+            )
+
+    async def events(self) -> AsyncIterator[dict | Message]:
         while not self.closing:
             if self.overflowed:
                 raise RuntimeError(
